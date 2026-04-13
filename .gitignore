@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets and config
+.env
+
+# Project docs (from parent directory)
+CLAUDE.md
+REQUIREMENTS.md
+
+# Test files
+test_*.py
+
+# Temporary files
+*.tmp
+*.log
