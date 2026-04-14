@@ -217,7 +217,7 @@ async def _chat_async(
                 # 收集所有提供商的模型
                 all_models = []
 
-                # 添加当前提供商的模型
+                # 添加当前提供商的模型（使用模型池的模型）
                 current_models = llm_client.available_models
                 for model_name in current_models:
                     all_models.append({
@@ -231,6 +231,8 @@ async def _chat_async(
                 for other_provider, other_config in config.llm.providers.items():
                     if other_provider == provider_name:
                         continue
+
+                    # 如果配置了模型列表，直接添加
                     if other_config.models:
                         for model_name in other_config.models:
                             all_models.append({
@@ -239,6 +241,25 @@ async def _chat_async(
                                 "is_current": False,
                                 "is_current_provider": False
                             })
+                    # 如果启用了自动发现，需要从 API 获取模型列表
+                    elif other_config.auto_discover:
+                        try:
+                            # 创建临时客户端来发现模型
+                            async with LLMClient(
+                                api_key=other_config.api_key,
+                                base_url=other_config.base_url,
+                            ) as temp_client:
+                                # 对于其他 auto_discover 提供商，也使用模型池逻辑（top_k=5）
+                                await temp_client.discover_models(top_k=5)
+                                for model_name in temp_client.available_models:
+                                    all_models.append({
+                                        "provider": other_provider,
+                                        "model": model_name,
+                                        "is_current": False,
+                                        "is_current_provider": False
+                                    })
+                        except Exception as e:
+                            console.print(f"[dim]无法获取 {other_provider} 的模型列表: {e}[/]")
 
                 if not all_models:
                     console.print("\n[yellow]没有可用模型[/]\n")
@@ -369,13 +390,21 @@ async def _list_models_async(base_dir: Optional[Path], config_file: Optional[Pat
                 api_key=provider_config.api_key,
                 base_url=provider_config.base_url,
             ) as llm_client:
-                models_response = await llm_client._client.models.list()
-
-                console.print("[bold]可用模型:[/]")
-                for m in models_response.data:
-                    console.print(f"  - [cyan]{provider_name}/{m.id}[/]")
-                    if hasattr(m, "created") and m.created:
-                        console.print(f"    创建时间: {m.created}", style="dim")
+                # 使用 discover_models 获取模型池的模型
+                if provider_config.auto_discover:
+                    # 对于 auto_discover 的提供商，获取模型池的模型（Top 5）
+                    models = await llm_client.discover_models(top_k=5)
+                    console.print("[bold]可用模型 (模型池):[/]")
+                    for model_name in models:
+                        console.print(f"  - [cyan]{provider_name}/{model_name}[/]")
+                else:
+                    # 对于非 auto_discover 的提供商，直接显示所有模型
+                    models_response = await llm_client._client.models.list()
+                    console.print("[bold]可用模型:[/]")
+                    for m in models_response.data:
+                        console.print(f"  - [cyan]{provider_name}/{m.id}[/]")
+                        if hasattr(m, "created") and m.created:
+                            console.print(f"    创建时间: {m.created}", style="dim")
         except Exception as e:
             console.print(f"[red]获取模型列表失败: {e}[/]")
 
@@ -713,24 +742,39 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
+    # 收集所有为 True 的选项
+    options_executed = False
+
+    # 按特定顺序执行所有为 True 的选项
+    # 1. 版本信息（通常最先显示）
     if version:
         _version()
-        return
+        options_executed = True
 
+    # 2. 列出模型
     if list_models:
+        if options_executed:
+            print()  # 添加空行分隔不同选项的输出
         asyncio.run(_list_models_async(None, None, None))
-        return
+        options_executed = True
 
+    # 3. 列出工具
     if list_tools:
+        if options_executed:
+            print()  # 添加空行分隔不同选项的输出
         _list_tools(None, None)
-        return
+        options_executed = True
 
+    # 4. 初始化工具
     if init_tools:
+        if options_executed:
+            print()  # 添加空行分隔不同选项的输出
         _init_tools(None, None)
-        return
+        options_executed = True
 
-    # 默认运行 chat
-    asyncio.run(_chat_async(None, None, None, None))
+    # 如果没有任何选项被指定，执行默认操作（聊天）
+    if not options_executed:
+        asyncio.run(_chat_async(None, None, None, None))
 
 
 def run():

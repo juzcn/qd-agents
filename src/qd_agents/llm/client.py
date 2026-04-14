@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator, Literal
 
 from openai import AsyncOpenAI, APIError, APIStatusError, APITimeoutError
 
-from .scoring import ModelInfo, get_top_models
+from .scoring import ModelInfo, get_top_models, calculate_model_score
 
 
 logger = logging.getLogger(__name__)
@@ -112,14 +112,20 @@ class LLMClient:
                     name=m.id,
                     created=getattr(m, "created", None),
                     owned_by=getattr(m, "owned_by", None),
+                    capabilities=getattr(m, "capabilities", None),
                 ))
 
             if not models:
                 logger.warning("No models found, using fallback model list")
                 return self._get_default_models()
 
-            # 选择 Top K 模型
-            top_models = get_top_models(models, top_k=top_k)
+            # 选择 Top K 模型，如果 top_k=0 则返回所有模型
+            if top_k > 0:
+                top_models = get_top_models(models, top_k=top_k)
+            else:
+                # 返回所有 chat 模型
+                top_models = [m for m in models if calculate_model_score(m) > 0]
+
             self._model_names = [m.name for m in top_models]
             self._current_model_index = 0
 

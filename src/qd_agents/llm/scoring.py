@@ -13,6 +13,7 @@ class ModelInfo(NamedTuple):
     name: str
     created: int | None = None
     owned_by: str | None = None
+    capabilities: list[str] | None = None
 
 
 # 模型系列优先级评分
@@ -37,11 +38,29 @@ PARAM_SIZE_PATTERNS: list[tuple[re.Pattern, int]] = [
 ]
 
 
-def is_chat_model(model_name: str) -> bool:
+def is_chat_model(model: ModelInfo) -> bool:
     """判断是否为 chat 模型"""
-    name_lower = model_name.lower()
-    chat_indicators = ["chat", "instruct", "conversation", "agent"]
-    return any(indicator in name_lower for indicator in chat_indicators)
+    name = model.name.lower()
+
+    # 1. 优先检查 capabilities 字段（如果模型对象有该字段）
+    if model.capabilities:
+        if isinstance(model.capabilities, list):
+            # 如果 capabilities 是列表且包含 "chat"，返回 True
+            if "chat" in model.capabilities:
+                return True
+            # 如果 capabilities 是列表但不包含 "chat"，返回 False
+            return False
+        elif isinstance(model.capabilities, str):
+            # 如果 capabilities 是字符串且包含 "chat"，返回 True
+            if "chat" in model.capabilities.lower():
+                return True
+            # 如果 capabilities 是字符串但不包含 "chat"，返回 False
+            return False
+        # 其他类型的 capabilities，回退到名称检查
+
+    # 2. 检查名称规则
+    chat_indicators = ["chat", "instruct", "conversation", "agent", "-it"]
+    return any(indicator in name for indicator in chat_indicators)
 
 
 def get_parameter_size_score(model_name: str) -> int:
@@ -74,7 +93,7 @@ def calculate_model_score(model: ModelInfo) -> float:
     score = 0.0
 
     # 1. 只选择 chat 模型
-    if not is_chat_model(model.name):
+    if not is_chat_model(model):
         return 0.0
     score += 1000
 
