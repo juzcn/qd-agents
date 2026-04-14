@@ -698,10 +698,10 @@ def _version():
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    list_models: bool = typer.Option(False, "--list-models"),
-    list_tools: bool = typer.Option(False, "--list-tools"),
-    init_tools: bool = typer.Option(False, "--init-tools"),
-    show_version: bool = typer.Option(False, "--show-version"),
+    list_models: bool = typer.Option(False, "--list-models", help="列出可用模型"),
+    list_tools: bool = typer.Option(False, "--list-tools", help="列出已注册的工具"),
+    init_tools: bool = typer.Option(False, "--init-tools", help="初始化内置工具"),
+    version: bool = typer.Option(False, "--version", help="显示版本信息"),
 ):
     """
     qd-agents - 从对话到自动化流程的智能体系统
@@ -712,7 +712,7 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
-    if show_version:
+    if version:
         _version()
         return
 
