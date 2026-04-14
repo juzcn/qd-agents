@@ -23,6 +23,46 @@ from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerCo
 logger = logging.getLogger(__name__)
 
 
+def _format_search_result(result: dict[str, Any]) -> str:
+    """格式化搜索结果为易读的文本（不直接使用 Tavily 的英文 answer）"""
+    try:
+        # 提取搜索结果列表（不使用 Tavily 的 answer）
+        results = result.get("results", [])
+        if results:
+            output = ""
+            for i, r in enumerate(results[:5], 1):
+                title = r.get("title", "")
+                snippet = r.get("snippet", r.get("content", ""))
+                link = r.get("url", r.get("link", ""))
+                if title:
+                    output += f"\n[{i}] {title}"
+                    if snippet:
+                        output += f"\n    {snippet}"
+                    if link:
+                        output += f"\n    {link}"
+            return output.strip()
+
+        # 其他格式
+        return json.dumps(result, ensure_ascii=False)
+    except Exception:
+        return json.dumps(result, ensure_ascii=False)
+
+
+def _format_references(result: dict[str, Any]) -> str:
+    """格式化参考链接"""
+    results = result.get("results", [])
+    if not results:
+        return ""
+
+    output = "参考链接：\n"
+    for i, r in enumerate(results[:3], 1):
+        title = r.get("title", "")
+        link = r.get("url", r.get("link", ""))
+        if title and link:
+            output += f"{i}. {title}: {link}\n"
+    return output.strip()
+
+
 class AgentResult:
     """智能体处理结果"""
 
@@ -124,37 +164,24 @@ class QDAgent:
         logger.info("QDAgent initialized. Models: %s", self.llm._model_names)
 
     async def _register_builtin_tools(self) -> None:
-        """注册内置工具"""
-        # 注册一些示例工具
-        from ..registry import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
-
-        # 示例：echo 工具
-        echo_tool = Tool(
-            id="util.echo",
-            name="echo",
-            description="回显输入的消息",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "message": {"type": "string", "description": "要回显的消息"}
-                },
-                "required": ["message"],
-            },
-            execution=ToolExecutionConfig(
-                type=ToolExecutionType.FUNCTION,
-                module="qd_agents.agent.builtins",
-                function="echo",
-            ),
-            metadata=ToolMetadata(
-                category="utilities",
-                tags=["echo", "utility"],
-            ),
-        )
+        """注册内置工具执行器（工具定义已通过 --init-tools 注册到数据库）"""
+        # 注册 echo 工具
         from .builtins import echo
-        self.registry.register(echo_tool)
         self.executor_registry.register_function("echo", echo)
 
-        logger.info("Registered builtin tools")
+        # 注册搜索工具函数
+        from .builtin_tools import (
+            serper_search,
+            tavily_search,
+            baidu_search,
+            web_search,
+        )
+        self.executor_registry.register_function("serper_search", serper_search)
+        self.executor_registry.register_function("tavily_search", tavily_search)
+        self.executor_registry.register_function("baidu_search", baidu_search)
+        self.executor_registry.register_function("web_search", web_search)
+
+        logger.info("Registered builtin tool executors")
 
     def add_to_history(self, role: str, content: str) -> None:
         """
@@ -267,15 +294,68 @@ class QDAgent:
         # 处理普通工具调用
         tool_name = phase_two.tool_choice
         if tool_name and tool_name not in ["direct", "coding_tool_use", "step_down"]:
-            tool = self.registry.get(tool_name)
+            # 先尝试通过 ID 查找，再通过名称查找
+            tool = self.registry.get(tool_name) or self.registry.get_by_name(tool_name)
             if tool:
                 try:
+                    logger.info("Executing tool: %s (id: %s)", tool.name, tool.id)
                     executor = self.executor_registry.get_executor(tool)
                     tool_input = phase_two.tool_input
                     result = await executor.execute(**tool_input)
+
+                    # 对于搜索工具，按照 OpenAI tool calling 标准流程：
+                    # 1. 获取工具执行结果
+                    # 2. 将结果传给 LLM，让 LLM 用用户的语言总结回答
+                    if tool.id.startswith("search."):
+                        return await self._summarize_search_results(
+                            user_input=orch_result.user_input,
+                            search_result=result,
+                        )
+
                     return f"工具调用结果: {json.dumps(result, ensure_ascii=False)}"
                 except Exception as e:
+                    logger.exception("Tool execution failed")
                     return f"工具调用失败: {e}"
+            else:
+                logger.warning("Tool not found: %s", tool_name)
 
         # 默认返回
         return "处理完成"
+
+    async def _summarize_search_results(
+        self,
+        user_input: str,
+        search_result: dict[str, Any],
+    ) -> str:
+        """让 LLM 根据搜索结果用中文总结回答"""
+        # 格式化搜索结果为文本
+        formatted_results = _format_search_result(search_result)
+
+        messages = [
+            {
+                "role": "system",
+                "content": "你是一个专业的助手。请根据以下搜索结果，用中文回答用户的问题。回答要准确、客观，使用搜索结果中的信息。"
+            },
+            {
+                "role": "user",
+                "content": f"用户问题: {user_input}\n\n搜索结果:\n{formatted_results}"
+            }
+        ]
+
+        try:
+            response = await self.llm.chat(
+                messages=messages,
+                temperature=0.7,
+            )
+            answer = response.choices[0].message.content or "抱歉，无法生成回答"
+
+            # 添加参考链接
+            references = _format_references(search_result)
+            if references:
+                answer += "\n\n" + references
+
+            return answer
+        except Exception as e:
+            logger.exception("Failed to summarize search results")
+            # 如果 LLM 总结失败，返回格式化的搜索结果
+            return _format_search_result(search_result)

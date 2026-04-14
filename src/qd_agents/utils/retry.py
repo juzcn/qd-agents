@@ -7,11 +7,11 @@ import asyncio
 import logging
 import random
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Awaitable, Callable, Generic, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,8 @@ class RetryConfig(BaseModel):
     max_delay_ms: int = 30000
     multiplier: float = 2.0
     jitter: bool = True
-    retryable_exceptions: list[type[Exception]] = field(default_factory=list)
+    # Pydantic 无法直接序列化 type[Exception]，运行时使用
+    retryable_exceptions: list = Field(default_factory=list, exclude=True)
 
 
 class CircuitBreakerConfig(BaseModel):

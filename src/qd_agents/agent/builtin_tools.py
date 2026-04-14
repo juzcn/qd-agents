@@ -1,6 +1,7 @@
 """
 内置工具实现
 """
+import os
 from typing import Any
 import httpx
 
@@ -109,17 +110,21 @@ async def web_search(
     Returns:
         搜索结果
     """
+    config = get_config()
+    if not config:
+        raise ValueError("Config not found")
+
     # 自动选择搜索引擎
     if engine == "auto":
         # 优先级: Tavily > Serper > Baidu
-        if os.getenv("TAVILY_API_KEY"):
+        if config.search.tavily.api_key:
             engine = "tavily"
-        elif os.getenv("SERPER_API_KEY"):
+        elif config.search.serper.api_key:
             engine = "serper"
-        elif os.getenv("BAIDU_API_KEY_1") or os.getenv("BAIDU_API_KEY_2"):
+        elif config.search.baidu.api_key_1 or config.search.baidu.api_key_2:
             engine = "baidu"
         else:
-            raise ValueError("No search engine API key found in environment variables")
+            raise ValueError("No search engine API key found in config")
 
     if engine == "serper":
         result = await serper_search(query=query, num=num_results)

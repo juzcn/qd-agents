@@ -56,6 +56,12 @@ class OrchestrationResult:
     final_output: Any = None
     final_status: str = "pending"
     total_latency_ms: int = 0
+    # OpenAI tool calling 标准流程字段
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    tool_input: dict[str, Any] = field(default_factory=dict)
+    needs_more_rounds: bool = False
 
 
 class TwoPhaseOrchestrator:
@@ -347,17 +353,38 @@ class TwoPhaseOrchestrator:
         logger.info("Executing Single Phase")
         start_time = time.perf_counter()
 
-        openai_tools = [t.to_openai_function() for t in tools]
+        openai_tools = []
+
+        # 优先添加 search.web 工具（如果可用）
+        search_web = self.registry.get("search.web")
+        if search_web:
+            openai_tools.append(search_web.to_openai_function())
+            # 从 tools 列表中移除，避免重复
+            tools = [t for t in tools if t.id != "search.web"]
+
+        # 添加其他工具
+        openai_tools.extend([t.to_openai_function() for t in tools])
         openai_tools.append(self._meta_tools["coding_tool_use"])
         openai_tools.append(self._meta_tools["step_down"])
 
         if self.prompts:
+            # 检查 search.web 是否可用
+            search_web_available = self.registry.get("search.web") is not None
             system_prompt = self.prompts.render(
                 "system_prompt",
                 tools=tools,
+                search_web_available=search_web_available,
             )
         else:
-            system_prompt = "你是一个智能助手，可以调用工具帮助用户。"
+            # 回退到硬编码
+            search_web_available = self.registry.get("search.web") is not None
+            if search_web_available:
+                system_prompt = (
+                    "你是一个智能助手，可以调用工具帮助用户。\n"
+                    "如果用户的问题需要实时信息或外部知识，请优先使用 search.web 工具进行网络搜索。"
+                )
+            else:
+                system_prompt = "你是一个智能助手，可以调用工具帮助用户。"
 
         messages = [
             {"role": "system", "content": system_prompt},

@@ -220,6 +220,27 @@ class ToolRegistry:
 
         return None
 
+    def get_by_name(self, tool_name: str) -> Tool | None:
+        """
+        通过工具名称获取工具
+
+        Args:
+            tool_name: 工具名称
+
+        Returns:
+            工具定义，不存在返回 None
+        """
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM tools WHERE name = ?",
+                (tool_name,)
+            ).fetchone()
+
+            if row:
+                return self._row_to_tool(row)
+
+        return None
+
     def delete(self, tool_id: str) -> bool:
         """
         删除工具
