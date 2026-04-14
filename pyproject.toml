@@ -31,4 +31,4 @@ llama-cpp = [
 package = true
 
 [project.scripts]
-qd-agents = "qd_agents.cli:main"
+qd-agents = "qd_agents.cli:run"

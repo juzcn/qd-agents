@@ -35,6 +35,13 @@ logging.basicConfig(
 
 logger = logging.getLogger("qd-agents")
 
+app = typer.Typer(
+    name="qd-agents",
+    help="从对话到自动化流程的智能体系统",
+    no_args_is_help=False,
+    add_completion=False,
+)
+
 console = Console()
 
 
@@ -688,7 +695,9 @@ def _version():
     console.print(f"qd-agents 版本: [bold]{__version__}[/]")
 
 
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c"),
     provider: Optional[str] = typer.Option(None, "--provider", "-p"),
@@ -704,6 +713,9 @@ def main(
     默认启动交互式聊天会话。使用选项执行其他操作。
     多个选项可以同时使用。
     """
+    if ctx.invoked_subcommand is not None:
+        return
+
     if show_version:
         _version()
         return
@@ -724,5 +736,10 @@ def main(
     asyncio.run(_chat_async(base_dir, config_file, provider, model))
 
 
+def run():
+    """脚本入口点"""
+    app()
+
+
 if __name__ == "__main__":
-    typer.run(main)
+    app()
