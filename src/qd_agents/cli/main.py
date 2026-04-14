@@ -39,6 +39,7 @@ app = typer.Typer(
     name="qd-agents",
     help="从对话到自动化流程的智能体系统",
     no_args_is_help=True,
+    add_completion=False,
 )
 
 console = Console()
