@@ -6,6 +6,7 @@
   },
   "llm": {
     "default_provider": "nvidia",
+    "default_model": null,
     "providers": {
       "nvidia": {
         "api_key": "your_nvidia_api_key_here",

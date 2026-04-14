@@ -42,6 +42,7 @@ class SearchConfig(BaseModel):
 class LLMConfig(BaseModel):
     """LLM 配置"""
     default_provider: str = "nvidia"
+    default_model: str | None = None
     providers: dict[str, LLMProviderConfig] = Field(default_factory=dict)
     two_phase_enabled: bool = True
     tool_threshold: int = 50
@@ -215,6 +216,10 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
 
     # 向后兼容：支持旧的 'model' 字段
     if 'llm' in data and 'providers' in data['llm']:
+        # 确保 default_model 存在
+        if 'default_model' not in data['llm']:
+            data['llm']['default_model'] = None
+
         for name, provider_data in data['llm']['providers'].items():
             if 'model' in provider_data and provider_data['model'] and 'models' not in provider_data:
                 provider_data['models'] = [provider_data['model']]
@@ -227,6 +232,61 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
                 provider_data.setdefault('auto_discover', False)
 
     return Config(**data)
+
+
+def _config_to_dict(config: Config, base_dir: Path | None = None) -> dict[str, Any]:
+    """将 Config 对象转换为字典"""
+    if base_dir is None:
+        base_dir = Path.cwd()
+
+    data = config.model_dump()
+
+    # 转换 Path 字段为相对路径
+    if data.get('tool_registry') and data['tool_registry'].get('db_path'):
+        data['tool_registry']['db_path'] = str(Path(data['tool_registry']['db_path']).relative_to(base_dir))
+    if data.get('tool_registry') and data['tool_registry'].get('model_path'):
+        data['tool_registry']['model_path'] = str(Path(data['tool_registry']['model_path']).relative_to(base_dir))
+
+    if data.get('prompts') and data['prompts'].get('template_dir'):
+        data['prompts']['template_dir'] = str(Path(data['prompts']['template_dir']).relative_to(base_dir))
+
+    if data.get('storage'):
+        if data['storage'].get('data_dir'):
+            data['storage']['data_dir'] = str(Path(data['storage']['data_dir']).relative_to(base_dir))
+        if data['storage'].get('traces_dir'):
+            data['storage']['traces_dir'] = str(Path(data['storage']['traces_dir']).relative_to(base_dir))
+        if data['storage'].get('audit_dir'):
+            data['storage']['audit_dir'] = str(Path(data['storage']['audit_dir']).relative_to(base_dir))
+
+    if data.get('observability') and data['observability'].get('log_file_path'):
+        data['observability']['log_file_path'] = str(Path(data['observability']['log_file_path']).relative_to(base_dir))
+
+    return data
+
+
+def save_config(
+    config: Config,
+    base_dir: Path | None = None,
+    config_file: Path | None = None,
+) -> None:
+    """
+    保存配置到 config.json
+
+    Args:
+        config: 配置对象
+        base_dir: 项目根目录
+        config_file: config.json 文件路径
+    """
+    if base_dir is None:
+        base_dir = Path.cwd()
+
+    if config_file is None:
+        config_file = base_dir / "config.json"
+
+    config_data = _config_to_dict(config, base_dir)
+
+    with open(config_file, 'w', encoding='utf-8') as f:
+        json.dump(config_data, f, ensure_ascii=False, indent=2)
 
 
 def load_config(

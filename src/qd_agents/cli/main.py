@@ -17,7 +17,7 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
 from prompt_toolkit.shortcuts import radiolist_dialog
 
-from ..config import load_config
+from ..config import load_config, save_config
 from ..llm import LLMClient
 from ..registry import ToolRegistry
 from ..prompts import PromptLoader
@@ -130,6 +130,10 @@ async def _chat_async(
         console.print(f"请在 config.json 文件中设置 {provider_name} 的 api_key")
         raise typer.Exit(1)
 
+    # 保存配置相关信息用于后续更新
+    current_base_dir = base_dir or Path.cwd()
+    current_config_file = config_file or (current_base_dir / "config.json")
+
     # 创建 LLM 客户端
     console.print(f"[dim]正在连接 {provider_config.base_url}...[/]")
 
@@ -236,7 +240,16 @@ async def _chat_async(
 
                 if selected_model:
                     if llm_client.switch_model(selected_model):
-                        console.print(f"\n[green]已切换到模型:[/] {selected_model}\n")
+                        console.print(f"\n[green]已切换到模型:[/] {selected_model}")
+
+                        # 更新配置（仅对 auto_discover: false 的提供商保存 default_model）
+                        config.llm.default_provider = provider_name
+                        if not provider_config.auto_discover:
+                            config.llm.default_model = selected_model
+                            console.print(f"[dim]已更新 config.json[/]")
+                            save_config(config, base_dir=current_base_dir, config_file=current_config_file)
+
+                        console.print()
                     else:
                         console.print(f"\n[red]切换模型失败[/]\n")
                 else:
