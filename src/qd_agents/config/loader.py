@@ -151,7 +151,7 @@ class Config(BaseSettings):
                 model_path=model_path if model_path.exists() else None,
             ),
             prompts=PromptsConfig(
-                template_dir=base_dir / "qd_agents" / "prompts" / "templates",
+                template_dir=base_dir / "src" / "qd_agents" / "prompts" / "templates",
             ),
             storage=StorageConfig(
                 data_dir=data_dir,
@@ -175,8 +175,12 @@ def load_config(base_dir: Path | None = None, env_file: Path | None = None) -> C
     Returns:
         配置对象
     """
-    if env_file is None and base_dir is not None:
-        env_file = base_dir / ".env"
+    if env_file is None:
+        if base_dir is not None:
+            env_file = base_dir / ".env"
+        else:
+            # 默认从当前工作目录加载 .env
+            env_file = Path.cwd() / ".env"
 
     if env_file and env_file.exists():
         load_dotenv(env_file)

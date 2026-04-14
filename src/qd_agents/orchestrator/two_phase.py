@@ -351,8 +351,16 @@ class TwoPhaseOrchestrator:
         openai_tools.append(self._meta_tools["coding_tool_use"])
         openai_tools.append(self._meta_tools["step_down"])
 
+        if self.prompts:
+            system_prompt = self.prompts.render(
+                "system_prompt",
+                tools=tools,
+            )
+        else:
+            system_prompt = "你是一个智能助手，可以调用工具帮助用户。"
+
         messages = [
-            {"role": "system", "content": "你是一个智能助手，可以调用工具帮助用户。"},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_input},
         ]
 
@@ -391,14 +399,23 @@ class TwoPhaseOrchestrator:
 
     def _build_phase_one_messages(self, user_input: str) -> list[dict[str, str]]:
         """构建第一阶段消息"""
-        system_prompt = (
-            "你是一个智能路由助手。"
-            "你有三个工具可用：\n"
-            "1. direct - 直接回答用户问题\n"
-            "2. find_tools - 检索相关工具\n"
-            "3. search.web - 网络搜索（如果可用）\n"
-            "请选择合适的工具处理用户请求。"
-        )
+        if self.prompts:
+            # 检查 search.web 是否可用
+            search_web_available = self.registry.get("search.web") is not None
+            system_prompt = self.prompts.render(
+                "phase_one",
+                search_web_available=search_web_available,
+            )
+        else:
+            # 回退到硬编码
+            system_prompt = (
+                "你是一个智能路由助手。"
+                "你有三个工具可用：\n"
+                "1. direct - 直接回答用户问题\n"
+                "2. find_tools - 检索相关工具\n"
+                "3. search.web - 网络搜索（如果可用）\n"
+                "请选择合适的工具处理用户请求。"
+            )
 
         return [
             {"role": "system", "content": system_prompt},
@@ -411,16 +428,22 @@ class TwoPhaseOrchestrator:
         found_tools: list[Tool],
     ) -> list[dict[str, str]]:
         """构建第二阶段消息"""
-        tool_descriptions = "\n".join([
-            f"- {t.name}: {t.description}"
-            for t in found_tools
-        ])
-
-        system_prompt = (
-            "你是一个智能规划助手。\n"
-            f"可用工具：\n{tool_descriptions}\n"
-            "你也可以使用 coding_tool_use 生成 Python 代码来编排多个工具。"
-        )
+        if self.prompts:
+            system_prompt = self.prompts.render(
+                "phase_two",
+                tools=found_tools,
+            )
+        else:
+            # 回退到硬编码
+            tool_descriptions = "\n".join([
+                f"- {t.name}: {t.description}"
+                for t in found_tools
+            ])
+            system_prompt = (
+                "你是一个智能规划助手。\n"
+                f"可用工具：\n{tool_descriptions}\n"
+                "你也可以使用 coding_tool_use 生成 Python 代码来编排多个工具。"
+            )
 
         return [
             {"role": "system", "content": system_prompt},

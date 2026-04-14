@@ -16,9 +16,13 @@
 1. **coding_tool_use** - 生成 Python 代码来编排多个工具
    - 适用于：多步骤、条件分支、循环等复杂逻辑
    - 代码中可以直接调用已注册工具的同名函数
+   - 参数：code - Python代码字符串，可调用已注册工具，也可使用Python标准库
 
 2. **step_down** - 降级处理
    - 适用于：没有合适工具、任务太复杂、有安全顾虑时
+   - 参数：
+     - reason: 降级原因，可选值: no_matching_tools, too_complex, safety_concern, user_confirmation_required
+     - message: 给用户的友好提示信息
 
 ## 决策策略
 

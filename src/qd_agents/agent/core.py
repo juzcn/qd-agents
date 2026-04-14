@@ -150,6 +150,7 @@ class QDAgent:
                 tags=["echo", "utility"],
             ),
         )
+        from .builtins import echo
         self.registry.register(echo_tool)
         self.executor_registry.register_function("echo", echo)
 
@@ -278,9 +279,3 @@ class QDAgent:
 
         # 默认返回
         return "处理完成"
-
-
-# 内置工具函数
-async def echo(message: str) -> dict[str, Any]:
-    """回显消息"""
-    return {"message": message, "timestamp": datetime.utcnow().isoformat()}

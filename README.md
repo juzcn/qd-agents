@@ -58,6 +58,12 @@ uv run qd-agents --help
 uv run qd-agents list-models
 ```
 
+### 初始化内置工具
+
+```bash
+uv run qd-agents init-tools
+```
+
 ### 列出已注册工具
 
 ```bash
