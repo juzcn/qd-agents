@@ -47,8 +47,6 @@ class ChatCommandCompleter(Completer):
 
     COMMANDS = [
         "/quit",
-        "/exit",
-        "/q",
         "/help",
         "/clear",
         "/history",
@@ -107,7 +105,7 @@ async def _chat_async(
 ):
     """异步聊天实现"""
     console.print("[bold blue]qd-agents[/] - 智能体系统", style="bold")
-    console.print("输入 /quit 或 /exit 退出，输入 /help 查看帮助\n", style="dim")
+    console.print("输入 /quit 退出，输入 /help 查看帮助\n", style="dim")
 
     # 加载配置
     config = load_config(base_dir=base_dir, config_file=config_file)
@@ -182,13 +180,13 @@ async def _chat_async(
                 [("class:prompt", "你: ")],
             )
 
-            if user_input.lower() in ["/quit", "/exit", "/q"]:
+            if user_input.lower() == "/quit":
                 console.print("[bold]再见！[/]")
                 break
 
             if user_input.lower() == "/help":
                 console.print("\n[bold]可用命令:[/]")
-                console.print("  /quit, /exit, /q - 退出程序")
+                console.print("  /quit - 退出程序")
                 console.print("  /clear - 清空屏幕")
                 console.print("  /history - 显示历史记录")
                 console.print("  /model - 显示当前模型")
