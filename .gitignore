@@ -20,8 +20,8 @@ wheels/
 .env
 
 # Project docs (from parent directory)
-CLAUDE.md
-REQUIREMENTS.md
+# CLAUDE.md
+# REQUIREMENTS.md
 
 # Test files
 test_*.py

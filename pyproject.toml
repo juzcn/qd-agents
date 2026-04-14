@@ -1,7 +1,7 @@
 [project]
 name = "qd-agents"
 version = "0.1.0"
-description = "意图驱动的上下文隔离多Agent系统"
+description = "用Python编排和执行自动化流程的Agent系统"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
