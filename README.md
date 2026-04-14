@@ -115,47 +115,33 @@ uv run qd-agents --help
 ### 列出可用模型
 
 ```bash
-# 使用默认提供商
-uv run qd-agents list-models
-
-# 指定提供商
-uv run qd-agents list-models --provider nvidia
-uv run qd-agents list-models --provider xunfei
-
-# 指定配置文件
-uv run qd-agents list-models --config /path/to/config.json
+# 列出所有提供商的模型
+uv run qd-agents --list-models
 ```
 
 ### 初始化内置工具
 
 ```bash
-uv run qd-agents init-tools
+uv run qd-agents --init-tools
 ```
 
 ### 列出已注册工具
 
 ```bash
-uv run qd-agents list-tools
+uv run qd-agents --list-tools
 ```
 
 ### 启动交互式聊天
 
 ```bash
-# 使用默认提供商
-uv run qd-agents chat
-
-# 指定提供商和/或模型
-uv run qd-agents chat --provider xunfei
-uv run qd-agents chat --provider nvidia --model deepseek-ai/DeepSeek-V3
-
-# 指定配置文件
-uv run qd-agents chat --config /path/to/config.json
+# 默认直接启动聊天
+uv run qd-agents
 ```
 
 ### 查看版本
 
 ```bash
-uv run qd-agents version
+uv run qd-agents --version
 ```
 
 ## 项目结构
