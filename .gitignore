@@ -26,6 +26,12 @@ REQUIREMENTS.md
 # Test files
 test_*.py
 
+# Large model files
+*.gguf
+*.safetensors
+*.pth
+*.pt
+
 # Temporary files
 *.tmp
 *.log
