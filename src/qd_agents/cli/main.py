@@ -698,14 +698,10 @@ def _version():
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c"),
-    provider: Optional[str] = typer.Option(None, "--provider", "-p"),
-    model: Optional[str] = typer.Option(None, "--model", "-m"),
-    list_models: bool = typer.Option(False, "--list-models", help="列出可用模型"),
-    list_tools: bool = typer.Option(False, "--list-tools", help="列出已注册的工具"),
-    init_tools: bool = typer.Option(False, "--init-tools", help="初始化内置工具"),
-    show_version: bool = typer.Option(False, "--show-version", help="显示版本信息"),
+    list_models: bool = typer.Option(False, "--list-models"),
+    list_tools: bool = typer.Option(False, "--list-tools"),
+    init_tools: bool = typer.Option(False, "--init-tools"),
+    show_version: bool = typer.Option(False, "--show-version"),
 ):
     """
     qd-agents - 从对话到自动化流程的智能体系统
@@ -721,19 +717,19 @@ def main(
         return
 
     if list_models:
-        asyncio.run(_list_models_async(base_dir, config_file, provider))
+        asyncio.run(_list_models_async(None, None, None))
         return
 
     if list_tools:
-        _list_tools(base_dir, config_file)
+        _list_tools(None, None)
         return
 
     if init_tools:
-        _init_tools(base_dir, config_file)
+        _init_tools(None, None)
         return
 
     # 默认运行 chat
-    asyncio.run(_chat_async(base_dir, config_file, provider, model))
+    asyncio.run(_chat_async(None, None, None, None))
 
 
 def run():
