@@ -45,26 +45,26 @@ console = Console()
 class ChatCommandCompleter(Completer):
     """聊天命令补全器"""
 
-    COMMANDS = [
-        "/quit",
-        "/help",
-        "/clear",
-        "/history",
-        "/model",
-        "/tools",
-    ]
+    COMMANDS = {
+        "/quit": "退出程序",
+        "/help": "显示帮助信息",
+        "/clear": "清空屏幕",
+        "/history": "显示历史记录",
+        "/model": "显示当前模型",
+        "/tools": "列出可用工具",
+    }
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
 
         # 如果以 / 开头，补全命令
         if text.startswith("/"):
-            for cmd in self.COMMANDS:
+            for cmd, desc in self.COMMANDS.items():
                 if cmd.startswith(text):
                     yield Completion(
                         cmd,
                         start_position=-len(text),
-                        display_meta="命令",
+                        display_meta=desc,
                     )
 
 
