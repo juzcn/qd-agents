@@ -35,3 +35,6 @@ test_*.py
 # Temporary files
 *.tmp
 *.log
+
+# Data directory (runtime generated)
+data/
