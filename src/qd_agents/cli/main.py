@@ -2,6 +2,7 @@
 CLI 主入口
 """
 import asyncio
+import json
 import logging
 import sys
 from pathlib import Path
@@ -15,9 +16,9 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
-from prompt_toolkit.shortcuts import radiolist_dialog
+import questionary
 
-from ..config import load_config, save_config
+from ..config import load_config
 from ..llm import LLMClient
 from ..registry import ToolRegistry
 from ..prompts import PromptLoader
@@ -123,39 +124,9 @@ async def _chat_async(
     # 选择提供商
     provider_name = provider or config.llm.default_provider
 
-    # 获取提供商配置
-    provider_config = config.llm.providers.get(provider_name)
-    if not provider_config or not provider_config.api_key:
-        console.print(f"[red]错误: 未找到 {provider_name.upper()}_API_KEY[/]")
-        console.print(f"请在 config.json 文件中设置 {provider_name} 的 api_key")
-        raise typer.Exit(1)
-
     # 保存配置相关信息用于后续更新
     current_base_dir = base_dir or Path.cwd()
     current_config_file = config_file or (current_base_dir / "config.json")
-
-    # 创建 LLM 客户端
-    console.print(f"[dim]正在连接 {provider_config.base_url}...[/]")
-
-    model_names = provider_config.models.copy() if provider_config.models else []
-    if model:
-        model_names = [model]
-
-    llm_client = LLMClient(
-        api_key=provider_config.api_key,
-        base_url=provider_config.base_url,
-        model_names=model_names if model_names else None,
-    )
-
-    # 如果启用了自动发现且没有预定义模型，则发现模型
-    if provider_config.auto_discover and not model_names:
-        with console.status("[dim]正在发现可用模型...[/]"):
-            await llm_client.discover_models()
-    elif not model_names:
-        # 使用默认模型
-        with console.status("[dim]加载默认模型列表...[/]"):
-            # 触发默认模型加载
-            await llm_client.discover_models(top_k=0)
 
     # 创建 Tool Registry
     tool_registry = ToolRegistry(
@@ -167,19 +138,61 @@ async def _chat_async(
     if config.prompts and config.prompts.template_dir.exists():
         prompt_loader = PromptLoader(template_dir=config.prompts.template_dir)
 
-    # 创建 Agent
-    agent = QDAgent(
-        config=config,
-        llm_client=llm_client,
-        tool_registry=tool_registry,
-        prompt_loader=prompt_loader,
-    )
+    # 定义一个函数来初始化/重新初始化 LLM 客户端和 Agent
+    async def init_llm_and_agent(p: str, m: str = None):
+        nonlocal llm_client, agent, provider_name, provider_config
 
-    # 初始化 Agent
-    with console.status("[dim]正在初始化 Agent...[/]"):
-        await agent.initialize()
+        provider_name = p
+        provider_config = config.llm.providers.get(provider_name)
+        if not provider_config or not provider_config.api_key:
+            console.print(f"[red]错误: 未找到 {provider_name.upper()}_API_KEY[/]")
+            return False
 
-    console.print(f"[green]当前模型:[/] {llm_client.current_model}\n")
+        # 关闭旧的客户端
+        if llm_client is not None:
+            await llm_client.close()
+
+        console.print(f"[dim]正在连接 {provider_config.base_url}...[/]")
+
+        model_names = provider_config.models.copy() if provider_config.models else []
+        if m:
+            model_names = [m]
+
+        llm_client = LLMClient(
+            api_key=provider_config.api_key,
+            base_url=provider_config.base_url,
+            model_names=model_names if model_names else None,
+        )
+
+        # 如果启用了自动发现且没有预定义模型，则发现模型
+        if provider_config.auto_discover and not model_names:
+            with console.status("[dim]正在发现可用模型...[/]"):
+                await llm_client.discover_models()
+        elif not model_names:
+            # 使用默认模型
+            with console.status("[dim]加载默认模型列表...[/]"):
+                await llm_client.discover_models(top_k=0)
+
+        # 重新创建 Agent
+        agent = QDAgent(
+            config=config,
+            llm_client=llm_client,
+            tool_registry=tool_registry,
+            prompt_loader=prompt_loader,
+        )
+
+        with console.status("[dim]正在初始化 Agent...[/]"):
+            await agent.initialize()
+
+        console.print(f"[green]当前模型:[/] {provider_name}/{llm_client.current_model}\n")
+        return True
+
+    # 初始化
+    llm_client = None
+    agent = None
+    provider_config = None
+    if not await init_llm_and_agent(provider_name, model):
+        raise typer.Exit(1)
 
     # 创建 prompt session
     session: PromptSession[str] = PromptSession(
@@ -216,43 +229,100 @@ async def _chat_async(
                 continue
 
             if user_input.lower() == "/model":
-                console.print(f"\n[bold]当前模型:[/] {llm_client.current_model}\n")
+                console.print(f"\n[bold]当前模型:[/] {provider_name}/{llm_client.current_model}\n")
                 continue
 
+            # 处理 /models 命令
             if user_input.lower() == "/models":
-                models = llm_client.available_models
-                if not models:
+                # 收集所有提供商的模型
+                all_models = []
+
+                # 添加当前提供商的模型
+                current_models = llm_client.available_models
+                for model_name in current_models:
+                    all_models.append({
+                        "provider": provider_name,
+                        "model": model_name,
+                        "is_current": (model_name == llm_client.current_model),
+                        "is_current_provider": True
+                    })
+
+                # 添加其他提供商的模型
+                for other_provider, other_config in config.llm.providers.items():
+                    if other_provider == provider_name:
+                        continue
+                    if other_config.models:
+                        for model_name in other_config.models:
+                            all_models.append({
+                                "provider": other_provider,
+                                "model": model_name,
+                                "is_current": False,
+                                "is_current_provider": False
+                            })
+
+                if not all_models:
                     console.print("\n[yellow]没有可用模型[/]\n")
                     continue
 
-                # 构建选择列表
+                # 构建选择项，格式为 provider/model
                 choices = []
-                for idx, model_name in enumerate(models):
-                    marker = " *" if model_name == llm_client.current_model else ""
-                    choices.append((model_name, f"{model_name}{marker}"))
-
-                # 显示选择对话框
-                selected_model = await radiolist_dialog(
-                    title="选择模型",
-                    text="请选择要使用的模型（* 标记当前模型）:",
-                    values=choices,
-                ).run_async()
-
-                if selected_model:
-                    if llm_client.switch_model(selected_model):
-                        console.print(f"\n[green]已切换到模型:[/] {selected_model}")
-
-                        # 更新配置（仅对 auto_discover: false 的提供商保存 default_model）
-                        config.llm.default_provider = provider_name
-                        if not provider_config.auto_discover:
-                            config.llm.default_model = selected_model
-                            console.print(f"[dim]已更新 config.json[/]")
-                            save_config(config, base_dir=current_base_dir, config_file=current_config_file)
-
-                        console.print()
+                for item in all_models:
+                    display_name = f"{item['provider']}/{item['model']}"
+                    if item['is_current']:
+                        choices.append(questionary.Choice(f"{display_name} (当前)", value=item))
                     else:
-                        console.print(f"\n[red]切换模型失败[/]\n")
-                else:
+                        choices.append(questionary.Choice(display_name, value=item))
+
+                try:
+                    # 使用 questionary 默认样式，有明显的菜单框
+                    selected = await questionary.select(
+                        "选择模型:",
+                        choices=choices,
+                        qmark=">",
+                        instruction="(↑↓ 选择, Enter 确认)",
+                    ).ask_async()
+
+                    if selected:
+                        selected_item = selected
+                        selected_provider = selected_item["provider"]
+                        selected_model = selected_item["model"]
+
+                        # 如果是当前提供商的模型，直接切换
+                        if selected_item["is_current_provider"]:
+                            if llm_client.switch_model(selected_model):
+                                console.print(f"\n[green]已切换到模型:[/] {selected_provider}/{selected_model}")
+                                # 更新配置（仅对 auto_discover: false 的提供商保存 default_model）
+                                selected_provider_config = config.llm.providers.get(selected_provider)
+                                if selected_provider_config and not selected_provider_config.auto_discover:
+                                    # 直接更新 config.json 文件
+                                    if current_config_file.exists():
+                                        with open(current_config_file, 'r', encoding='utf-8') as f:
+                                            config_data = json.load(f)
+                                        config_data['llm']['default_provider'] = selected_provider
+                                        config_data['llm']['default_model'] = selected_model
+                                        with open(current_config_file, 'w', encoding='utf-8') as f:
+                                            json.dump(config_data, f, ensure_ascii=False, indent=2)
+                                        console.print(f"[dim]已更新 config.json[/]")
+                                console.print()
+                            else:
+                                console.print(f"\n[red]切换模型失败[/]\n")
+                        else:
+                            # 动态切换提供商
+                            console.print(f"[dim]切换到提供商 {selected_provider}...[/]")
+                            if await init_llm_and_agent(selected_provider, selected_model):
+                                # 更新配置
+                                selected_provider_config = config.llm.providers.get(selected_provider)
+                                if selected_provider_config and not selected_provider_config.auto_discover:
+                                    # 直接更新 config.json 文件
+                                    if current_config_file.exists():
+                                        with open(current_config_file, 'r', encoding='utf-8') as f:
+                                            config_data = json.load(f)
+                                        config_data['llm']['default_provider'] = selected_provider
+                                        config_data['llm']['default_model'] = selected_model
+                                        with open(current_config_file, 'w', encoding='utf-8') as f:
+                                            json.dump(config_data, f, ensure_ascii=False, indent=2)
+                                        console.print(f"[dim]已更新 config.json[/]")
+                except (KeyboardInterrupt, EOFError):
                     console.print()
                 continue
 
@@ -321,7 +391,7 @@ async def _list_models_async(base_dir: Optional[Path], config_file: Optional[Pat
     if provider_config.models and not provider_config.auto_discover:
         console.print("\n[bold]已配置的模型:[/]\n")
         for model_name in provider_config.models:
-            console.print(f"  - [cyan]{model_name}[/]")
+            console.print(f"  - [cyan]{provider_name}/{model_name}[/]")
         return
 
     # 否则从 API 获取
@@ -336,7 +406,7 @@ async def _list_models_async(base_dir: Optional[Path], config_file: Optional[Pat
 
             console.print("[bold]可用模型:[/]\n")
             for m in models_response.data:
-                console.print(f"  - [cyan]{m.id}[/]")
+                console.print(f"  - [cyan]{provider_name}/{m.id}[/]")
                 if hasattr(m, "created") and m.created:
                     console.print(f"    创建时间: {m.created}", style="dim")
 
