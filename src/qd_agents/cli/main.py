@@ -35,13 +35,6 @@ logging.basicConfig(
 
 logger = logging.getLogger("qd-agents")
 
-app = typer.Typer(
-    name="qd-agents",
-    help="从对话到自动化流程的智能体系统",
-    no_args_is_help=True,
-    add_completion=False,
-)
-
 console = Console()
 
 
@@ -78,27 +71,6 @@ prompt_style = Style.from_dict(
         "prompt": "bold cyan",
     }
 )
-
-
-@app.command()
-def chat(
-    base_dir: Optional[Path] = typer.Option(
-        None, "--base-dir", "-d", help="项目根目录"
-    ),
-    config_file: Optional[Path] = typer.Option(
-        None, "--config", "-c", help="config.json 文件路径"
-    ),
-    provider: Optional[str] = typer.Option(
-        None, "--provider", "-p", help="指定 LLM 提供商 (nvidia/xunfei)"
-    ),
-    model: Optional[str] = typer.Option(
-        None, "--model", "-m", help="指定使用的模型"
-    ),
-):
-    """
-    启动交互式聊天会话
-    """
-    asyncio.run(_chat_async(base_dir, config_file, provider, model))
 
 
 async def _chat_async(
@@ -356,22 +328,6 @@ async def _chat_async(
             console.print(f"\n[red]错误: {e}[/]\n")
 
 
-@app.command()
-def list_models(
-    base_dir: Optional[Path] = typer.Option(
-        None, "--base-dir", "-d", help="项目根目录"
-    ),
-    config_file: Optional[Path] = typer.Option(
-        None, "--config", "-c", help="config.json 文件路径"
-    ),
-    provider: Optional[str] = typer.Option(
-        None, "--provider", "-p", help="指定 LLM 提供商 (nvidia/xunfei)"
-    ),
-):
-    """列出可用模型"""
-    asyncio.run(_list_models_async(base_dir, config_file, provider))
-
-
 async def _list_models_async(base_dir: Optional[Path], config_file: Optional[Path], provider: Optional[str]):
     """异步列出模型"""
     config = load_config(base_dir=base_dir, config_file=config_file)
@@ -416,16 +372,8 @@ async def _list_models_async(base_dir: Optional[Path], config_file: Optional[Pat
             raise typer.Exit(1)
 
 
-@app.command()
-def list_tools(
-    base_dir: Optional[Path] = typer.Option(
-        None, "--base-dir", "-d", help="项目根目录"
-    ),
-    config_file: Optional[Path] = typer.Option(
-        None, "--config", "-c", help="config.json 文件路径"
-    ),
-):
-    """列出已注册的工具"""
+def _list_tools(base_dir: Optional[Path], config_file: Optional[Path]):
+    """列出工具"""
     config = load_config(base_dir=base_dir, config_file=config_file)
 
     db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
@@ -441,16 +389,8 @@ def list_tools(
         console.print()
 
 
-@app.command()
-def init_tools(
-    base_dir: Optional[Path] = typer.Option(
-        None, "--base-dir", "-d", help="项目根目录"
-    ),
-    config_file: Optional[Path] = typer.Option(
-        None, "--config", "-c", help="config.json 文件路径"
-    ),
-):
-    """初始化内置工具"""
+def _init_tools(base_dir: Optional[Path], config_file: Optional[Path]):
+    """初始化工具"""
     config = load_config(base_dir=base_dir, config_file=config_file)
 
     # 确保数据目录存在
@@ -742,17 +682,47 @@ def init_tools(
         console.print(f"  - {tool_name}")
 
 
-@app.command()
-def version():
-    """显示版本信息"""
+def _version():
+    """显示版本"""
     from .. import __version__
     console.print(f"qd-agents 版本: [bold]{__version__}[/]")
 
 
-def main():
-    """CLI 主函数"""
-    app()
+def main(
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-p"),
+    model: Optional[str] = typer.Option(None, "--model", "-m"),
+    list_models: bool = typer.Option(False, "--list-models", help="列出可用模型"),
+    list_tools: bool = typer.Option(False, "--list-tools", help="列出已注册的工具"),
+    init_tools: bool = typer.Option(False, "--init-tools", help="初始化内置工具"),
+    show_version: bool = typer.Option(False, "--show-version", help="显示版本信息"),
+):
+    """
+    qd-agents - 从对话到自动化流程的智能体系统
+
+    默认启动交互式聊天会话。使用选项执行其他操作。
+    多个选项可以同时使用。
+    """
+    if show_version:
+        _version()
+        return
+
+    if list_models:
+        asyncio.run(_list_models_async(base_dir, config_file, provider))
+        return
+
+    if list_tools:
+        _list_tools(base_dir, config_file)
+        return
+
+    if init_tools:
+        _init_tools(base_dir, config_file)
+        return
+
+    # 默认运行 chat
+    asyncio.run(_chat_async(base_dir, config_file, provider, model))
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)
