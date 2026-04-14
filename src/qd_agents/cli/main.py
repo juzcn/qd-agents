@@ -15,6 +15,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
+from prompt_toolkit.shortcuts import radiolist_dialog
 
 from ..config import load_config
 from ..llm import LLMClient
@@ -51,6 +52,7 @@ class ChatCommandCompleter(Completer):
         "/clear": "清空屏幕",
         "/history": "显示历史记录",
         "/model": "显示当前模型",
+        "/models": "列出并切换可用模型",
         "/tools": "列出可用工具",
     }
 
@@ -141,6 +143,16 @@ async def _chat_async(
         model_names=model_names if model_names else None,
     )
 
+    # 如果启用了自动发现且没有预定义模型，则发现模型
+    if provider_config.auto_discover and not model_names:
+        with console.status("[dim]正在发现可用模型...[/]"):
+            await llm_client.discover_models()
+    elif not model_names:
+        # 使用默认模型
+        with console.status("[dim]加载默认模型列表...[/]"):
+            # 触发默认模型加载
+            await llm_client.discover_models(top_k=0)
+
     # 创建 Tool Registry
     tool_registry = ToolRegistry(
         db_path=config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
@@ -190,6 +202,7 @@ async def _chat_async(
                 console.print("  /clear - 清空屏幕")
                 console.print("  /history - 显示历史记录")
                 console.print("  /model - 显示当前模型")
+                console.print("  /models - 列出并切换可用模型")
                 console.print("  /tools - 列出可用工具")
                 console.print("  /help - 显示此帮助\n")
                 continue
@@ -200,6 +213,34 @@ async def _chat_async(
 
             if user_input.lower() == "/model":
                 console.print(f"\n[bold]当前模型:[/] {llm_client.current_model}\n")
+                continue
+
+            if user_input.lower() == "/models":
+                models = llm_client.available_models
+                if not models:
+                    console.print("\n[yellow]没有可用模型[/]\n")
+                    continue
+
+                # 构建选择列表
+                choices = []
+                for idx, model_name in enumerate(models):
+                    marker = " *" if model_name == llm_client.current_model else ""
+                    choices.append((model_name, f"{model_name}{marker}"))
+
+                # 显示选择对话框
+                selected_model = await radiolist_dialog(
+                    title="选择模型",
+                    text="请选择要使用的模型（* 标记当前模型）:",
+                    values=choices,
+                ).run_async()
+
+                if selected_model:
+                    if llm_client.switch_model(selected_model):
+                        console.print(f"\n[green]已切换到模型:[/] {selected_model}\n")
+                    else:
+                        console.print(f"\n[red]切换模型失败[/]\n")
+                else:
+                    console.print()
                 continue
 
             if user_input.lower() == "/tools":

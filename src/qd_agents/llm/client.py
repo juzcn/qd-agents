@@ -68,6 +68,28 @@ class LLMClient:
             return self._model_names[self._current_model_index]
         return ""
 
+    @property
+    def available_models(self) -> list[str]:
+        """获取可用模型列表"""
+        return self._model_names.copy()
+
+    def switch_model(self, model_name: str) -> bool:
+        """
+        切换到指定模型
+
+        Args:
+            model_name: 模型名称
+
+        Returns:
+            是否切换成功
+        """
+        if model_name in self._model_names:
+            self._current_model_index = self._model_names.index(model_name)
+            logger.info("Switched to model: %s", model_name)
+            return True
+        logger.warning("Model not found: %s", model_name)
+        return False
+
     async def discover_models(self, top_k: int = 5) -> list[str]:
         """
         发现并选择可用模型
