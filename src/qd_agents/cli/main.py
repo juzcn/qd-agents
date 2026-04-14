@@ -339,44 +339,45 @@ async def _list_models_async(base_dir: Optional[Path], config_file: Optional[Pat
     """异步列出模型"""
     config = load_config(base_dir=base_dir, config_file=config_file)
 
-    # 选择提供商
-    provider_name = provider or config.llm.default_provider
+    # 如果指定了 provider，只显示该 provider
+    if provider:
+        provider_names = [provider]
+    else:
+        # 否则显示所有 provider
+        provider_names = list(config.llm.providers.keys())
 
-    # 获取提供商配置
-    provider_config = config.llm.providers.get(provider_name)
-    if not provider_config or not provider_config.api_key:
-        console.print(f"[red]错误: 未找到 {provider_name.upper()}_API_KEY[/]")
-        raise typer.Exit(1)
+    for provider_name in provider_names:
+        provider_config = config.llm.providers.get(provider_name)
+        if not provider_config or not provider_config.api_key:
+            continue
 
-    console.print(f"提供商: {provider_name}")
-    console.print(f"连接到: {provider_config.base_url}")
+        console.print(f"\n[bold]提供商: {provider_name}[/]")
+        console.print(f"连接到: {provider_config.base_url}")
 
-    # 如果配置了模型列表，直接显示
-    if provider_config.models and not provider_config.auto_discover:
-        console.print("\n[bold]已配置的模型:[/]\n")
-        for model_name in provider_config.models:
-            console.print(f"  - [cyan]{provider_name}/{model_name}[/]")
-        return
+        # 如果配置了模型列表，直接显示
+        if provider_config.models and not provider_config.auto_discover:
+            console.print("\n[bold]已配置的模型:[/]")
+            for model_name in provider_config.models:
+                console.print(f"  - [cyan]{provider_name}/{model_name}[/]")
+            continue
 
-    # 否则从 API 获取
-    console.print("正在获取模型列表...\n")
+        # 否则从 API 获取
+        console.print("\n正在获取模型列表...")
 
-    async with LLMClient(
-        api_key=provider_config.api_key,
-        base_url=provider_config.base_url,
-    ) as llm_client:
         try:
-            models_response = await llm_client._client.models.list()
+            async with LLMClient(
+                api_key=provider_config.api_key,
+                base_url=provider_config.base_url,
+            ) as llm_client:
+                models_response = await llm_client._client.models.list()
 
-            console.print("[bold]可用模型:[/]\n")
-            for m in models_response.data:
-                console.print(f"  - [cyan]{provider_name}/{m.id}[/]")
-                if hasattr(m, "created") and m.created:
-                    console.print(f"    创建时间: {m.created}", style="dim")
-
+                console.print("[bold]可用模型:[/]")
+                for m in models_response.data:
+                    console.print(f"  - [cyan]{provider_name}/{m.id}[/]")
+                    if hasattr(m, "created") and m.created:
+                        console.print(f"    创建时间: {m.created}", style="dim")
         except Exception as e:
             console.print(f"[red]获取模型列表失败: {e}[/]")
-            raise typer.Exit(1)
 
 
 def _list_tools(base_dir: Optional[Path], config_file: Optional[Path]):
