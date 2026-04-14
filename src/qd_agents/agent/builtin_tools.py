@@ -1,18 +1,21 @@
 """
 内置工具实现
 """
-import os
 from typing import Any
 import httpx
+
+from ..config import get_config
 
 
 # ==================== 搜索工具实现 ====================
 
 async def serper_search(query: str, num: int = 10) -> dict[str, Any]:
     """使用 Serper API 进行网络搜索"""
-    api_key = os.getenv("SERPER_API_KEY")
-    if not api_key:
-        raise ValueError("SERPER_API_KEY not found in environment variables")
+    config = get_config()
+    if not config or not config.search.serper.api_key:
+        raise ValueError("SERPER_API_KEY not found in config")
+
+    api_key = config.search.serper.api_key
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
@@ -34,9 +37,11 @@ async def tavily_search(
     max_results: int = 5,
 ) -> dict[str, Any]:
     """使用 Tavily API 进行 AI 增强的网络搜索"""
-    api_key = os.getenv("TAVILY_API_KEY")
-    if not api_key:
-        raise ValueError("TAVILY_API_KEY not found in environment variables")
+    config = get_config()
+    if not config or not config.search.tavily.api_key:
+        raise ValueError("TAVILY_API_KEY not found in config")
+
+    api_key = config.search.tavily.api_key
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
@@ -58,11 +63,15 @@ async def tavily_search(
 
 async def baidu_search(query: str, pn: int = 0) -> dict[str, Any]:
     """使用百度搜索 API 进行中文网络搜索"""
-    api_key_1 = os.getenv("BAIDU_API_KEY_1")
-    api_key_2 = os.getenv("BAIDU_API_KEY_2")
+    config = get_config()
+    if not config:
+        raise ValueError("Config not found")
+
+    api_key_1 = config.search.baidu.api_key_1
+    api_key_2 = config.search.baidu.api_key_2
 
     if not api_key_1 and not api_key_2:
-        raise ValueError("BAIDU_API_KEY_1 or BAIDU_API_KEY_2 not found in environment variables")
+        raise ValueError("BAIDU_API_KEY_1 or BAIDU_API_KEY_2 not found in config")
 
     api_key = api_key_1 or api_key_2
 

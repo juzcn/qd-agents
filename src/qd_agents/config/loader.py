@@ -1,11 +1,12 @@
 """
-配置加载器
+配置加载器 - 支持 JSON 配置文件
 """
-import os
+from __future__ import annotations
+
+import json
 from pathlib import Path
 from typing import Any
 from typing_extensions import Self
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,9 +15,28 @@ class LLMProviderConfig(BaseModel):
     """LLM 提供商配置"""
     api_key: str
     base_url: str = "https://integrate.api.nvidia.com/v1"
-    model: str | None = None
+    models: list[str] = Field(default_factory=list)
     timeout: int = 120000
     max_retries: int = 3
+    auto_discover: bool = True
+
+
+class SearchProviderConfig(BaseModel):
+    """搜索提供商配置"""
+    api_key: str = ""
+
+
+class BaiduSearchConfig(BaseModel):
+    """百度搜索配置"""
+    api_key_1: str = ""
+    api_key_2: str = ""
+
+
+class SearchConfig(BaseModel):
+    """搜索配置"""
+    serper: SearchProviderConfig = Field(default_factory=SearchProviderConfig)
+    tavily: SearchProviderConfig = Field(default_factory=SearchProviderConfig)
+    baidu: BaiduSearchConfig = Field(default_factory=BaiduSearchConfig)
 
 
 class LLMConfig(BaseModel):
@@ -114,6 +134,13 @@ class VersioningConfig(BaseModel):
     auto_migrate: bool = False
 
 
+class SystemConfig(BaseModel):
+    """系统配置"""
+    name: str = "qd-agents"
+    version: str = "1.0.0"
+    environment: str = "development"
+
+
 class Config(BaseSettings):
     """主配置类"""
     model_config = SettingsConfigDict(
@@ -123,11 +150,9 @@ class Config(BaseSettings):
         extra="ignore",
     )
 
-    system_name: str = "qd-agents"
-    system_version: str = "0.1.0"
-    environment: str = "development"
-
+    system: SystemConfig = Field(default_factory=SystemConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
     tool_registry: ToolRegistryConfig | None = None
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     prompts: PromptsConfig | None = None
@@ -164,35 +189,77 @@ class Config(BaseSettings):
         )
 
 
-def load_config(base_dir: Path | None = None, env_file: Path | None = None) -> Config:
+def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Config:
+    """将字典转换为 Config 对象"""
+    if base_dir is None:
+        base_dir = Path.cwd()
+
+    # 转换 Path 字段
+    if 'tool_registry' in data and data['tool_registry']:
+        tr = data['tool_registry']
+        tr['db_path'] = base_dir / tr['db_path'] if tr.get('db_path') else None
+        if tr.get('model_path'):
+            tr['model_path'] = base_dir / tr['model_path']
+
+    if 'prompts' in data and data['prompts']:
+        data['prompts']['template_dir'] = base_dir / data['prompts']['template_dir']
+
+    if 'storage' in data and data['storage']:
+        s = data['storage']
+        s['data_dir'] = base_dir / s['data_dir']
+        s['traces_dir'] = base_dir / s['traces_dir']
+        s['audit_dir'] = base_dir / s['audit_dir']
+
+    if 'observability' in data and data['observability'].get('log_file_path'):
+        data['observability']['log_file_path'] = base_dir / data['observability']['log_file_path']
+
+    # 向后兼容：支持旧的 'model' 字段
+    if 'llm' in data and 'providers' in data['llm']:
+        for name, provider_data in data['llm']['providers'].items():
+            if 'model' in provider_data and provider_data['model'] and 'models' not in provider_data:
+                provider_data['models'] = [provider_data['model']]
+            provider_data.pop('model', None)
+
+            # 设置默认值：nvidia 默认 auto_discover=true，其他默认 false
+            if name == 'nvidia':
+                provider_data.setdefault('auto_discover', True)
+            else:
+                provider_data.setdefault('auto_discover', False)
+
+    return Config(**data)
+
+
+def load_config(
+    base_dir: Path | None = None,
+    config_file: Path | None = None,
+) -> Config:
     """
     加载配置
 
     Args:
         base_dir: 项目根目录
-        env_file: .env 文件路径
+        config_file: config.json 文件路径
 
     Returns:
         配置对象
     """
-    if env_file is None:
-        if base_dir is not None:
-            env_file = base_dir / ".env"
-        else:
-            # 默认从当前工作目录加载 .env
-            env_file = Path.cwd() / ".env"
+    from . import set_config
 
-    if env_file and env_file.exists():
-        load_dotenv(env_file)
+    if base_dir is None:
+        base_dir = Path.cwd()
 
-    config = Config.with_defaults(base_dir=base_dir)
+    # 尝试加载 config.json
+    if config_file is None:
+        config_file = base_dir / "config.json"
 
-    # 从环境变量加载 NVIDIA 配置
-    nvidia_api_key = os.getenv("NVIDIA_API_KEY")
-    if nvidia_api_key and not config.llm.providers.get("nvidia"):
-        config.llm.providers["nvidia"] = LLMProviderConfig(
-            api_key=nvidia_api_key,
-            base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
-        )
+    if config_file and config_file.exists():
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+        config = _dict_to_config(config_data, base_dir)
+    else:
+        # 如果没有 config.json，使用默认配置
+        config = Config.with_defaults(base_dir=base_dir)
 
+    # 设置全局配置
+    set_config(config)
     return config

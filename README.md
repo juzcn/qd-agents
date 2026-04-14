@@ -4,8 +4,9 @@
 
 ## 特性
 
-- **NVIDIA NIM API 集成** - 使用 NVIDIA 免费模型
-- **自动模型发现** - 启动时自动发现并选择 Top 5 模型
+- **多 LLM 提供商支持** - NVIDIA、讯飞星辰等
+- **可配置模型列表** - 为每个提供商配置多个模型
+- **自动模型发现** - NVIDIA 等提供商支持动态发现模型
 - **模型评分选择** - 基于系列优先级和参数大小智能选择模型
 - **Fallback 机制** - 模型失败时自动切换到下一个
 - **两阶段调度** - 支持大规模工具集的智能路由
@@ -34,15 +35,74 @@ uv sync
 
 ## 配置
 
-创建 `.env` 文件：
+### 快速开始
 
-```env
-# NVIDIA NIM API Configuration
-NVIDIA_API_KEY=your_nvidia_api_key_here
-NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+1. 复制配置模板：
+```bash
+cp config.json.template config.json
 ```
 
-获取 NVIDIA API Key：https://build.nvidia.com/
+2. 编辑 `config.json`，填入你的 API Keys：
+```json
+{
+  "llm": {
+    "providers": {
+      "nvidia": {
+        "api_key": "your_nvidia_api_key_here"
+      },
+      "xunfei": {
+        "api_key": "your_xunfei_api_key_here"
+      }
+    }
+  },
+  "search": {
+    "serper": {
+      "api_key": "your_serper_api_key_here"
+    },
+    "tavily": {
+      "api_key": "your_tavily_api_key_here"
+    }
+  }
+}
+```
+
+### 配置说明
+
+**config.json** - 唯一配置文件
+- 所有配置都在此文件中，包括 API Keys
+- 不提交到版本控制（已在 .gitignore 中）
+
+**config.json.template** - 配置模板
+- 提交到版本控制
+- 包含所有配置项和默认值
+
+### LLM 提供商配置
+
+每个提供商可以配置多个模型：
+
+```json
+{
+  "nvidia": {
+    "api_key": "nvapi-xxx",
+    "base_url": "https://integrate.api.nvidia.com/v1",
+    "models": [],
+    "auto_discover": true
+  },
+  "xunfei": {
+    "api_key": "xxx",
+    "base_url": "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
+    "models": ["astron-code-latest"],
+    "auto_discover": false
+  }
+}
+```
+
+**NVIDIA**: `auto_discover: true` - 从 API 动态获取模型列表
+**其他提供商**: `auto_discover: false` - 使用配置的模型列表
+
+### 获取 API Keys
+
+- NVIDIA: https://build.nvidia.com/
 
 ## 使用
 
@@ -55,7 +115,15 @@ uv run qd-agents --help
 ### 列出可用模型
 
 ```bash
+# 使用默认提供商
 uv run qd-agents list-models
+
+# 指定提供商
+uv run qd-agents list-models --provider nvidia
+uv run qd-agents list-models --provider xunfei
+
+# 指定配置文件
+uv run qd-agents list-models --config /path/to/config.json
 ```
 
 ### 初始化内置工具
@@ -73,7 +141,15 @@ uv run qd-agents list-tools
 ### 启动交互式聊天
 
 ```bash
+# 使用默认提供商
 uv run qd-agents chat
+
+# 指定提供商和/或模型
+uv run qd-agents chat --provider xunfei
+uv run qd-agents chat --provider nvidia --model deepseek-ai/DeepSeek-V3
+
+# 指定配置文件
+uv run qd-agents chat --config /path/to/config.json
 ```
 
 ### 查看版本

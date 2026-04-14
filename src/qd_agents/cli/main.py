@@ -10,7 +10,11 @@ from typing import Optional
 import typer
 from rich.console import Console
 from rich.logging import RichHandler
-from rich.prompt import Prompt
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.styles import Style
 
 from ..config import load_config
 from ..llm import LLMClient
@@ -38,13 +42,52 @@ app = typer.Typer(
 console = Console()
 
 
+class ChatCommandCompleter(Completer):
+    """聊天命令补全器"""
+
+    COMMANDS = [
+        "/quit",
+        "/exit",
+        "/q",
+        "/help",
+        "/clear",
+        "/history",
+        "/model",
+        "/tools",
+    ]
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+
+        # 如果以 / 开头，补全命令
+        if text.startswith("/"):
+            for cmd in self.COMMANDS:
+                if cmd.startswith(text):
+                    yield Completion(
+                        cmd,
+                        start_position=-len(text),
+                        display_meta="命令",
+                    )
+
+
+# 定义 prompt 样式
+prompt_style = Style.from_dict(
+    {
+        "prompt": "bold cyan",
+    }
+)
+
+
 @app.command()
 def chat(
     base_dir: Optional[Path] = typer.Option(
         None, "--base-dir", "-d", help="项目根目录"
     ),
-    env_file: Optional[Path] = typer.Option(
-        None, "--env", "-e", help=".env 文件路径"
+    config_file: Optional[Path] = typer.Option(
+        None, "--config", "-c", help="config.json 文件路径"
+    ),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", "-p", help="指定 LLM 提供商 (nvidia/xunfei)"
     ),
     model: Optional[str] = typer.Option(
         None, "--model", "-m", help="指定使用的模型"
@@ -53,38 +96,51 @@ def chat(
     """
     启动交互式聊天会话
     """
-    asyncio.run(_chat_async(base_dir, env_file, model))
+    asyncio.run(_chat_async(base_dir, config_file, provider, model))
 
 
 async def _chat_async(
     base_dir: Optional[Path],
-    env_file: Optional[Path],
+    config_file: Optional[Path],
+    provider: Optional[str],
     model: Optional[str],
 ):
     """异步聊天实现"""
     console.print("[bold blue]qd-agents[/] - 智能体系统", style="bold")
-    console.print("输入 'quit' 或 'exit' 退出\n", style="dim")
+    console.print("输入 /quit 或 /exit 退出，输入 /help 查看帮助\n", style="dim")
 
     # 加载配置
-    config = load_config(base_dir=base_dir, env_file=env_file)
+    config = load_config(base_dir=base_dir, config_file=config_file)
 
     # 确保数据目录存在
     if config.storage:
         config.storage.data_dir.mkdir(parents=True, exist_ok=True)
+        history_file = config.storage.data_dir / "chat_history.txt"
+    else:
+        history_file = Path("data/chat_history.txt")
+        history_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # 获取 NVIDIA API Key
-    nvidia_config = config.llm.providers.get("nvidia")
-    if not nvidia_config or not nvidia_config.api_key:
-        console.print("[red]错误: 未找到 NVIDIA_API_KEY[/]")
-        console.print("请在 .env 文件中设置 NVIDIA_API_KEY")
+    # 选择提供商
+    provider_name = provider or config.llm.default_provider
+
+    # 获取提供商配置
+    provider_config = config.llm.providers.get(provider_name)
+    if not provider_config or not provider_config.api_key:
+        console.print(f"[red]错误: 未找到 {provider_name.upper()}_API_KEY[/]")
+        console.print(f"请在 config.json 文件中设置 {provider_name} 的 api_key")
         raise typer.Exit(1)
 
     # 创建 LLM 客户端
-    console.print(f"[dim]正在连接 {nvidia_config.base_url}...[/]")
+    console.print(f"[dim]正在连接 {provider_config.base_url}...[/]")
+
+    model_names = provider_config.models.copy() if provider_config.models else []
+    if model:
+        model_names = [model]
 
     llm_client = LLMClient(
-        api_key=nvidia_config.api_key,
-        base_url=nvidia_config.base_url,
+        api_key=provider_config.api_key,
+        base_url=provider_config.base_url,
+        model_names=model_names if model_names else None,
     )
 
     # 创建 Tool Registry
@@ -111,14 +167,50 @@ async def _chat_async(
 
     console.print(f"[green]当前模型:[/] {llm_client.current_model}\n")
 
+    # 创建 prompt session
+    session: PromptSession[str] = PromptSession(
+        completer=ChatCommandCompleter(),
+        history=FileHistory(str(history_file)),
+        style=prompt_style,
+        complete_while_typing=True,
+    )
+
     # 聊天循环
     while True:
         try:
-            user_input = Prompt.ask("[bold cyan]你[/]")
+            user_input = await session.prompt_async(
+                [("class:prompt", "你: ")],
+            )
 
-            if user_input.lower() in ["quit", "exit", "q"]:
+            if user_input.lower() in ["/quit", "/exit", "/q"]:
                 console.print("[bold]再见！[/]")
                 break
+
+            if user_input.lower() == "/help":
+                console.print("\n[bold]可用命令:[/]")
+                console.print("  /quit, /exit, /q - 退出程序")
+                console.print("  /clear - 清空屏幕")
+                console.print("  /history - 显示历史记录")
+                console.print("  /model - 显示当前模型")
+                console.print("  /tools - 列出可用工具")
+                console.print("  /help - 显示此帮助\n")
+                continue
+
+            if user_input.lower() == "/clear":
+                console.clear()
+                continue
+
+            if user_input.lower() == "/model":
+                console.print(f"\n[bold]当前模型:[/] {llm_client.current_model}\n")
+                continue
+
+            if user_input.lower() == "/tools":
+                tools = tool_registry.list_all()
+                console.print(f"\n[bold]可用工具 ({len(tools)}):[/]")
+                for tool in tools:
+                    console.print(f"  - [cyan]{tool.name}[/]: {tool.description}")
+                console.print()
+                continue
 
             if not user_input.strip():
                 continue
@@ -132,8 +224,11 @@ async def _chat_async(
             console.print(f"[dim]耗时: {result.total_duration_ms}ms[/]", style="dim")
 
         except KeyboardInterrupt:
-            console.print("\n[yellow]中断[/]")
+            console.print("\n[yellow]按 /quit 退出[/]")
             continue
+        except EOFError:
+            console.print("\n[bold]再见！[/]")
+            break
         except Exception as e:
             console.print(f"\n[red]错误: {e}[/]\n")
 
@@ -143,29 +238,46 @@ def list_models(
     base_dir: Optional[Path] = typer.Option(
         None, "--base-dir", "-d", help="项目根目录"
     ),
-    env_file: Optional[Path] = typer.Option(
-        None, "--env", "-e", help=".env 文件路径"
+    config_file: Optional[Path] = typer.Option(
+        None, "--config", "-c", help="config.json 文件路径"
+    ),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", "-p", help="指定 LLM 提供商 (nvidia/xunfei)"
     ),
 ):
     """列出可用模型"""
-    asyncio.run(_list_models_async(base_dir, env_file))
+    asyncio.run(_list_models_async(base_dir, config_file, provider))
 
 
-async def _list_models_async(base_dir: Optional[Path], env_file: Optional[Path]):
+async def _list_models_async(base_dir: Optional[Path], config_file: Optional[Path], provider: Optional[str]):
     """异步列出模型"""
-    config = load_config(base_dir=base_dir, env_file=env_file)
+    config = load_config(base_dir=base_dir, config_file=config_file)
 
-    nvidia_config = config.llm.providers.get("nvidia")
-    if not nvidia_config or not nvidia_config.api_key:
-        console.print("[red]错误: 未找到 NVIDIA_API_KEY[/]")
+    # 选择提供商
+    provider_name = provider or config.llm.default_provider
+
+    # 获取提供商配置
+    provider_config = config.llm.providers.get(provider_name)
+    if not provider_config or not provider_config.api_key:
+        console.print(f"[red]错误: 未找到 {provider_name.upper()}_API_KEY[/]")
         raise typer.Exit(1)
 
-    console.print(f"连接到: {nvidia_config.base_url}")
+    console.print(f"提供商: {provider_name}")
+    console.print(f"连接到: {provider_config.base_url}")
+
+    # 如果配置了模型列表，直接显示
+    if provider_config.models and not provider_config.auto_discover:
+        console.print("\n[bold]已配置的模型:[/]\n")
+        for model_name in provider_config.models:
+            console.print(f"  - [cyan]{model_name}[/]")
+        return
+
+    # 否则从 API 获取
     console.print("正在获取模型列表...\n")
 
     async with LLMClient(
-        api_key=nvidia_config.api_key,
-        base_url=nvidia_config.base_url,
+        api_key=provider_config.api_key,
+        base_url=provider_config.base_url,
     ) as llm_client:
         try:
             models_response = await llm_client._client.models.list()
@@ -186,12 +298,12 @@ def list_tools(
     base_dir: Optional[Path] = typer.Option(
         None, "--base-dir", "-d", help="项目根目录"
     ),
-    env_file: Optional[Path] = typer.Option(
-        None, "--env", "-e", help=".env 文件路径"
+    config_file: Optional[Path] = typer.Option(
+        None, "--config", "-c", help="config.json 文件路径"
     ),
 ):
     """列出已注册的工具"""
-    config = load_config(base_dir=base_dir, env_file=env_file)
+    config = load_config(base_dir=base_dir, config_file=config_file)
 
     db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
     registry = ToolRegistry(db_path=db_path)
@@ -211,12 +323,12 @@ def init_tools(
     base_dir: Optional[Path] = typer.Option(
         None, "--base-dir", "-d", help="项目根目录"
     ),
-    env_file: Optional[Path] = typer.Option(
-        None, "--env", "-e", help=".env 文件路径"
+    config_file: Optional[Path] = typer.Option(
+        None, "--config", "-c", help="config.json 文件路径"
     ),
 ):
     """初始化内置工具"""
-    config = load_config(base_dir=base_dir, env_file=env_file)
+    config = load_config(base_dir=base_dir, config_file=config_file)
 
     # 确保数据目录存在
     if config.storage:
