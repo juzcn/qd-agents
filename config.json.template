@@ -74,8 +74,9 @@
   "observability": {
     "log_level": "INFO",
     "log_format": "json",
-    "log_output": ["console"],
+    "log_output": ["file"],
     "log_file_path": "data/logs/app.log",
+    "log_session_dir": ".",
     "log_rotation": "daily",
     "log_retention_days": 30,
     "tracing_enabled": true,

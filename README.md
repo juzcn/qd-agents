@@ -100,6 +100,26 @@ cp config.json.template config.json
 **NVIDIA**: `auto_discover: true` - 从 API 动态获取模型列表
 **其他提供商**: `auto_discover: false` - 使用配置的模型列表
 
+### 日志配置
+
+```json
+{
+  "observability": {
+    "log_level": "INFO",
+    "log_format": "json",
+    "log_output": ["file"],
+    "log_session_dir": "."
+  }
+}
+```
+
+- `log_level`: 日志级别 (DEBUG/INFO/WARNING/ERROR)
+- `log_format`: 日志格式 (console/json)
+- `log_output`: 输出位置 (file/console) - 默认仅文件输出
+- `log_session_dir`: 会话日志存放目录 - 默认当前目录 (`.`)
+
+每次运行会生成独立的日志文件，命名格式：`YYYYMMDD_HHMMSS_shortid.log`
+
 ### 获取 API Keys
 
 - NVIDIA: https://build.nvidia.com/

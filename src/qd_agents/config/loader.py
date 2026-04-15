@@ -97,6 +97,7 @@ class ObservabilityConfig(BaseModel):
     log_format: str = "json"
     log_output: list[str] = Field(default_factory=lambda: ["console"])
     log_file_path: Path | None = None
+    log_session_dir: Path | None = None
     log_rotation: str = "daily"
     log_retention_days: int = 30
     tracing_enabled: bool = True
@@ -186,6 +187,7 @@ class Config(BaseSettings):
             ),
             observability=ObservabilityConfig(
                 log_file_path=data_dir / "logs" / "app.log",
+                log_session_dir=Path("."),
             ),
         )
 
@@ -213,6 +215,8 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
 
     if 'observability' in data and data['observability'].get('log_file_path'):
         data['observability']['log_file_path'] = base_dir / data['observability']['log_file_path']
+    if 'observability' in data and data['observability'].get('log_session_dir'):
+        data['observability']['log_session_dir'] = base_dir / data['observability']['log_session_dir']
 
     # 向后兼容：支持旧的 'model' 字段
     if 'llm' in data and 'providers' in data['llm']:
@@ -260,6 +264,8 @@ def _config_to_dict(config: Config, base_dir: Path | None = None) -> dict[str, A
 
     if data.get('observability') and data['observability'].get('log_file_path'):
         data['observability']['log_file_path'] = str(Path(data['observability']['log_file_path']).relative_to(base_dir))
+    if data.get('observability') and data['observability'].get('log_session_dir'):
+        data['observability']['log_session_dir'] = str(Path(data['observability']['log_session_dir']).relative_to(base_dir))
 
     return data
 
