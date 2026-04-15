@@ -14,6 +14,9 @@
 - **多种工具执行** - 支持 HTTP/CLI/Function/MCP 工具
 - **重试与熔断** - 4 种退避策略 + 熔断器模式
 - **CLI 界面** - 简洁的命令行交互
+- **内置搜索工具** - 支持 Baidu、Tavily、Serper 搜索引擎
+- **详细日志记录** - LLM 请求/响应完整日志，支持 DEBUG 级别
+- **实时日志刷新** - ImmediateFlushFileHandler 确保日志实时写入磁盘
 
 ## 安装
 
@@ -61,6 +64,10 @@ cp config.json.template config.json
     },
     "tavily": {
       "api_key": "your_tavily_api_key_here"
+    },
+    "baidu": {
+      "api_key_1": "your_baidu_api_key_here",
+      "api_key_2": "your_baidu_api_key_2_here"
     }
   }
 }
@@ -105,7 +112,7 @@ cp config.json.template config.json
 ```json
 {
   "observability": {
-    "log_level": "INFO",
+    "log_level": "DEBUG",
     "log_format": "json",
     "log_output": ["file"],
     "log_session_dir": "."
@@ -113,16 +120,33 @@ cp config.json.template config.json
 }
 ```
 
-- `log_level`: 日志级别 (DEBUG/INFO/WARNING/ERROR)
+- `log_level`: 日志级别 (DEBUG/INFO/WARNING/ERROR) - 开发环境建议使用 `DEBUG`
 - `log_format`: 日志格式 (console/json)
 - `log_output`: 输出位置 (file/console) - 默认仅文件输出
 - `log_session_dir`: 会话日志存放目录 - 默认当前目录 (`.`)
 
 每次运行会生成独立的日志文件，命名格式：`YYYYMMDD_HHMMSS_shortid.log`
 
+**DEBUG 级别日志包含：**
+- LLM 请求的完整 messages
+- 可用的 tools 列表
+- 完整的 LLM 响应内容
+- 工具调用详情
+
+**VS Code 配置建议：**
+在 `.vscode/settings.json` 中添加以下配置，让日志文件自动换行：
+```json
+{
+  "[log]": {
+    "editor.wordWrap": "on"
+  }
+}
+```
+
 ### 获取 API Keys
 
 - NVIDIA: https://build.nvidia.com/
+- Baidu Search: https://console.bce.baidu.com/ai-search/qianfan/ais/console/apiKey
 
 ## 使用
 

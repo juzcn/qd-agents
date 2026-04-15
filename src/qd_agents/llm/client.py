@@ -4,6 +4,7 @@ LLM 客户端 - NVIDIA NIM API 兼容
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, AsyncIterator, Literal
 
@@ -198,7 +199,7 @@ class LLMClient:
             use_model = model or self.current_model
 
             try:
-                logger.debug("Calling model: %s", use_model)
+                logger.info("Calling model: %s", use_model)
 
                 response = await self._client.chat.completions.create(
                     model=use_model,
@@ -209,6 +210,9 @@ class LLMClient:
                     tool_choice=tool_choice,
                     stream=stream,
                 )
+
+                if not stream:
+                    logger.debug("Response: %s", response.model_dump_json() if hasattr(response, 'model_dump_json') else str(response))  # type: ignore
 
                 return response
 

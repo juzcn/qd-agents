@@ -62,7 +62,7 @@ async def tavily_search(
         return response.json()
 
 
-async def baidu_search(query: str, pn: int = 0) -> dict[str, Any]:
+async def baidu_search(query: str, count: int = 10) -> dict[str, Any]:
     """使用百度搜索 API 进行中文网络搜索"""
     config = get_config()
     if not config:
@@ -76,20 +76,51 @@ async def baidu_search(query: str, pn: int = 0) -> dict[str, Any]:
 
     api_key = api_key_1 or api_key_2
 
-    # 注意：这是一个简化实现，实际百度搜索 API 可能需要不同的调用方式
-    # 这里假设使用类似百度智能云的搜索 API
+    # 确保 count 在有效范围内 (1-50)
+    count = max(1, min(50, count))
+
+    request_body = {
+        "messages": [
+            {
+                "content": query,
+                "role": "user"
+            }
+        ],
+        "search_source": "baidu_search_v2",
+        "resource_type_filter": [{"type": "web", "top_k": count}],
+        "search_filter": {}
+    }
+
     async with httpx.AsyncClient(timeout=30) as client:
-        # 占位实现，实际需要根据百度 API 文档调整
         response = await client.post(
-            "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/plugin/search",
+            "https://qianfan.baidubce.com/v2/ai_search/web_search",
             headers={
+                "Authorization": f"Bearer {api_key}",
+                "X-Appbuilder-From": "qd-agents",
                 "Content-Type": "application/json",
             },
-            params={"access_token": api_key},
-            json={"query": query, "pn": pn},
+            json=request_body,
         )
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+
+        if "code" in result:
+            raise Exception(f"Baidu API error: {result.get('message', 'Unknown error')}")
+
+        # 格式化返回结果，统一格式
+        references = result.get("references", [])
+        return {
+            "engine": "baidu",
+            "query": query,
+            "results": [
+                {
+                    "title": item.get("title", ""),
+                    "link": item.get("url", item.get("link", "")),
+                    "snippet": item.get("summary", item.get("snippet", "")),
+                }
+                for item in references
+            ],
+        }
 
 
 async def web_search(

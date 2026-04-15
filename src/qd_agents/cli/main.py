@@ -338,6 +338,12 @@ async def _chat_async(
                 console.print()
                 continue
 
+            # 检查是否是以 / 开头的无效命令
+            if user_input.strip().startswith("/"):
+                console.print(f"\n[red]错误: 未知命令 '{user_input}'[/]")
+                console.print("输入 /help 查看可用命令\n")
+                continue
+
             if not user_input.strip():
                 continue
 
@@ -630,7 +636,7 @@ def _init_tools(base_dir: Optional[Path], config_file: Optional[Path]):
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "搜索关键词或问题"},
-                "pn": {"type": "integer", "description": "起始结果页码，默认 0", "default": 0},
+                "count": {"type": "integer", "description": "返回结果数量，默认 10 (1-50)", "default": 10},
             },
             "required": ["query"],
         },
