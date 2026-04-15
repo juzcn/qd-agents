@@ -22,6 +22,7 @@ from ..llm import LLMClient
 from ..registry import ToolRegistry
 from ..prompts import PromptLoader
 from ..agent import QDAgent
+from ..context import ContextManager
 from ..utils.logging import setup_session_logging
 
 
@@ -121,6 +122,9 @@ async def _chat_async(
     if config.prompts and config.prompts.template_dir.exists():
         prompt_loader = PromptLoader(template_dir=config.prompts.template_dir)
 
+    # 创建 Context Manager
+    context_manager = ContextManager(prompt_loader=prompt_loader)
+
     # 定义一个函数来初始化/重新初始化 LLM 客户端和 Agent
     async def init_llm_and_agent(p: str, m: str = None):
         nonlocal llm_client, agent, provider_name, provider_config
@@ -162,6 +166,7 @@ async def _chat_async(
             llm_client=llm_client,
             tool_registry=tool_registry,
             prompt_loader=prompt_loader,
+            context_manager=context_manager,
         )
 
         with console.status("[dim]正在初始化 Agent...[/]"):

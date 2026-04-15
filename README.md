@@ -10,6 +10,7 @@
 - **模型评分选择** - 基于系列优先级和参数大小智能选择模型
 - **Fallback 机制** - 模型失败时自动切换到下一个
 - **两阶段调度** - 支持大规模工具集的智能路由
+- **上下文管理** - 统一管理会话历史和提示词构建
 - **Tool Registry** - SQLite 存储的工具注册中心
 - **多种工具执行** - 支持 HTTP/CLI/Function/MCP 工具
 - **重试与熔断** - 4 种退避策略 + 熔断器模式
@@ -198,6 +199,7 @@ qd-agents/
 │   ├── registry/        # Tool Registry
 │   ├── prompts/         # 提示词模板
 │   │   └── templates/
+│   ├── context/         # 上下文管理器
 │   ├── orchestrator/    # 两阶段调度器
 │   ├── tools/           # 工具执行器
 │   ├── execution/       # 执行引擎
@@ -237,6 +239,12 @@ qd-agents/
 | 参数大小 | 70B+ → 100, 8x22B → 90, 32B → 80, 8x7B/13B → 70, 8B → 60, 7B → 50 |
 | 系列优先级 | deepseek/glm → 42, qwen → 40, minimax → 38, llama/mistral/gemma → 35 |
 | 后缀加分 | instruct/chat 后缀 +20 |
+
+### 上下文管理器 (context/)
+
+- 统一管理会话历史
+- 分阶段消息构建（system_prompt + 历史 + 当前用户输入）
+- 支持第一阶段、第二阶段、单阶段三种模式
 
 ### Tool Registry (registry/)
 

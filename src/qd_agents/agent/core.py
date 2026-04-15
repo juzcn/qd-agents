@@ -18,6 +18,7 @@ from ..execution import ExecutionEngine
 from ..orchestrator import TwoPhaseOrchestrator, OrchestrationResult
 from ..tools import ToolExecutor, ToolExecutorRegistry, create_executor
 from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig
+from ..context import ContextManager
 
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,7 @@ class QDAgent:
         tool_registry: ToolRegistry,
         prompt_loader: PromptLoader | None = None,
         execution_engine: ExecutionEngine | None = None,
+        context_manager: ContextManager | None = None,
     ):
         """
         初始化智能体
@@ -105,6 +107,7 @@ class QDAgent:
             tool_registry: 工具注册中心
             prompt_loader: 提示词加载器
             execution_engine: 执行引擎
+            context_manager: 上下文管理器
         """
         self.config = config
         self.llm = llm_client
@@ -113,10 +116,14 @@ class QDAgent:
         self.execution = execution_engine or ExecutionEngine()
         self.executor_registry = ToolExecutorRegistry()
 
+        # 初始化上下文管理器
+        self.context = context_manager or ContextManager(prompt_loader=prompt_loader)
+
         # 初始化调度器
         self.orchestrator = TwoPhaseOrchestrator(
             llm_client=llm_client,
             tool_registry=tool_registry,
+            context_manager=self.context,
             prompt_loader=prompt_loader,
             tool_threshold=config.llm.tool_threshold,
             two_phase_enabled=config.llm.two_phase_enabled,
@@ -124,8 +131,6 @@ class QDAgent:
 
         # 初始化重试和熔断
         self._setup_retry_and_circuit_breaker()
-
-        self._session_history: list[dict[str, str]] = []
 
     def _setup_retry_and_circuit_breaker(self) -> None:
         """配置重试和熔断器"""
@@ -191,15 +196,15 @@ class QDAgent:
             role: 角色 (user/assistant/system/tool)
             content: 内容
         """
-        self._session_history.append({"role": role, "content": content})
+        self.context.add_to_history(role, content)
 
     def clear_history(self) -> None:
         """清空会话历史"""
-        self._session_history.clear()
+        self.context.clear_history()
 
     def get_history(self) -> list[dict[str, str]]:
         """获取会话历史"""
-        return self._session_history.copy()
+        return self.context.get_history()
 
     async def process(
         self,
@@ -226,11 +231,14 @@ class QDAgent:
         self.add_to_history("user", user_input)
 
         try:
-            # 执行调度
+            # 执行调度 - 传递历史消息（不包含当前这条用户输入，因为会在 orchestrator 中添加）
+            # 历史消息只包含之前的 user/assistant 对话
+            history = self.context.get_history()
             orch_result = await self.orchestrator.orchestrate(
                 user_input=user_input,
                 session_id=session_id,
                 trace_id=trace_id,
+                history=history[:-1] if history else None,
             )
 
             # 执行工具/代码

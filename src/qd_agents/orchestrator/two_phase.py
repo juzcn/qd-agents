@@ -13,6 +13,7 @@ from typing import Any
 from ..llm import LLMClient
 from ..registry import ToolRegistry, Tool
 from ..prompts import PromptLoader
+from ..context import ContextManager
 
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ class TwoPhaseOrchestrator:
         self,
         llm_client: LLMClient,
         tool_registry: ToolRegistry,
+        context_manager: ContextManager | None = None,
         prompt_loader: PromptLoader | None = None,
         tool_threshold: int = 50,
         two_phase_enabled: bool = True,
@@ -86,6 +88,7 @@ class TwoPhaseOrchestrator:
         Args:
             llm_client: LLM 客户端
             tool_registry: 工具注册中心
+            context_manager: 上下文管理器
             prompt_loader: 提示词加载器
             tool_threshold: 工具数量阈值，超过则启用两阶段
             two_phase_enabled: 是否启用两阶段
@@ -93,6 +96,7 @@ class TwoPhaseOrchestrator:
         self.llm = llm_client
         self.registry = tool_registry
         self.prompts = prompt_loader
+        self.context = context_manager or ContextManager(prompt_loader=prompt_loader)
         self.tool_threshold = tool_threshold
         self.two_phase_enabled = two_phase_enabled
 
@@ -181,6 +185,7 @@ class TwoPhaseOrchestrator:
         user_input: str,
         session_id: str | None = None,
         trace_id: str | None = None,
+        history: list[dict[str, str]] | None = None,
     ) -> OrchestrationResult:
         """
         执行两阶段调度
@@ -189,6 +194,7 @@ class TwoPhaseOrchestrator:
             user_input: 用户输入
             session_id: 会话 ID
             trace_id: 追踪 ID
+            history: 会话历史消息列表
 
         Returns:
             调度结果
@@ -212,9 +218,9 @@ class TwoPhaseOrchestrator:
         use_two_phase = self.two_phase_enabled and len(all_tools) > self.tool_threshold
 
         if use_two_phase:
-            result = await self._run_two_phase(result, user_input)
+            result = await self._run_two_phase(result, user_input, history)
         else:
-            result = await self._run_single_phase(result, user_input, all_tools)
+            result = await self._run_single_phase(result, user_input, all_tools, history)
 
         result.total_latency_ms = int((time.perf_counter() - start_time) * 1000)
         return result
@@ -223,6 +229,7 @@ class TwoPhaseOrchestrator:
         self,
         result: OrchestrationResult,
         user_input: str,
+        history: list[dict[str, str]] | None = None,
     ) -> OrchestrationResult:
         """执行两阶段流程"""
         import time
@@ -242,7 +249,11 @@ class TwoPhaseOrchestrator:
         if search_web:
             phase_one_tools.append(search_web.to_openai_function())
 
-        messages = self._build_phase_one_messages(user_input)
+        messages = self.context.build_phase_one_messages(
+            user_input=user_input,
+            search_web_available=search_web is not None,
+            history=history,
+        )
 
         # 调用 LLM
         response = await self.llm.chat(
@@ -302,9 +313,10 @@ class TwoPhaseOrchestrator:
         phase_two_tools.append(self._meta_tools["coding_tool_use"])
         phase_two_tools.append(self._meta_tools["step_down"])
 
-        messages = self._build_phase_two_messages(
-            user_input,
-            phase_one_result.found_tools
+        messages = self.context.build_phase_two_messages(
+            user_input=user_input,
+            found_tools=phase_one_result.found_tools,
+            history=history,
         )
 
         # 调用 LLM
@@ -346,6 +358,7 @@ class TwoPhaseOrchestrator:
         result: OrchestrationResult,
         user_input: str,
         tools: list[Tool],
+        history: list[dict[str, str]] | None = None,
     ) -> OrchestrationResult:
         """执行单阶段流程"""
         import time
@@ -357,6 +370,7 @@ class TwoPhaseOrchestrator:
 
         # 优先添加 search.web 工具（如果可用）
         search_web = self.registry.get("search.web")
+        search_web_available = search_web is not None
         if search_web:
             openai_tools.append(search_web.to_openai_function())
             # 从 tools 列表中移除，避免重复
@@ -367,29 +381,13 @@ class TwoPhaseOrchestrator:
         openai_tools.append(self._meta_tools["coding_tool_use"])
         openai_tools.append(self._meta_tools["step_down"])
 
-        if self.prompts:
-            # 检查 search.web 是否可用
-            search_web_available = self.registry.get("search.web") is not None
-            system_prompt = self.prompts.render(
-                "system_prompt",
-                tools=tools,
-                search_web_available=search_web_available,
-            )
-        else:
-            # 回退到硬编码
-            search_web_available = self.registry.get("search.web") is not None
-            if search_web_available:
-                system_prompt = (
-                    "你是一个智能助手，可以调用工具帮助用户。\n"
-                    "如果用户的问题需要实时信息或外部知识，请优先使用 search.web 工具进行网络搜索。"
-                )
-            else:
-                system_prompt = "你是一个智能助手，可以调用工具帮助用户。"
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_input},
-        ]
+        # 使用 ContextManager 构建消息
+        messages = self.context.build_single_phase_messages(
+            user_input=user_input,
+            tools=tools,
+            search_web_available=search_web_available,
+            history=history,
+        )
 
         response = await self.llm.chat(
             messages=messages,
@@ -423,56 +421,3 @@ class TwoPhaseOrchestrator:
         result.final_status = "orchestrated"
 
         return result
-
-    def _build_phase_one_messages(self, user_input: str) -> list[dict[str, str]]:
-        """构建第一阶段消息"""
-        if self.prompts:
-            # 检查 search.web 是否可用
-            search_web_available = self.registry.get("search.web") is not None
-            system_prompt = self.prompts.render(
-                "phase_one",
-                search_web_available=search_web_available,
-            )
-        else:
-            # 回退到硬编码
-            system_prompt = (
-                "你是一个智能路由助手。"
-                "你有三个工具可用：\n"
-                "1. direct - 直接回答用户问题\n"
-                "2. find_tools - 检索相关工具\n"
-                "3. search.web - 网络搜索（如果可用）\n"
-                "请选择合适的工具处理用户请求。"
-            )
-
-        return [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_input},
-        ]
-
-    def _build_phase_two_messages(
-        self,
-        user_input: str,
-        found_tools: list[Tool],
-    ) -> list[dict[str, str]]:
-        """构建第二阶段消息"""
-        if self.prompts:
-            system_prompt = self.prompts.render(
-                "phase_two",
-                tools=found_tools,
-            )
-        else:
-            # 回退到硬编码
-            tool_descriptions = "\n".join([
-                f"- {t.name}: {t.description}"
-                for t in found_tools
-            ])
-            system_prompt = (
-                "你是一个智能规划助手。\n"
-                f"可用工具：\n{tool_descriptions}\n"
-                "你也可以使用 coding_tool_use 生成 Python 代码来编排多个工具。"
-            )
-
-        return [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_input},
-        ]
