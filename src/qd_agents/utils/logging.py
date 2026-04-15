@@ -11,6 +11,48 @@ from typing import Optional
 import structlog
 
 
+class ImmediateFlushFileHandler(logging.FileHandler):
+    """立即刷新的文件处理器，方便在 VS Code 中实时查看日志"""
+
+    def emit(self, record):
+        """重写 emit 方法，确保每次写入后立即刷新到磁盘"""
+        try:
+            # 1. 格式化记录
+            msg = self.format(record)
+
+            # 2. 直接写入（不使用父类的 emit，避免任何缓冲）
+            stream = self.stream
+            if stream:
+                stream.write(msg + self.terminator)
+
+                # 3. 强制刷新 Python 缓冲区
+                stream.flush()
+
+                # 4. 强制操作系统将数据写入磁盘
+                if hasattr(stream, 'fileno'):
+                    import os
+                    try:
+                        os.fsync(stream.fileno())
+                    except (OSError, AttributeError):
+                        # 如果 fsync 失败，至少确保刷新了
+                        pass
+
+        except Exception:
+            self.handleError(record)
+
+    def flush(self):
+        """重写 flush 方法，确保彻底刷新到磁盘"""
+        if self.stream and hasattr(self.stream, 'flush'):
+            self.stream.flush()
+            # 强制同步到磁盘
+            if hasattr(self.stream, 'fileno'):
+                import os
+                try:
+                    os.fsync(self.stream.fileno())
+                except (OSError, AttributeError):
+                    pass
+
+
 def generate_session_log_path(log_dir: Path, trace_id: Optional[str] = None) -> Path:
     """
     生成会话日志文件路径
@@ -54,7 +96,7 @@ def setup_logging(
     if log_file:
         # 确保目录存在
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler = ImmediateFlushFileHandler(log_file, encoding='utf-8')
         handlers.append(file_handler)
     else:
         handlers.append(logging.StreamHandler(sys.stdout))
@@ -115,3 +157,11 @@ def setup_session_logging(
     structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
     return log_file, trace_id
+
+
+__all__ = [
+    "ImmediateFlushFileHandler",
+    "generate_session_log_path",
+    "setup_logging",
+    "setup_session_logging",
+]

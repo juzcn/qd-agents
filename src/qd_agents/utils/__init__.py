@@ -1,7 +1,7 @@
 """
 工具函数模块
 """
-from .logging import setup_logging
+from .logging import setup_logging, ImmediateFlushFileHandler
 from .retry import (
     RetryConfig,
     RetryExecutor,
@@ -14,6 +14,7 @@ from .retry import (
 
 __all__ = [
     "setup_logging",
+    "ImmediateFlushFileHandler",
     "RetryConfig",
     "RetryExecutor",
     "CircuitBreaker",
