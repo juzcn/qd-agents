@@ -29,6 +29,7 @@ llama-cpp = [
 
 [tool.uv]
 package = true
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 [project.scripts]
 qd-agents = "qd_agents.cli:run"
