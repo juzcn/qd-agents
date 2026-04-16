@@ -165,10 +165,11 @@ class ContextManager:
             if search_web_available:
                 system_prompt = (
                     "你是一个智能助手，可以调用工具帮助用户。\n"
-                    "如果用户的问题需要实时信息或外部知识，请优先使用 search.web 工具进行网络搜索。"
+                    "如果用户的问题需要实时信息或外部知识，请优先使用 search.web 工具进行网络搜索。\n"
+                    "注意：我们是在Windows环境下工作。"
                 )
             else:
-                system_prompt = "你是一个智能助手，可以调用工具帮助用户。"
+                system_prompt = "你是一个智能助手，可以调用工具帮助用户。\n注意：我们是在Windows环境下工作。"
 
         return self._build_messages(
             system_prompt=system_prompt,
@@ -206,10 +207,11 @@ class ContextManager:
             if search_web_available:
                 system_prompt = (
                     "你是一个智能助手，可以调用工具帮助用户。\n"
-                    "如果用户的问题需要实时信息或外部知识，请优先使用 search.web 工具进行网络搜索。"
+                    "如果用户的问题需要实时信息或外部知识，请优先使用 search.web 工具进行网络搜索。\n"
+                    "注意：我们是在Windows环境下工作。"
                 )
             else:
-                system_prompt = "你是一个智能助手，可以调用工具帮助用户。"
+                system_prompt = "你是一个智能助手，可以调用工具帮助用户。\n注意：我们是在Windows环境下工作。"
 
         return self._build_messages(
             system_prompt=system_prompt,
