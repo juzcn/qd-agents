@@ -9,7 +9,7 @@
 - **自动模型发现** - NVIDIA 等提供商支持动态发现模型
 - **模型评分选择** - 基于系列优先级和参数大小智能选择模型
 - **Fallback 机制** - 模型失败时自动切换到下一个
-- **两阶段调度** - 支持大规模工具集的智能路由
+- **单阶段调度** - 简化架构下的智能工具路由与执行
 - **上下文管理** - 统一管理会话历史和提示词构建
 - **Tool Registry** - SQLite 存储的工具注册中心
 - **多种工具执行** - 支持 HTTP/CLI/Function/MCP 工具
@@ -232,7 +232,7 @@ qd-agents/
 │   ├── prompts/         # 提示词模板
 │   │   └── templates/
 │   ├── context/         # 上下文管理器
-│   ├── orchestrator/    # 两阶段调度器
+│   ├── orchestrator/    # 调度器（单阶段架构）
 │   ├── tools/           # 工具执行器
 │   ├── execution/       # 执行引擎
 │   ├── agent/           # Agent 核心
@@ -276,7 +276,7 @@ qd-agents/
 
 - 统一管理会话历史
 - 分阶段消息构建（system_prompt + 历史 + 当前用户输入）
-- 支持第一阶段、第二阶段、单阶段三种模式
+- 支持单阶段工具调用模式，简化架构提高性能
 
 ### Tool Registry (registry/)
 
@@ -287,7 +287,7 @@ qd-agents/
 
 ### 工具执行器 (tools/)
 
-支持 5 种工具执行类型：
+支持 6 种工具执行类型：
 
 | 类型 | 说明 |
 |------|------|
@@ -296,6 +296,7 @@ qd-agents/
 | `http` | HTTP 服务调用 |
 | `skill` | 预置技能/工作流 |
 | `mcp` | Model Context Protocol |
+| `bash` | Bash 命令执行 |
 
 ### 重试与熔断 (utils/retry.py)
 
