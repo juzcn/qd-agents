@@ -119,10 +119,10 @@ class ChatCommandHandler:
         self.console.print("  /help - 显示此帮助\n")
 
     def _show_current_model(self):
-        """显示当前模型"""
+        """显示当前模型和模式"""
         if self.llm_manager.llm_client and self.llm_manager.provider_name:
             self.console.print(
-                f"\n[bold]当前模型:[/] {self.llm_manager.provider_name}/{self.llm_manager.llm_client.current_model}\n"
+                f"\n[bold]当前模型:[/] {self.llm_manager.provider_name}/{self.llm_manager.llm_client.current_model}  [bold]模式:[/] {self.config.llm.mode.value}\n"
             )
         else:
             self.console.print("\n[red]错误: 模型未初始化[/]\n")
@@ -327,6 +327,9 @@ async def chat_async(
     # 1.1. 更新模式（如果通过命令行指定）
     if mode is not None:
         config.llm.mode = mode
+
+    # 显示当前模式
+    console.print(f"[dim]工作模式:[/] {config.llm.mode.value}")
 
     # 2. 启动 MCP 服务器
     mcp_server_manager = MCPWeatherServerManager(console)

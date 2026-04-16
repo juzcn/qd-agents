@@ -54,10 +54,10 @@ class LLMConfig(BaseModel):
     default_model: str | None = None
     providers: dict[str, LLMProviderConfig] = Field(default_factory=dict)
     mode: AgentMode = AgentMode.TOOL_USE
-    two_phase_enabled: bool = True
+    two_phase_enabled: bool = False
     tool_threshold: int = 50
     phase_one_tools: list[str] = Field(
-        default_factory=lambda: ["meta.direct", "meta.find_tools", "search.web"]
+        default_factory=lambda: ["search.web"]  # 仅保留搜索工具
     )
 
 

@@ -176,6 +176,47 @@ class ContextManager:
             history=history,
         )
 
+    def build_tool_use_messages(
+        self,
+        user_input: str,
+        tools: list[Tool],
+        search_web_available: bool = False,
+        history: list[dict[str, str]] | None = None,
+    ) -> list[dict[str, str]]:
+        """
+        构建工具调用消息（优化的单阶段提示词）
+
+        Args:
+            user_input: 当前用户输入
+            tools: 可用工具列表
+            search_web_available: search.web 工具是否可用
+            history: 会话历史（如果不传则使用内部存储的历史）
+
+        Returns:
+            完整的消息列表
+        """
+        if self.prompts:
+            system_prompt = self.prompts.render(
+                "tool_use",
+                tools=tools,
+                search_web_available=search_web_available,
+            )
+        else:
+            # 回退到硬编码
+            if search_web_available:
+                system_prompt = (
+                    "你是一个智能助手，可以调用工具帮助用户。\n"
+                    "如果用户的问题需要实时信息或外部知识，请优先使用 search.web 工具进行网络搜索。"
+                )
+            else:
+                system_prompt = "你是一个智能助手，可以调用工具帮助用户。"
+
+        return self._build_messages(
+            system_prompt=system_prompt,
+            user_input=user_input,
+            history=history,
+        )
+
     def _build_messages(
         self,
         system_prompt: str,

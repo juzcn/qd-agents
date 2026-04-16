@@ -104,81 +104,8 @@ class TwoPhaseOrchestrator:
         self._meta_tools = self._build_meta_tools()
 
     def _build_meta_tools(self) -> dict[str, dict[str, Any]]:
-        """构建元工具定义"""
-        return {
-            "direct": {
-                "type": "function",
-                "function": {
-                    "name": "direct",
-                    "description": "直接生成自然语言回复，不调用任何工具",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "response": {
-                                "type": "string",
-                                "description": "给用户的自然语言回复内容"
-                            }
-                        },
-                        "required": ["response"]
-                    }
-                }
-            },
-            "find_tools": {
-                "type": "function",
-                "function": {
-                    "name": "find_tools",
-                    "description": "根据用户需求检索相关工具",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "描述用户需要什么功能的自然语言"
-                            }
-                        },
-                        "required": ["query"]
-                    }
-                }
-            },
-            "coding_tool_use": {
-                "type": "function",
-                "function": {
-                    "name": "coding_tool_use",
-                    "description": "生成Python代码来编排多个工具的执行",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "code": {
-                                "type": "string",
-                                "description": "Python代码字符串"
-                            }
-                        },
-                        "required": ["code"]
-                    }
-                }
-            },
-            "step_down": {
-                "type": "function",
-                "function": {
-                    "name": "step_down",
-                    "description": "当无法通过工具完成任务时，降级为人工友好的回复",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "reason": {
-                                "type": "string",
-                                "enum": ["no_matching_tools", "too_complex", "safety_concern", "user_confirmation_required"]
-                            },
-                            "message": {
-                                "type": "string",
-                                "description": "给用户的解释信息"
-                            }
-                        },
-                        "required": ["reason", "message"]
-                    }
-                }
-            }
-        }
+        """构建元工具定义（现在为空，使用标准工具调用）"""
+        return {}
 
     async def orchestrate(
         self,
@@ -188,7 +115,7 @@ class TwoPhaseOrchestrator:
         history: list[dict[str, str]] | None = None,
     ) -> OrchestrationResult:
         """
-        执行两阶段调度
+        执行单阶段工具调用调度
 
         Args:
             user_input: 用户输入
@@ -213,157 +140,25 @@ class TwoPhaseOrchestrator:
 
         logger.info("Starting orchestration (trace_id: %s)", trace_id)
 
-        # 决定是否使用两阶段
+        # 获取所有工具
         all_tools = self.registry.list_all()
-        use_two_phase = self.two_phase_enabled and len(all_tools) > self.tool_threshold
-
-        if use_two_phase:
-            result = await self._run_two_phase(result, user_input, history)
-        else:
-            result = await self._run_single_phase(result, user_input, all_tools, history)
+        # 始终使用单阶段工具调用
+        result = await self._run_tool_use(result, user_input, all_tools, history)
 
         result.total_latency_ms = int((time.perf_counter() - start_time) * 1000)
         return result
 
-    async def _run_two_phase(
-        self,
-        result: OrchestrationResult,
-        user_input: str,
-        history: list[dict[str, str]] | None = None,
-    ) -> OrchestrationResult:
-        """执行两阶段流程"""
-        import time
-
-        # ========== 第一阶段 ==========
-        logger.info("Executing Phase One")
-        phase_one_start = time.perf_counter()
-
-        # 构建第一阶段消息
-        phase_one_tools = [
-            self._meta_tools["direct"],
-            self._meta_tools["find_tools"],
-        ]
-
-        # 加载高频工具 search.web（如果已注册）
-        search_web = self.registry.get("search.web")
-        if search_web:
-            phase_one_tools.append(search_web.to_openai_function())
-
-        messages = self.context.build_phase_one_messages(
-            user_input=user_input,
-            search_web_available=search_web is not None,
-            history=history,
-        )
-
-        # 调用 LLM
-        response = await self.llm.chat(
-            messages=messages,
-            tools=phase_one_tools,
-            tool_choice="auto",
-        )
-
-        choice = response.choices[0]
-        phase_one_result = PhaseOneResult(
-            tool_choice="",
-            latency_ms=int((time.perf_counter() - phase_one_start) * 1000),
-        )
-
-        # 解析第一阶段结果
-        if choice.message.tool_calls:
-            tool_call = choice.message.tool_calls[0]
-            phase_one_result.tool_choice = tool_call.function.name
-
-            try:
-                phase_one_result.tool_input = json.loads(tool_call.function.arguments)
-            except json.JSONDecodeError:
-                phase_one_result.tool_input = {"raw": tool_call.function.arguments}
-
-            # 处理 direct
-            if tool_call.function.name == "direct":
-                phase_one_result.response = phase_one_result.tool_input.get("response", "")
-                result.phase_one = phase_one_result
-                result.final_output = phase_one_result.response
-                result.final_status = "completed"
-                return result
-
-            # 处理 find_tools
-            if tool_call.function.name == "find_tools":
-                query = phase_one_result.tool_input.get("query", user_input)
-                phase_one_result.found_tools = self.registry.search(query, top_k=10)
-                logger.info("Found %d tools", len(phase_one_result.found_tools))
-
-        elif choice.message.content:
-            phase_one_result.tool_choice = "direct"
-            phase_one_result.response = choice.message.content
-            result.phase_one = phase_one_result
-            result.final_output = phase_one_result.response
-            result.final_status = "completed"
-            return result
-
-        result.phase_one = phase_one_result
-
-        # ========== 第二阶段 ==========
-        logger.info("Executing Phase Two")
-        phase_two_start = time.perf_counter()
-
-        # 构建第二阶段可用工具
-        phase_two_tools = [t.to_openai_function() for t in phase_one_result.found_tools]
-
-        # 添加 coding_tool_use 和 step_down
-        phase_two_tools.append(self._meta_tools["coding_tool_use"])
-        phase_two_tools.append(self._meta_tools["step_down"])
-
-        messages = self.context.build_phase_two_messages(
-            user_input=user_input,
-            found_tools=phase_one_result.found_tools,
-            history=history,
-        )
-
-        # 调用 LLM
-        response = await self.llm.chat(
-            messages=messages,
-            tools=phase_two_tools if phase_two_tools else None,
-            tool_choice="auto",
-        )
-
-        choice = response.choices[0]
-        phase_two_result = PhaseTwoResult(
-            tool_choice="",
-            latency_ms=int((time.perf_counter() - phase_two_start) * 1000),
-        )
-
-        if choice.message.tool_calls:
-            tool_call = choice.message.tool_calls[0]
-            phase_two_result.tool_choice = tool_call.function.name
-
-            try:
-                phase_two_result.tool_input = json.loads(tool_call.function.arguments)
-            except json.JSONDecodeError:
-                phase_two_result.tool_input = {"raw": tool_call.function.arguments}
-
-            if tool_call.function.name == "coding_tool_use":
-                phase_two_result.generated_code = phase_two_result.tool_input.get("code", "")
-
-        elif choice.message.content:
-            phase_two_result.tool_choice = "direct"
-            result.final_output = choice.message.content
-
-        result.phase_two = phase_two_result
-        result.final_status = "orchestrated"
-
-        return result
-
-    async def _run_single_phase(
+    async def _run_tool_use(
         self,
         result: OrchestrationResult,
         user_input: str,
         tools: list[Tool],
         history: list[dict[str, str]] | None = None,
     ) -> OrchestrationResult:
-        """执行单阶段流程"""
+        """执行单阶段工具调用流程"""
         import time
 
-        logger.info("Executing Single Phase")
+        logger.info("Executing Tool Use Phase")
         start_time = time.perf_counter()
 
         openai_tools = []
@@ -378,11 +173,10 @@ class TwoPhaseOrchestrator:
 
         # 添加其他工具
         openai_tools.extend([t.to_openai_function() for t in tools])
-        openai_tools.append(self._meta_tools["coding_tool_use"])
-        openai_tools.append(self._meta_tools["step_down"])
+        # 注意：不再添加元工具，使用标准的 OpenAI Tool Calling 格式
 
-        # 使用 ContextManager 构建消息
-        messages = self.context.build_single_phase_messages(
+        # 使用 ContextManager 构建消息（使用优化的 tool_use 提示词）
+        messages = self.context.build_tool_use_messages(
             user_input=user_input,
             tools=tools,
             search_web_available=search_web_available,
@@ -410,10 +204,10 @@ class TwoPhaseOrchestrator:
             except json.JSONDecodeError:
                 phase_two_result.tool_input = {"raw": tool_call.function.arguments}
 
-            if tool_call.function.name == "coding_tool_use":
-                phase_two_result.generated_code = phase_two_result.tool_input.get("code", "")
+            # 不再处理 coding_tool_use，因为不再包含元工具
 
         elif choice.message.content:
+            # LLM 选择直接回复，而不是调用工具
             phase_two_result.tool_choice = "direct"
             result.final_output = choice.message.content
 
@@ -421,3 +215,4 @@ class TwoPhaseOrchestrator:
         result.final_status = "orchestrated"
 
         return result
+
