@@ -119,8 +119,8 @@ class MCPWeatherServerManager:
             self.console.print("[dim]  将继续使用演示模式[/]", style="dim")
             return None
 
-    def cleanup(self):
-        """清理函数：在会话结束时停止 MCP 服务器"""
+    async def cleanup_async(self):
+        """异步清理函数：在会话结束时停止 MCP 服务器"""
         if self.server_process is None:
             return
 
@@ -144,20 +144,13 @@ class MCPWeatherServerManager:
                 # 等待进程结束
                 if hasattr(self.server_process, 'wait') and callable(self.server_process.wait):
                     if asyncio.iscoroutinefunction(self.server_process.wait):
-                        # 异步wait，同步环境中运行
-                        import asyncio
+                        # 异步wait
                         try:
-                            loop = asyncio.get_event_loop()
-                        except RuntimeError:
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-
-                        try:
-                            loop.run_until_complete(asyncio.wait_for(self.server_process.wait(), timeout=2))
+                            await asyncio.wait_for(self.server_process.wait(), timeout=2)
                         except (asyncio.TimeoutError, TimeoutError):
                             if hasattr(self.server_process, 'kill'):
                                 self.server_process.kill()
-                                loop.run_until_complete(self.server_process.wait())
+                                await self.server_process.wait()
                     else:
                         # 同步wait
                         try:
@@ -166,6 +159,38 @@ class MCPWeatherServerManager:
                             if hasattr(self.server_process, 'kill'):
                                 self.server_process.kill()
                                 self.server_process.wait()
+
+            self.console.print("[dim]✅ MCP 天气服务器已停止[/]", style="dim")
+
+        except Exception as e:
+            self.console.print(f"[dim]停止 MCP 服务器时出错: {e}[/]", style="dim")
+            try:
+                if hasattr(self.server_process, 'kill'):
+                    self.server_process.kill()
+            except:
+                pass
+
+    def cleanup(self):
+        """同步清理函数（保持向后兼容）"""
+        if self.server_process is None:
+            return
+
+        try:
+            # 检查进程是否仍在运行
+            is_running = False
+            if hasattr(self.server_process, 'poll'):  # subprocess.Popen
+                is_running = self.server_process.poll() is None
+            elif hasattr(self.server_process, 'returncode'):  # asyncio.subprocess.Process
+                is_running = self.server_process.returncode is None
+
+            if not is_running:
+                return
+
+            self.console.print("[dim]正在停止 MCP 天气服务器...[/]", style="dim")
+
+            # 对于 asyncio 子进程，直接发送终止信号，不等待
+            if hasattr(self.server_process, 'terminate'):
+                self.server_process.terminate()
 
             self.console.print("[dim]✅ MCP 天气服务器已停止[/]", style="dim")
 

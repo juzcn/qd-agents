@@ -399,4 +399,4 @@ async def chat_async(
                 console.print(f"\n[red]错误: {e}[/]\n")
     finally:
         if cleanup_mcp_server:
-            cleanup_mcp_server()
+            await mcp_server_manager.cleanup_async()
