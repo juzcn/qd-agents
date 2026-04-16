@@ -2,13 +2,20 @@
 
 | 项目 | 信息 |
 |------|------|
-| 版本 | 1.5 |
+| 版本 | 1.6 |
 | 日期 | 2026-04-16 |
 | 作者 | AI 系统设计团队 |
 
 ---
 
 ## 更新记录
+
+### v1.6 (2026-04-16)
+
+**架构同步：**
+- 删除需求文档中的元工具相关描述，与实际代码实现保持一致
+- 更新单阶段调度器架构说明，移除对元工具的引用
+- 同步工具执行类型描述，反映当前实际支持的类型
 
 ### v1.5 (2026-04-16)
 
@@ -158,7 +165,7 @@
 **当前实现**：采用单阶段工具调用模型，简化了原有的两阶段设计，提高响应速度和系统可维护性。
 
 **工作原理**：
-1. LLM 直接访问完整的工具集（包括元工具和普通工具）
+1. LLM 直接访问完整的工具集（包括所有注册工具）
 2. 智能体根据用户意图选择合适的工具或直接生成回复
 3. 支持多种工具执行类型：function、cli、http、skill、mcp、bash
 
@@ -224,95 +231,6 @@
 | `mcp` | Model Context Protocol | MCP 标准工具 |
 | `bash` | Bash 命令执行 | 系统 shell 命令 |
 
-**元工具定义**：
-
-**`direct`** - 直接回答工具：
-```json
-{
-  "name": "direct",
-  "description": "直接生成自然语言回复，不调用任何工具",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "response": {
-        "type": "string",
-        "description": "给用户的自然语言回复内容"
-      }
-    },
-    "required": ["response"]
-  }
-}
-```
-
-**`find_tools`** - 工具检索工具：
-```json
-{
-  "name": "find_tools",
-  "description": "根据用户需求检索相关工具",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "query": {
-        "type": "string",
-        "description": "描述用户需要什么功能的自然语言，例如：获取天气、发送邮件"
-      }
-    },
-    "required": ["query"]
-  },
-  "returns": {
-    "type": "array",
-    "items": {
-      "type": "object",
-      "properties": {
-        "tool_id": {"type": "string"},
-        "name": {"type": "string"},
-        "description": {"type": "string"},
-        "similarity_score": {"type": "number"}
-      }
-    }
-  }
-}
-```
-
-**`coding_tool_use`** - 代码生成工具：
-```json
-{
-  "name": "coding_tool_use",
-  "description": "生成Python代码来编排多个工具的执行（支持条件、循环等复杂逻辑）。优先使用已注册工具，也可使用Python标准库进行数据处理。",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "code": {
-        "type": "string",
-        "description": "Python代码字符串，可调用已注册工具，也可使用Python标准库"
-      }
-    },
-    "required": ["code"]
-  }
-}
-```
-
-**`step_down`** - 降级处理工具：
-```json
-{
-  "name": "step_down",
-  "description": "当无法通过工具完成任务时，降级为人工友好的回复",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "reason": {
-        "type": "string",
-        "enum": ["no_matching_tools", "too_complex", "safety_concern", "user_confirmation_required"]
-      },
-      "message": {
-        "type": "string",
-        "description": "给用户的解释信息"
-      }
-    },
-    "required": ["reason", "message"]
-  }
-}
-```
 
 **架构优势**：
 - **响应速度快**：单次 LLM 调用完成决策，减少延迟
@@ -332,16 +250,6 @@
 
 提供注册、检索、更新工具。支持按类别、关键词、向量相似度检索。
 
-**内置元工具**
-
-以下元工具必须预先注册到 Tool Registry，由系统内部实现：
-
-| 工具 ID | 名称 | 类型 | 说明 |
-|---------|------|------|------|
-| `meta.direct` | direct | 元工具 | 直接生成自然语言回复，不调用任何工具 |
-| `meta.find_tools` | find_tools | 元工具 | 根据用户需求检索相关工具 |
-| `meta.coding_tool_use` | coding_tool_use | 元工具 | 生成 Python 代码编排工具执行 |
-| `meta.step_down` | step_down | 元工具 | 降级处理，返回人工友好的提示 |
 
 **高频预置工具**
 
@@ -1457,9 +1365,7 @@ llm:
   two_phase:
     enabled: false  # 当前使用单阶段调度，此配置保留用于向后兼容
     phase_one_tools:
-      - "meta.direct"
-      - "meta.find_tools"
-      - "search.web"
+      - "search.web"  # 高频搜索工具（当前唯一保留的预置工具）
     tool_threshold: 50  # 配置保留，当前未使用
 
 # Tool Registry 配置
