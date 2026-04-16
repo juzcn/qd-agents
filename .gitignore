@@ -42,3 +42,6 @@ test_*.py
 
 # Data directory (runtime generated)
 data/
+
+# External skills (downloaded from GitHub)
+skills/

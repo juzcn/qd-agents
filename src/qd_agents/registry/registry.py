@@ -263,6 +263,18 @@ class ToolRegistry:
             conn.commit()
             return cursor.rowcount > 0
 
+    def clear_all(self) -> bool:
+        """
+        清空所有工具
+
+        Returns:
+            是否清空成功
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM tools")
+            conn.commit()
+            return cursor.rowcount > 0
+
     def list_all(
         self,
         category: str | None = None,

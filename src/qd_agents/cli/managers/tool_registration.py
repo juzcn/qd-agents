@@ -14,7 +14,7 @@ from qd_agents.registry import ToolRegistry
 from qd_agents.tools.executor import create_mcp_tool
 
 
-async def auto_register_mcp_weather_tools(
+def auto_register_mcp_weather_tools(
     console: Console,
     tool_registry: ToolRegistry,
     endpoint: str = "http://localhost:8000",
@@ -50,7 +50,7 @@ async def auto_register_mcp_weather_tools(
             tags=["weather", "mcp", "current"],
         )
         tool_registry.register(current_weather_tool)
-        console.print("[dim]✅ 已自动注册工具: weather.get_current_weather[/]", style="dim")
+        console.print("[dim][OK] 已自动注册工具: weather.get_current_weather[/]", style="dim")
 
     # 检查空气质量工具是否已存在
     if not tool_registry.get("weather.get_air_quality"):
@@ -73,10 +73,10 @@ async def auto_register_mcp_weather_tools(
             tags=["air-quality", "mcp", "pollution"],
         )
         tool_registry.register(air_quality_tool)
-        console.print("[dim]✅ 已自动注册工具: weather.get_air_quality[/]", style="dim")
+        console.print("[dim][OK] 已自动注册工具: weather.get_air_quality[/]", style="dim")
 
 
-async def auto_register_pdf_skill(
+def auto_register_pdf_skill(
     console: Console,
     tool_registry: ToolRegistry,
     skill_script_path: str | Path | None = None,
@@ -93,16 +93,18 @@ async def auto_register_pdf_skill(
 
     # 检查PDF解析工具是否已存在
     if tool_registry.get("pdf.parser"):
-        console.print("[dim]✅ PDF 解析工具已注册[/]", style="dim")
+        console.print("[dim][OK] PDF 解析工具已注册[/]", style="dim")
         return
 
     # 确定skill脚本路径
     if skill_script_path is None:
         # 尝试多个可能的路径
         possible_paths = [
-            Path("/tmp/pdf-parser-skill/scripts/pymupdf_parse.py"),
-            Path("C:/Users/juz_c/AppData/Local/Temp/pdf-parser-skill/scripts/pymupdf_parse.py"),
-            Path("./pdf-parser-skill/scripts/pymupdf_parse.py"),
+            # 项目内的 skills 目录（保持原始文件夹名）
+            Path("./skills/PyMuPDF-PDF-Parser-openclaw-skill/scripts/pymupdf_parse.py"),
+            # 用户主目录下的 skills 目录
+            Path.home() / "skills" / "PyMuPDF-PDF-Parser-openclaw-skill" / "scripts" / "pymupdf_parse.py",
+            # 原 clawdbot 目录（保留兼容性）
             Path("~/.clawdbot/skills/PyMuPDF-PDF-Parser-openclaw-skill/scripts/pymupdf_parse.py").expanduser(),
         ]
 
@@ -110,16 +112,19 @@ async def auto_register_pdf_skill(
         for p in possible_paths:
             if p.exists():
                 skill_path = p
+                console.print(f"[dim]找到 skill 脚本: {skill_path}[/]", style="dim")
                 break
 
         if skill_path is None:
-            console.print("[yellow]⚠️  未找到 PDF 解析 skill 脚本[/]", style="yellow")
-            console.print("[dim]请手动指定 skill_script_path 参数[/]", style="dim")
+            console.print("[yellow][WARN] 未找到 PDF 解析 skill 脚本[/]", style="yellow")
+            console.print("[dim]请将 PDF 解析 skill 放置到以下任一位置:[/]", style="dim")
+            console.print("[dim]  - ./skills/PyMuPDF-PDF-Parser-openclaw-skill/scripts/pymupdf_parse.py[/]", style="dim")
+            console.print("[dim]  - ~/skills/PyMuPDF-PDF-Parser-openclaw-skill/scripts/pymupdf_parse.py[/]", style="dim")
+            console.print("[dim]或手动指定 skill_script_path 参数[/]", style="dim")
             return
     else:
         skill_path = Path(skill_script_path)
-
-    console.print(f"[dim]找到 skill 脚本: {skill_path}[/]", style="dim")
+        console.print(f"[dim]找到 skill 脚本: {skill_path}[/]", style="dim")
 
     # 创建PDF解析skill工具
     pdf_skill_tool = create_skill_tool(
@@ -142,10 +147,10 @@ async def auto_register_pdf_skill(
     )
 
     tool_registry.register(pdf_skill_tool)
-    console.print("[dim]✅ 已自动注册工具: pdf.parser[/]", style="dim")
+    console.print("[dim][OK] 已自动注册工具: pdf.parser[/]", style="dim")
 
 
-async def auto_register_bash_tools(
+def auto_register_bash_tools(
     console: Console,
     tool_registry: ToolRegistry,
 ) -> None:
@@ -175,4 +180,4 @@ async def auto_register_bash_tools(
             tags=["bash", "shell", "command"],
         )
         tool_registry.register(bash_tool)
-        console.print("[dim]✅ 已自动注册工具: bash.execute[/]", style="dim")
+        console.print("[dim][OK] 已自动注册工具: bash.execute[/]", style="dim")

@@ -29,7 +29,7 @@ class MCPWeatherServerManager:
         self.console = console
         self.port = port
         self.host = host
-        self.server_process: Optional[subprocess.Popen] = None
+        self.server_process: Optional[Any] = None
 
     def _check_port_available(self) -> bool:
         """检查端口是否可用"""
@@ -79,14 +79,14 @@ class MCPWeatherServerManager:
 
             self.console.print("[dim]正在启动 MCP 天气服务器...[/]", style="dim")
 
-            # 启动 mcp-weather-server 进程
-            # 使用 subprocess.Popen 以便在会话结束时清理
-            # 使用 exe 文件路径，为未来集成一般 CLI 工具做准备
-            self.server_process = subprocess.Popen(
-                [str(exe_path), "--mode", "sse", "--port", str(self.port)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+            # 使用异步shell执行命令，与bash tool执行方式一致
+            command = f"{exe_path} --mode sse --port {self.port}"
+
+            # 创建异步子进程（类似于BashToolExecutor的实现）
+            self.server_process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 # 分离进程组，避免信号传播
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
             )
@@ -99,9 +99,14 @@ class MCPWeatherServerManager:
                     return self.cleanup
 
             # 如果启动失败，清理进程
-            if self.server_process and self.server_process.poll() is None:
+            if self.server_process and self.server_process.returncode is None:
                 self.server_process.terminate()
-                self.server_process.wait(timeout=2)
+                try:
+                    await asyncio.wait_for(self.server_process.wait(), timeout=2)
+                except asyncio.TimeoutError:
+                    self.server_process.kill()
+                    await self.server_process.wait()
+
             self.console.print("[yellow]⚠️  MCP 天气服务器启动超时，将继续使用演示模式[/]", style="dim")
             return None
 
@@ -116,18 +121,61 @@ class MCPWeatherServerManager:
 
     def cleanup(self):
         """清理函数：在会话结束时停止 MCP 服务器"""
-        if self.server_process and self.server_process.poll() is None:
-            try:
-                self.console.print("[dim]正在停止 MCP 天气服务器...[/]", style="dim")
+        if self.server_process is None:
+            return
+
+        try:
+            # 检查进程是否仍在运行
+            is_running = False
+            if hasattr(self.server_process, 'poll'):  # subprocess.Popen
+                is_running = self.server_process.poll() is None
+            elif hasattr(self.server_process, 'returncode'):  # asyncio.subprocess.Process
+                is_running = self.server_process.returncode is None
+
+            if not is_running:
+                return
+
+            self.console.print("[dim]正在停止 MCP 天气服务器...[/]", style="dim")
+
+            # 根据进程类型执行清理
+            if hasattr(self.server_process, 'terminate'):
                 self.server_process.terminate()
-                self.server_process.wait(timeout=2)
-                self.console.print("[dim]✅ MCP 天气服务器已停止[/]", style="dim")
-            except Exception as e:
-                self.console.print(f"[dim]停止 MCP 服务器时出错: {e}[/]", style="dim")
-                try:
+
+                # 等待进程结束
+                if hasattr(self.server_process, 'wait') and callable(self.server_process.wait):
+                    if asyncio.iscoroutinefunction(self.server_process.wait):
+                        # 异步wait，同步环境中运行
+                        import asyncio
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+
+                        try:
+                            loop.run_until_complete(asyncio.wait_for(self.server_process.wait(), timeout=2))
+                        except (asyncio.TimeoutError, TimeoutError):
+                            if hasattr(self.server_process, 'kill'):
+                                self.server_process.kill()
+                                loop.run_until_complete(self.server_process.wait())
+                    else:
+                        # 同步wait
+                        try:
+                            self.server_process.wait(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            if hasattr(self.server_process, 'kill'):
+                                self.server_process.kill()
+                                self.server_process.wait()
+
+            self.console.print("[dim]✅ MCP 天气服务器已停止[/]", style="dim")
+
+        except Exception as e:
+            self.console.print(f"[dim]停止 MCP 服务器时出错: {e}[/]", style="dim")
+            try:
+                if hasattr(self.server_process, 'kill'):
                     self.server_process.kill()
-                except:
-                    pass
+            except:
+                pass
 
     async def auto_start_mcp_weather_server(self) -> Optional[Callable[[], Any]]:
         """

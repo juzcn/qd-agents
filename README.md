@@ -184,7 +184,7 @@ uv run qd-agents --list-tools
 uv run qd-agents
 
 # 指定工作模式启动
-uv run qd-agents --mode tool-use
+uv run qd-agents --mode enen
 uv run qd-agents --mode code-plan
 ```
 
