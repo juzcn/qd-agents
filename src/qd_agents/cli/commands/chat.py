@@ -19,6 +19,7 @@ from ..managers import (
     LLMClientManager,
     setup_configuration,
     auto_register_mcp_weather_tools,
+    auto_register_pdf_skill,
 )
 from qd_agents.registry import ToolRegistry
 from qd_agents.prompts import PromptLoader
@@ -340,6 +341,9 @@ async def chat_async(
         db_path=config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
     )
     await auto_register_mcp_weather_tools(console, tool_registry)
+
+    # 自动注册 PDF 解析 skill
+    await auto_register_pdf_skill(console, tool_registry)
 
     prompt_loader = (
         PromptLoader(template_dir=config.prompts.template_dir)
