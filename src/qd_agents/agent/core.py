@@ -320,7 +320,15 @@ class QDAgent:
                             search_result=result,
                         )
 
-                    return f"工具调用结果: {json.dumps(result, ensure_ascii=False)}"
+                    # 对于其他工具（如天气工具），也按照 OpenAI tool calling 标准流程
+                    # 让 LLM 用用户的语言总结回答
+                    logger.info("Calling _summarize_tool_result for tool: %s (id: %s), result type: %s",
+                               tool.name, tool.id, type(result).__name__)
+                    return await self._summarize_tool_result(
+                        user_input=orch_result.user_input,
+                        tool_name=tool.name,
+                        tool_result=result,
+                    )
                 except Exception as e:
                     logger.exception("Tool execution failed")
                     return f"工具调用失败: {e}"
@@ -367,3 +375,50 @@ class QDAgent:
             logger.exception("Failed to summarize search results")
             # 如果 LLM 总结失败，返回格式化的搜索结果
             return _format_search_result(search_result)
+
+    async def _summarize_tool_result(
+        self,
+        user_input: str,
+        tool_name: str,
+        tool_result: Any,
+    ) -> str:
+        """让 LLM 根据工具执行结果用中文总结回答"""
+        logger.info("Summarizing tool result for tool: %s, result type: %s",
+                   tool_name, type(tool_result).__name__)
+
+        # 格式化工具结果为文本
+        try:
+            if isinstance(tool_result, dict):
+                formatted_result = json.dumps(tool_result, ensure_ascii=False, indent=2)
+                logger.debug("Tool result is dict, keys: %s", list(tool_result.keys()))
+            else:
+                formatted_result = str(tool_result)
+                logger.debug("Tool result is not dict: %s", formatted_result[:200])
+        except Exception as e:
+            formatted_result = str(tool_result)
+            logger.warning("Failed to format tool result: %s", e)
+
+        messages = [
+            {
+                "role": "system",
+                "content": f"你是一个专业的助手。请根据以下{tool_name}工具的执行结果，用中文回答用户的问题。回答要自然、友好，使用工具结果中的信息。"
+            },
+            {
+                "role": "user",
+                "content": f"用户问题: {user_input}\n\n工具执行结果:\n{formatted_result}"
+            }
+        ]
+
+        try:
+            logger.info("Calling LLM to summarize tool result for tool: %s", tool_name)
+            response = await self.llm.chat(
+                messages=messages,
+                temperature=0.7,
+            )
+            answer = response.choices[0].message.content or "抱歉，无法生成回答"
+            logger.info("LLM summarization successful for tool: %s", tool_name)
+            return answer
+        except Exception as e:
+            logger.exception("Failed to summarize tool result for tool: %s", tool_name)
+            # 如果 LLM 总结失败，返回格式化的工具结果
+            return f"工具调用结果: {formatted_result}"

@@ -114,16 +114,22 @@ class CLIToolExecutor(ToolExecutor):
             await proc.wait()
             raise TimeoutError(f"Command timed out after {self.timeout}s")
 
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"Command failed with code {proc.returncode}: "
-                f"{stderr.decode()}"
-            )
+        # 始终返回包含 stdout、stderr 和 returncode 的结构化结果
+        # 这样可以保持与 OpenAI tool calling 标准的兼容性
+        result = {
+            "stdout": stdout.decode(),
+            "stderr": stderr.decode(),
+            "returncode": proc.returncode,
+            "success": proc.returncode == 0
+        }
 
+        # 如果输出是 JSON，也提供解析后的版本
         try:
-            return json.loads(stdout.decode())
+            result["json"] = json.loads(stdout.decode())
         except json.JSONDecodeError:
-            return {"output": stdout.decode()}
+            pass
+
+        return result
 
 
 class FunctionToolExecutor(ToolExecutor):
@@ -200,32 +206,65 @@ class MCPToolExecutor(ToolExecutor):
 
         import httpx
 
+        # MCP HTTP 协议可能使用不同的端点
+        # 尝试常见的 MCP 端点
+        endpoints_to_try = [
+            self.endpoint,  # 原始端点
+            f"{self.endpoint}/sse",  # SSE 专用端点
+            f"{self.endpoint}/message",  # MCP 消息端点
+            f"{self.endpoint}/tools/{self.tool}/call",  # 直接工具调用端点
+        ]
+
         # 根据 mcp-weather-server 的 HTTP API 格式调用
         # 注意：实际实现需要根据具体的 MCP HTTP 协议实现
         async with httpx.AsyncClient(timeout=30) as client:
-            if self.transport == "sse":
-                # SSE 模式：建立 Server-Sent Events 连接
-                # 这里简化实现，实际需要处理 SSE 流
-                response = await client.post(
-                    self.endpoint,
-                    json={
-                        "method": f"tools/{self.tool}/call",
-                        "params": kwargs,
-                    }
-                )
-            else:  # streamable-http
-                # Streamable HTTP 模式
-                response = await client.post(
-                    self.endpoint,
-                    json={
-                        "method": f"tools/{self.tool}/call",
-                        "params": kwargs,
-                    }
-                )
+            last_error = None
+            for endpoint in endpoints_to_try:
+                try:
+                    logger.info("Trying MCP endpoint: %s", endpoint)
+                    if self.transport == "sse":
+                        # SSE 模式：建立 Server-Sent Events 连接
+                        # 这里简化实现，实际需要处理 SSE 流
+                        response = await client.post(
+                            endpoint,
+                            json={
+                                "method": f"tools/{self.tool}/call",
+                                "params": kwargs,
+                            }
+                        )
+                    else:  # streamable-http
+                        # Streamable HTTP 模式
+                        response = await client.post(
+                            endpoint,
+                            json={
+                                "method": f"tools/{self.tool}/call",
+                                "params": kwargs,
+                            }
+                        )
 
-            response.raise_for_status()
-            result = response.json()
-            return result.get("result", result)
+                    response.raise_for_status()
+                    result = response.json()
+                    logger.info("MCP tool %s/%s executed successfully via %s (endpoint: %s)",
+                               self.server, self.tool, self.transport, endpoint)
+                    return result.get("result", result)
+                except httpx.HTTPStatusError as e:
+                    last_error = e
+                    logger.warning("MCP endpoint %s failed with status %s: %s",
+                                 endpoint, e.response.status_code, e.response.text[:200])
+                    if e.response.status_code == 404:
+                        continue  # 尝试下一个端点
+                    else:
+                        raise
+                except Exception as e:
+                    last_error = e
+                    logger.warning("MCP endpoint %s failed: %s", endpoint, e)
+                    continue
+
+            # 所有端点都失败
+            if last_error:
+                raise last_error
+            else:
+                raise ValueError(f"All MCP endpoints failed for tool {self.server}/{self.tool}")
 
     async def _execute_simplified(self, **kwargs: Any) -> Any:
         """简化的 MCP 工具执行（用于演示）"""

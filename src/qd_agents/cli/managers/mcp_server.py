@@ -41,6 +41,24 @@ class MCPWeatherServerManager:
         except Exception:
             return False
 
+    def _get_executable_path(self) -> Path:
+        """
+        获取跨平台的可执行文件路径
+
+        Returns:
+            Path: 可执行文件的路径
+        """
+        exe_dir = Path(sys.executable).parent
+
+        # 根据平台选择可执行文件名
+        if sys.platform == "win32":
+            exe_name = "mcp_weather_server.exe"
+        else:
+            # Linux/macOS 和其他 Unix 系统
+            exe_name = "mcp_weather_server"
+
+        return exe_dir / exe_name
+
     async def start_server(self) -> Optional[Callable[[], Any]]:
         """
         启动 MCP 天气服务器
@@ -48,6 +66,9 @@ class MCPWeatherServerManager:
         Returns:
             如果成功启动服务器，返回清理函数；否则返回 None
         """
+        # 获取可执行文件路径（在 try 块外部，以便错误处理中使用）
+        exe_path = self._get_executable_path()
+
         try:
             self.console.print("[dim]正在检查 MCP 天气服务器状态...[/]", style="dim")
 
@@ -60,8 +81,9 @@ class MCPWeatherServerManager:
 
             # 启动 mcp-weather-server 进程
             # 使用 subprocess.Popen 以便在会话结束时清理
+            # 使用 exe 文件路径，为未来集成一般 CLI 工具做准备
             self.server_process = subprocess.Popen(
-                ["mcp-weather-server", "--mode", "sse", "--port", str(self.port)],
+                [str(exe_path), "--mode", "sse", "--port", str(self.port)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -84,7 +106,7 @@ class MCPWeatherServerManager:
             return None
 
         except FileNotFoundError:
-            self.console.print("[yellow]⚠️  未找到 mcp-weather-server 命令[/]", style="dim")
+            self.console.print(f"[yellow]⚠️  未找到 {exe_path.name} 可执行文件[/]", style="dim")
             self.console.print("[dim]  请安装: uv add mcp-weather-server[/]", style="dim")
             return None
         except Exception as e:
