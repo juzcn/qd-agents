@@ -11,7 +11,7 @@ from typing import Optional, Any, Dict, List
 
 import questionary
 from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
+from prompt_toolkit.history import InMemoryHistory
 from rich.console import Console
 
 from ..managers import (
@@ -76,10 +76,6 @@ class ChatCommandHandler:
             self._show_help()
             return True
 
-        if user_input.lower() == "/clear":
-            self.console.clear()
-            return True
-
         if user_input.lower() == "/model":
             self._show_current_model()
             return True
@@ -111,8 +107,6 @@ class ChatCommandHandler:
         """显示帮助信息"""
         self.console.print("\n[bold]可用命令:[/]")
         self.console.print("  /quit - 退出程序")
-        self.console.print("  /clear - 清空画面")
-        self.console.print("  /history - 显示历史记录")
         self.console.print("  /model - 显示当前模型")
         self.console.print("  /models - 列出并切换可用模型")
         self.console.print("  /tools - 列出可用工具")
@@ -135,6 +129,7 @@ class ChatCommandHandler:
         for tool in tools:
             self.console.print(f"  - [cyan]{tool.name}[/]: {tool.description}")
         self.console.print()
+
 
     async def _handle_models_command(self):
         """处理 /models 命令：列出并切换模型"""
@@ -323,7 +318,7 @@ async def chat_async(
     console.print("输入 /quit 退出，输入 /help 查看帮助\n", style="dim")
 
     # 1. 配置初始化
-    config, history_file = setup_configuration(console, base_dir, config_file)
+    config = setup_configuration(console, base_dir, config_file)
 
     # 1.1. 更新模式（如果通过命令行指定）
     if mode is not None:
@@ -367,7 +362,7 @@ async def chat_async(
     from .. import prompt_style, ChatCommandCompleter  # 从 main.py 导入
     session: PromptSession[str] = PromptSession(
         completer=ChatCommandCompleter(),
-        history=FileHistory(str(history_file)),
+        history=InMemoryHistory(),  # 使用内存历史记录
         style=prompt_style,
         complete_while_typing=True,
     )

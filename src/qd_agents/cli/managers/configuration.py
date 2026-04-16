@@ -17,9 +17,9 @@ def setup_configuration(
     console: Console,
     base_dir: Optional[Path] = None,
     config_file: Optional[Path] = None,
-) -> Tuple[Config, Path]:
+) -> Config:
     """
-    加载配置并设置数据存储和日志
+    加载配置并设置日志
 
     Args:
         console: Rich 控制台对象，用于输出信息
@@ -28,17 +28,12 @@ def setup_configuration(
 
     Returns:
         config: 加载的配置对象
-        history_file: 历史文件路径
     """
     config = load_config(base_dir=base_dir, config_file=config_file)
 
-    # 确保数据目录存在
+    # 确保数据目录存在（用于日志等）
     if config.storage:
         config.storage.data_dir.mkdir(parents=True, exist_ok=True)
-        history_file = config.storage.data_dir / "chat_history.txt"
-    else:
-        history_file = Path("data/chat_history.txt")
-        history_file.parent.mkdir(parents=True, exist_ok=True)
 
     # 配置会话日志（仅文件输出）
     log_level = config.observability.log_level if config.observability else "INFO"
@@ -53,4 +48,4 @@ def setup_configuration(
 
     console.print(f"[dim]日志文件: {log_file}[/]\n", style="dim")
 
-    return config, history_file
+    return config

@@ -22,8 +22,6 @@ class ChatCommandCompleter(Completer):
     COMMANDS = {
         "/quit": "退出程序",
         "/help": "显示帮助信息",
-        "/clear": "清空屏幕",
-        "/history": "显示历史记录",
         "/model": "显示当前模型",
         "/models": "列出并切换可用模式",
         "/tools": "列出可用工具",
