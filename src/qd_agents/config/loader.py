@@ -11,6 +11,15 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+from enum import Enum
+
+
+class AgentMode(str, Enum):
+    """智能体工作模式"""
+    TOOL_USE = "tool-use"
+    CODE_PLAN = "code-plan"
+
+
 class LLMProviderConfig(BaseModel):
     """LLM 提供商配置"""
     api_key: str
@@ -44,6 +53,7 @@ class LLMConfig(BaseModel):
     default_provider: str = "nvidia"
     default_model: str | None = None
     providers: dict[str, LLMProviderConfig] = Field(default_factory=dict)
+    mode: AgentMode = AgentMode.TOOL_USE
     two_phase_enabled: bool = True
     tool_threshold: int = 50
     phase_one_tools: list[str] = Field(

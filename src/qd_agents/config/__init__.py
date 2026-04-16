@@ -1,7 +1,7 @@
 """
 配置管理模块
 """
-from .loader import Config, load_config, save_config
+from .loader import Config, load_config, save_config, AgentMode
 
 # 全局配置实例
 _config: Config | None = None
@@ -18,4 +18,4 @@ def set_config(config: Config) -> None:
     _config = config
 
 
-__all__ = ["Config", "load_config", "save_config", "get_config", "set_config"]
+__all__ = ["Config", "load_config", "save_config", "get_config", "set_config", "AgentMode"]

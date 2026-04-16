@@ -12,6 +12,7 @@ import typer
 from rich.console import Console
 
 from .commands import chat_async, list_models_async, list_tools, init_tools, show_version
+from qd_agents.config import AgentMode
 
 
 # 创建 Typer 应用实例
@@ -32,6 +33,7 @@ def main(
     list_tools_option: bool = typer.Option(False, "--list-tools", help="列出已注册的工具"),
     init_tools_option: bool = typer.Option(False, "--init-tools", help="初始化内置工具"),
     version: bool = typer.Option(False, "--version", help="显示版本信息"),
+    mode: AgentMode = typer.Option(AgentMode.TOOL_USE, "--mode", help="智能体工作模式: tool-use, code-plan"),
 ):
     """
     qd-agents - 从对话到自动化流程的智能体系统
@@ -74,4 +76,4 @@ def main(
 
     # 如果没有任何选项被指定，执行默认操作（聊天）
     if not options_executed:
-        asyncio.run(chat_async(console, None, None, None, None))
+        asyncio.run(chat_async(console, None, None, None, None, mode))

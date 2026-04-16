@@ -25,8 +25,9 @@ class ChatCommandCompleter(Completer):
         "/clear": "清空屏幕",
         "/history": "显示历史记录",
         "/model": "显示当前模型",
-        "/models": "列出并切换可用模型",
+        "/models": "列出并切换可用模式",
         "/tools": "列出可用工具",
+        "/mode": "显示/切换工作模式",
     }
 
     def get_completions(self, document, complete_event):

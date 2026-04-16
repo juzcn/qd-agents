@@ -18,6 +18,7 @@
 - **内置搜索工具** - 支持 Baidu、Tavily、Serper 搜索引擎
 - **详细日志记录** - LLM 请求/响应完整日志，支持 DEBUG 级别
 - **实时日志刷新** - ImmediateFlushFileHandler 确保日志实时写入磁盘
+- **模式切换** - 支持 tool-use 和 code-plan 两种工作模式，可通过命令行或聊天命令切换
 
 ## 安装
 
@@ -181,7 +182,23 @@ uv run qd-agents --list-tools
 ```bash
 # 默认直接启动聊天
 uv run qd-agents
+
+# 指定工作模式启动
+uv run qd-agents --mode tool-use
+uv run qd-agents --mode code-plan
 ```
+
+### 聊天命令
+
+在聊天会话中可以使用以下命令：
+- `/mode` - 显示/切换工作模式
+- `/models` - 列出并切换可用模型
+- `/tools` - 列出可用工具
+- `/model` - 显示当前模型
+- `/help` - 显示帮助信息
+- `/quit` - 退出程序
+- `/clear` - 清空屏幕
+- `/history` - 显示历史记录
 
 ### 查看版本
 

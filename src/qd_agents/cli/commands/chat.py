@@ -23,7 +23,7 @@ from ..managers import (
 from qd_agents.registry import ToolRegistry
 from qd_agents.prompts import PromptLoader
 from qd_agents.context import ContextManager
-from qd_agents.config import Config
+from qd_agents.config import Config, AgentMode
 from qd_agents.llm import LLMClient
 
 
@@ -91,6 +91,10 @@ class ChatCommandHandler:
             self._show_tools()
             return True
 
+        if user_input.lower() == "/mode":
+            await self._handle_mode_command()
+            return True
+
         if user_input.strip().startswith("/"):
             self.console.print(f"\n[red]错误: 未知命令 '{user_input}'[/]")
             self.console.print("输入 /help 查看可用命令\n")
@@ -111,6 +115,7 @@ class ChatCommandHandler:
         self.console.print("  /model - 显示当前模型")
         self.console.print("  /models - 列出并切换可用模型")
         self.console.print("  /tools - 列出可用工具")
+        self.console.print("  /mode - 显示/切换工作模式")
         self.console.print("  /help - 显示此帮助\n")
 
     def _show_current_model(self):
@@ -242,12 +247,56 @@ class ChatCommandHandler:
             self.console.print("\n[red]错误: Agent 未初始化[/]\n")
             return True
 
+        # 根据模式处理
+        current_mode = self.config.llm.mode
+        if current_mode == AgentMode.CODE_PLAN:
+            self.console.print("\n[yellow]注意: code-plan 模式暂未实现，使用 tool-use 模式替代[/]\n")
+
         with self.console.status("[bold]思考中...[/]"):
             result = await self.llm_manager.agent.process(user_input=user_input)
 
         self.console.print(f"\n[bold green]助手[/]: {result.final_output}\n")
         self.console.print(f"[dim]耗时: {result.total_duration_ms}ms[/]", style="dim")
         return True
+
+    async def _handle_mode_command(self):
+        """处理 /mode 命令：显示/切换工作模式"""
+        current_mode = self.config.llm.mode
+        self.console.print(f"\n[bold]当前模式:[/] {current_mode.value}")
+        self.console.print("[bold]可用模式:[/]")
+        for mode in AgentMode:
+            self.console.print(f"  - {mode.value}: {mode.name}")
+
+        # 询问是否切换模式
+        try:
+            choices = [
+                questionary.Choice("保持当前模式", value=current_mode),
+                questionary.Choice("切换到 tool-use", value=AgentMode.TOOL_USE),
+                questionary.Choice("切换到 code-plan", value=AgentMode.CODE_PLAN),
+            ]
+            selected = await questionary.select(
+                "选择操作:",
+                choices=choices,
+                qmark=">",
+                instruction="(↑↓ 选择, Enter 确认)",
+            ).ask_async()
+
+            if selected and selected != current_mode:
+                self.config.llm.mode = selected
+                self.console.print(f"\n[green]已切换到模式:[/] {selected.value}")
+                # 更新配置文件
+                if self.current_config_file.exists():
+                    with open(self.current_config_file, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                    config_data['llm']['mode'] = selected.value
+                    with open(self.current_config_file, 'w', encoding='utf-8') as f:
+                        json.dump(config_data, f, ensure_ascii=False, indent=2)
+                    self.console.print(f"[dim]已更新 config.json[/]")
+                self.console.print()
+            elif selected == current_mode:
+                self.console.print("\n[dim]保持当前模式[/]\n")
+        except (KeyboardInterrupt, EOFError):
+            self.console.print()
 
 
 async def chat_async(
@@ -256,6 +305,7 @@ async def chat_async(
     config_file: Optional[Path] = None,
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    mode: Optional[AgentMode] = None,
 ) -> None:
     """
     异步聊天实现
@@ -266,12 +316,17 @@ async def chat_async(
         config_file: 配置文件路径
         provider: 提供商名称
         model: 模型名称
+        mode: 智能体工作模式
     """
     console.print("[bold blue]qd-agents[/] - 智能体系统", style="bold")
     console.print("输入 /quit 退出，输入 /help 查看帮助\n", style="dim")
 
     # 1. 配置初始化
     config, history_file = setup_configuration(console, base_dir, config_file)
+
+    # 1.1. 更新模式（如果通过命令行指定）
+    if mode is not None:
+        config.llm.mode = mode
 
     # 2. 启动 MCP 服务器
     mcp_server_manager = MCPWeatherServerManager(console)
