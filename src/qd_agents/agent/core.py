@@ -126,7 +126,6 @@ class QDAgent:
             context_manager=self.context,
             prompt_loader=prompt_loader,
             tool_threshold=config.llm.tool_threshold,
-            two_phase_enabled=config.llm.two_phase_enabled,
         )
 
         # 初始化重试和熔断

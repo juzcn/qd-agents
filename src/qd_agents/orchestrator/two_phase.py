@@ -80,7 +80,6 @@ class TwoPhaseOrchestrator:
         context_manager: ContextManager | None = None,
         prompt_loader: PromptLoader | None = None,
         tool_threshold: int = 50,
-        two_phase_enabled: bool = True,
     ):
         """
         初始化两阶段调度器
@@ -90,15 +89,13 @@ class TwoPhaseOrchestrator:
             tool_registry: 工具注册中心
             context_manager: 上下文管理器
             prompt_loader: 提示词加载器
-            tool_threshold: 工具数量阈值，超过则启用两阶段
-            two_phase_enabled: 是否启用两阶段
+            tool_threshold: 工具数量阈值
         """
         self.llm = llm_client
         self.registry = tool_registry
         self.prompts = prompt_loader
         self.context = context_manager or ContextManager(prompt_loader=prompt_loader)
         self.tool_threshold = tool_threshold
-        self.two_phase_enabled = two_phase_enabled
 
         # 内置元工具定义
         self._meta_tools = self._build_meta_tools()

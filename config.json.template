@@ -25,9 +25,7 @@
         "max_retries": 3
       }
     },
-    "two_phase_enabled": true,
-    "tool_threshold": 50,
-    "phase_one_tools": ["meta.direct", "meta.find_tools", "search.web"]
+    "tool_threshold": 50
   },
   "search": {
     "serper": {
