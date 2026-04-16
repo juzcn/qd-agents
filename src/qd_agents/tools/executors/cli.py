@@ -9,6 +9,8 @@ import asyncio
 import json
 import logging
 import subprocess
+import sys
+import locale
 from typing import Any
 
 from .base import ToolExecutor
@@ -16,6 +18,53 @@ from qd_agents.registry import Tool, ToolExecutionConfig, ToolMetadata, ToolExec
 
 
 logger = logging.getLogger(__name__)
+
+
+def safe_decode(bytes_data: bytes, encoding: str = None) -> str:
+    """
+    安全解码字节数据
+
+    Args:
+        bytes_data: 要解码的字节数据
+        encoding: 指定的编码，如果为None则自动检测
+
+    Returns:
+        解码后的字符串
+    """
+    if not bytes_data:
+        return ""
+
+    if encoding:
+        try:
+            return bytes_data.decode(encoding)
+        except UnicodeDecodeError:
+            pass
+
+    # 尝试多种常见编码
+    encodings_to_try = [
+        locale.getpreferredencoding(),
+        sys.getdefaultencoding(),
+        'utf-8',
+        'gbk',  # Windows中文编码
+        'gb2312',
+        'latin-1',  # 不会失败的编码
+    ]
+
+    # 去重
+    encodings_to_try = list(dict.fromkeys(encodings_to_try))
+
+    for enc in encodings_to_try:
+        try:
+            return bytes_data.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    # 所有编码都失败，使用latin-1或替换字符
+    try:
+        return bytes_data.decode('latin-1')
+    except UnicodeDecodeError:
+        # 最后的手段：使用错误处理
+        return bytes_data.decode('utf-8', errors='replace')
 
 
 class CLIToolExecutor(ToolExecutor):
@@ -70,15 +119,15 @@ class CLIToolExecutor(ToolExecutor):
         # 始终返回包含 stdout、stderr 和 returncode 的结构化结果
         # 这样可以保持与 OpenAI tool calling 标准的兼容性
         result = {
-            "stdout": stdout.decode(),
-            "stderr": stderr.decode(),
+            "stdout": safe_decode(stdout),
+            "stderr": safe_decode(stderr),
             "returncode": proc.returncode,
             "success": proc.returncode == 0
         }
 
         # 如果输出是 JSON，也提供解析后的版本
         try:
-            result["json"] = json.loads(stdout.decode())
+            result["json"] = json.loads(safe_decode(stdout))
         except json.JSONDecodeError:
             pass
 
@@ -132,15 +181,15 @@ class BashToolExecutor(ToolExecutor):
 
         # 返回结构化结果
         result = {
-            "stdout": stdout.decode(),
-            "stderr": stderr.decode(),
+            "stdout": safe_decode(stdout),
+            "stderr": safe_decode(stderr),
             "returncode": proc.returncode,
             "success": proc.returncode == 0
         }
 
         # 如果输出是JSON，也提供解析后的版本
         try:
-            result["json"] = json.loads(stdout.decode())
+            result["json"] = json.loads(safe_decode(stdout))
         except json.JSONDecodeError:
             pass
 

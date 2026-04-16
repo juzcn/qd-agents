@@ -177,6 +177,21 @@ uv run qd-agents --init-tools
 uv run qd-agents --list-tools
 ```
 
+输出格式为 `工具名(类型)`，其中类型包括：`function`、`cli`、`bash`、`mcp`、`skill`。
+
+### 初始化内置工具
+
+```bash
+uv run qd-agents --init-tools
+```
+
+此命令会清空现有工具数据库并重新注册所有内置工具，包括：
+- 搜索工具 (serper_search, tavily_search, baidu_search, web_search)
+- 实用工具 (echo)
+- MCP 天气工具 (get_current_weather, get_air_quality)
+- Bash 工具 (execute_bash)
+- PDF 解析 Skill 工具 (parse_pdf) - 需提前下载 skill 到 `skills/` 目录
+
 ### 启动交互式聊天
 
 ```bash
