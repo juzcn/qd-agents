@@ -284,6 +284,27 @@ def init_tools(
     registry.register(air_quality_tool)
     registered_tools.append(air_quality_tool.name)
 
+    # ==================== Bash 工具 ====================
+    from qd_agents.tools.executor import create_bash_tool
+
+    # 通用bash执行工具
+    bash_tool = create_bash_tool(
+        name="execute_bash",
+        description="执行bash/shell命令，支持管道、重定向等shell特性",
+        shell_command="{command}",
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "要执行的bash/shell命令"},
+            },
+            "required": ["command"],
+        },
+        category="shell",
+        tags=["bash", "shell", "command"],
+    )
+    registry.register(bash_tool)
+    registered_tools.append(bash_tool.name)
+
     console.print(f"[green]已注册内置工具 ({len(registered_tools)} 个):[/]")
     for tool_name in registered_tools:
         console.print(f"  - {tool_name}")

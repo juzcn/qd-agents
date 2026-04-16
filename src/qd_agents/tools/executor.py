@@ -1,30 +1,48 @@
 """
 工具执行器 - 支持多种执行类型
+
+注意：此文件已重构为兼容性包装。实际实现在 executors/ 目录中。
+为保持向后兼容性，从此文件重新导出所有公共API。
 """
+
 from __future__ import annotations
 
-import asyncio
-import json
-import logging
-import subprocess
-from abc import ABC, abstractmethod
-from typing import Any, Callable
+# 重新导出所有公共API，保持向后兼容性
+from .executors import (
+    ToolExecutor,
+    ToolExecutorRegistry,
+    create_executor,
+    create_http_tool,
+    create_cli_tool,
+    create_function_tool,
+    create_bash_tool,
+    create_skill_tool,
+    create_mcp_tool,
+    HTTPToolExecutor,
+    CLIToolExecutor,
+    BashToolExecutor,
+    FunctionToolExecutor,
+    SkillToolExecutor,
+    MCPToolExecutor,
+)
 
-import httpx
-
-from ..registry import Tool, ToolExecutionType
-
-
-logger = logging.getLogger(__name__)
-
-
-class ToolExecutor(ABC):
-    """工具执行器基类"""
-
-    @abstractmethod
-    async def execute(self, **kwargs: Any) -> Any:
-        """执行工具"""
-        pass
+__all__ = [
+    "ToolExecutor",
+    "ToolExecutorRegistry",
+    "create_executor",
+    "create_http_tool",
+    "create_cli_tool",
+    "create_function_tool",
+    "create_bash_tool",
+    "create_skill_tool",
+    "create_mcp_tool",
+    "HTTPToolExecutor",
+    "CLIToolExecutor",
+    "BashToolExecutor",
+    "FunctionToolExecutor",
+    "SkillToolExecutor",
+    "MCPToolExecutor",
+]
 
 
 class HTTPToolExecutor(ToolExecutor):
@@ -124,6 +142,68 @@ class CLIToolExecutor(ToolExecutor):
         }
 
         # 如果输出是 JSON，也提供解析后的版本
+        try:
+            result["json"] = json.loads(stdout.decode())
+        except json.JSONDecodeError:
+            pass
+
+        return result
+
+
+class BashToolExecutor(ToolExecutor):
+    """Bash 工具执行器"""
+
+    def __init__(
+        self,
+        shell_command: str,
+        shell: str = "bash",
+        timeout: int = 30,
+    ):
+        self.shell_command = shell_command
+        self.shell = shell
+        self.timeout = timeout
+
+    async def execute(self, **kwargs: Any) -> Any:
+        import shlex
+
+        # 替换命令中的占位符
+        formatted_command = self.shell_command
+        for key, value in kwargs.items():
+            placeholder = f"{{{key}}}"
+            if placeholder in formatted_command:
+                formatted_command = formatted_command.replace(placeholder, str(value))
+
+        logger.info("Executing bash tool: %s", formatted_command)
+
+        # 使用指定的shell执行命令
+        # 在Windows上，如果shell是"bash"，可能需要使用"wsl bash -c"或其他方式
+        # 这里简化处理，假设shell在PATH中
+        proc = await asyncio.create_subprocess_shell(
+            formatted_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=True,  # 使用shell执行
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=self.timeout
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise TimeoutError(f"Bash command timed out after {self.timeout}s")
+
+        # 返回结构化结果
+        result = {
+            "stdout": stdout.decode(),
+            "stderr": stderr.decode(),
+            "returncode": proc.returncode,
+            "success": proc.returncode == 0
+        }
+
+        # 如果输出是JSON，也提供解析后的版本
         try:
             result["json"] = json.loads(stdout.decode())
         except json.JSONDecodeError:
@@ -439,6 +519,15 @@ def create_executor(tool: Tool) -> ToolExecutor:
             timeout=exec_config.timeout,
         )
 
+    elif exec_config.type == ToolExecutionType.BASH:
+        if not exec_config.shell_command:
+            raise ValueError("BASH tool requires shell_command")
+        return BashToolExecutor(
+            shell_command=exec_config.shell_command,
+            shell=exec_config.shell or "bash",
+            timeout=exec_config.timeout,
+        )
+
     elif exec_config.type == ToolExecutionType.FUNCTION:
         # 函数工具需要单独注册
         raise NotImplementedError(
@@ -610,6 +699,40 @@ def create_skill_tool(
             function=function,
             command=command,
             args=args or [],
+            timeout=timeout,
+        ),
+        metadata=ToolMetadata(
+            category=category,
+            tags=tags,
+        ),
+    )
+
+
+def create_bash_tool(
+    name: str,
+    description: str,
+    shell_command: str,
+    parameters: dict[str, Any] | None = None,
+    shell: str = "bash",
+    timeout: int = 30,
+    category: str = "shell",
+    tags: list[str] | None = None,
+) -> Tool:
+    """创建 Bash 工具"""
+    from ..registry import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
+
+    if tags is None:
+        tags = ["bash", "shell"]
+
+    return Tool(
+        id=name,
+        name=name,
+        description=description,
+        parameters=parameters or {"type": "object", "properties": {}, "required": []},
+        execution=ToolExecutionConfig(
+            type=ToolExecutionType.BASH,
+            shell_command=shell_command,
+            shell=shell,
             timeout=timeout,
         ),
         metadata=ToolMetadata(

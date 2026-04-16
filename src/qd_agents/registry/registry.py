@@ -32,6 +32,7 @@ class ToolExecutionType(str, Enum):
     SKILL = "skill"
     HTTP = "http"
     MCP = "mcp"
+    BASH = "bash"
 
 
 class ToolExecutionConfig(BaseModel):
@@ -49,6 +50,8 @@ class ToolExecutionConfig(BaseModel):
     server: str | None = None
     tool: str | None = None
     transport: str = "stdio"  # MCP传输模式：stdio, sse, streamable-http
+    shell_command: str | None = None  # bash工具：完整的shell命令字符串
+    shell: str = "bash"  # 使用的shell，默认为bash
 
 
 class ToolMetadata(BaseModel):
