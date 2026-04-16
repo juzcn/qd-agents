@@ -48,6 +48,7 @@ class ToolExecutionConfig(BaseModel):
     skill_id: str | None = None
     server: str | None = None
     tool: str | None = None
+    transport: str = "stdio"  # MCP传输模式：stdio, sse, streamable-http
 
 
 class ToolMetadata(BaseModel):

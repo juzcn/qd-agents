@@ -16,6 +16,7 @@ dependencies = [
     "mcp>=1.0.0",
     "prompt-toolkit>=3.0.52",
     "questionary>=2.1.1",
+    "mcp-weather-server>=0.6.1",
 ]
 
 [dependency-groups]
