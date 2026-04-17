@@ -29,7 +29,6 @@ class ToolExecutionType(str, Enum):
     """工具执行类型"""
     FUNCTION = "function"
     CLI = "cli"
-    SKILL = "skill"
     HTTP = "http"
     MCP = "mcp"
     BASH = "bash"
@@ -46,7 +45,6 @@ class ToolExecutionConfig(BaseModel):
     timeout: int = 30
     module: str | None = None
     function: str | None = None
-    skill_id: str | None = None
     server: str | None = None
     tool: str | None = None
     transport: str = "stdio"  # MCP传输模式：stdio, sse, streamable-http

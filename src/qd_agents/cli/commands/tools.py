@@ -12,7 +12,6 @@ from rich.console import Console
 
 from qd_agents.config import load_config
 from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
-from qd_agents.tools.executor import create_mcp_tool
 from qd_agents.agent.builtins import echo
 
 
@@ -34,9 +33,6 @@ def list_tools(
     db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
     registry = ToolRegistry(db_path=db_path)
 
-    # 自动注册 PDF 解析 skill（如果尚未注册）
-    from qd_agents.cli.managers.tool_registration import auto_register_pdf_skill
-    auto_register_pdf_skill(console, registry)
 
     tools = registry.list_all()
 
@@ -177,46 +173,6 @@ def init_tools(
     registry.register(baidu_tool)
     registered_tools.append(baidu_tool.name)
 
-    # search.web (统一接口)
-    web_search_tool = Tool(
-        id="search.web",
-        name="web_search",
-        description="通用网络搜索工具，自动选择合适的搜索引擎进行搜索",
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "搜索关键词或问题"},
-                "num_results": {
-                    "type": "integer",
-                    "description": "返回结果数量，默认 5",
-                    "default": 5,
-                },
-                "engine": {
-                    "type": "string",
-                    "enum": ["auto", "serper", "tavily", "baidu"],
-                    "description": "指定搜索引擎，auto 表示自动选择",
-                    "default": "auto",
-                },
-                "language": {
-                    "type": "string",
-                    "description": "搜索结果语言偏好，例如 zh-CN、en-US",
-                    "default": "zh-CN",
-                },
-            },
-            "required": ["query"],
-        },
-        execution=ToolExecutionConfig(
-            type=ToolExecutionType.FUNCTION,
-            module="qd_agents.agent.builtin_tools",
-            function="web_search",
-        ),
-        metadata=ToolMetadata(
-            category="search",
-            tags=["web", "search", "unified"],
-        ),
-    )
-    registry.register(web_search_tool)
-    registered_tools.append(web_search_tool.name)
 
     # ==================== 实用工具 ====================
 
@@ -245,53 +201,6 @@ def init_tools(
     registry.register(echo_tool)
     registered_tools.append(echo_tool.name)
 
-    # ==================== MCP 天气工具 ====================
-
-    # 当前天气工具
-    current_weather_tool = create_mcp_tool(
-        name="get_current_weather",
-        description="获取指定城市的当前天气信息，包括温度、湿度、风速、天气描述等",
-        server="weather",
-        tool_name="get_current_weather",
-        parameters={
-            "type": "object",
-            "properties": {
-                "city": {"type": "string", "description": "城市名称，如 'Beijing' 或 '上海'"},
-                "country": {"type": "string", "description": "国家代码，如 'CN'，可选"},
-                "latitude": {"type": "number", "description": "纬度，可选"},
-                "longitude": {"type": "number", "description": "经度，可选"},
-            },
-            "required": ["city"],
-        },
-        transport="sse",
-        endpoint="http://localhost:8000",
-        category="weather",
-        tags=["weather", "mcp", "current"],
-    )
-    registry.register(current_weather_tool)
-    registered_tools.append(current_weather_tool.name)
-
-    # 空气质量工具
-    air_quality_tool = create_mcp_tool(
-        name="get_air_quality",
-        description="获取指定城市的空气质量信息，包括 PM2.5、PM10、臭氧、NO₂、CO 等级和健康建议",
-        server="weather",
-        tool_name="get_air_quality",
-        parameters={
-            "type": "object",
-            "properties": {
-                "city": {"type": "string", "description": "城市名称"},
-                "country": {"type": "string", "description": "国家代码，可选"},
-            },
-            "required": ["city"],
-        },
-        transport="sse",
-        endpoint="http://localhost:8000",
-        category="air-quality",
-        tags=["air-quality", "mcp", "pollution"],
-    )
-    registry.register(air_quality_tool)
-    registered_tools.append(air_quality_tool.name)
 
     # ==================== Bash 工具 ====================
     from qd_agents.tools.executor import create_bash_tool
@@ -314,16 +223,6 @@ def init_tools(
     registry.register(bash_tool)
     registered_tools.append(bash_tool.name)
 
-    # ==================== PDF 解析 Skill 工具 ====================
-    from qd_agents.cli.managers.tool_registration import auto_register_pdf_skill
-
-    # 自动注册 PDF 解析 skill
-    auto_register_pdf_skill(console, registry)
-
-    # 检查是否成功注册了 pdf.parser
-    pdf_tool = registry.get("pdf.parser")
-    if pdf_tool:
-        registered_tools.append(pdf_tool.name)
 
     # 获取所有工具对象并显示类型
     all_tools = registry.list_all()

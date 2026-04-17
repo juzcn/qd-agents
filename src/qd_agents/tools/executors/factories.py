@@ -12,8 +12,6 @@ from .base import ToolExecutor
 from .http import HTTPToolExecutor, create_http_tool
 from .cli import CLIToolExecutor, BashToolExecutor, create_cli_tool, create_bash_tool
 from .function import FunctionToolExecutor, create_function_tool
-from .skill import SkillToolExecutor, create_skill_tool
-from .mcp import MCPToolExecutor, create_mcp_tool
 from qd_agents.registry import Tool, ToolExecutionType
 
 
@@ -66,20 +64,7 @@ def create_executor(tool: Tool) -> ToolExecutor:
             "Function tools must be registered with ToolExecutorRegistry"
         )
 
-    elif exec_config.type == ToolExecutionType.SKILL:
-        if not exec_config.skill_id:
-            raise ValueError("Skill tool requires skill_id")
-        return SkillToolExecutor(exec_config=exec_config)
 
-    elif exec_config.type == ToolExecutionType.MCP:
-        if not exec_config.server or not exec_config.tool:
-            raise ValueError("MCP tool requires server and tool")
-        return MCPToolExecutor(
-            server=exec_config.server,
-            tool=exec_config.tool,
-            transport=exec_config.transport,
-            endpoint=exec_config.endpoint,
-        )
 
     else:
         raise ValueError(f"Unknown tool type: {exec_config.type}")
