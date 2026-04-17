@@ -168,7 +168,7 @@ class QDAgent:
         logger.info("QDAgent initialized. Models: %s", self.llm._model_names)
 
     async def _register_builtin_tools(self) -> None:
-        """注册内置工具执行器（工具定义已通过 --init-tools 注册到数据库）"""
+        """注册内置工具执行器（工具定义已通过 tools init 命令注册到数据库）"""
         # 注册 echo 工具
         from .builtins import echo
         self.executor_registry.register_function("echo", echo)

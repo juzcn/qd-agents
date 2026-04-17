@@ -34,9 +34,6 @@ def list_tools(
     db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
     registry = ToolRegistry(db_path=db_path)
 
-    # 自动注册 PDF 解析 skill（如果尚未注册）
-    from qd_agents.cli.managers.tool_registration import auto_register_pdf_skill
-    auto_register_pdf_skill(console, registry)
 
     tools = registry.list_all()
 
@@ -314,16 +311,6 @@ def init_tools(
     registry.register(bash_tool)
     registered_tools.append(bash_tool.name)
 
-    # ==================== PDF 解析 Skill 工具 ====================
-    from qd_agents.cli.managers.tool_registration import auto_register_pdf_skill
-
-    # 自动注册 PDF 解析 skill
-    auto_register_pdf_skill(console, registry)
-
-    # 检查是否成功注册了 pdf.parser
-    pdf_tool = registry.get("pdf.parser")
-    if pdf_tool:
-        registered_tools.append(pdf_tool.name)
 
     # 获取所有工具对象并显示类型
     all_tools = registry.list_all()

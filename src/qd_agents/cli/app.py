@@ -23,7 +23,37 @@ app = typer.Typer(
     add_completion=False,
 )
 
+# 创建 tools 子命令组
+tools_app = typer.Typer(
+    name="tools",
+    help="工具管理命令",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
 console = Console()
+
+# 将 tools 子命令组添加到主应用
+app.add_typer(tools_app)
+
+# tools list 命令
+@tools_app.command("list", help="列出已注册的工具")
+def tools_list(
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """列出已注册的工具"""
+    list_tools(console, base_dir, config_file)
+
+# tools init 命令
+@tools_app.command("init", help="初始化内置工具")
+def tools_init(
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """初始化内置工具"""
+    init_tools(console, base_dir, config_file)
+
 
 
 @app.callback(invoke_without_command=True)

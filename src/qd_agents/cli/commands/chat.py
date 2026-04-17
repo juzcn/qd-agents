@@ -337,8 +337,6 @@ async def chat_async(
     )
     auto_register_mcp_weather_tools(console, tool_registry)
 
-    # 自动注册 PDF 解析 skill
-    auto_register_pdf_skill(console, tool_registry)
 
     prompt_loader = (
         PromptLoader(template_dir=config.prompts.template_dir)

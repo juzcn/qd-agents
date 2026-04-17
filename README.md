@@ -165,16 +165,10 @@ uv run qd-agents --help
 uv run qd-agents --list-models
 ```
 
-### 初始化内置工具
-
-```bash
-uv run qd-agents --init-tools
-```
-
 ### 列出已注册工具
 
 ```bash
-uv run qd-agents --list-tools
+uv run qd-agents tools list
 ```
 
 输出格式为 `工具名(类型)`，其中类型包括：`function`、`cli`、`bash`、`mcp`、`skill`。
@@ -182,7 +176,7 @@ uv run qd-agents --list-tools
 ### 初始化内置工具
 
 ```bash
-uv run qd-agents --init-tools
+uv run qd-agents tools init
 ```
 
 此命令会清空现有工具数据库并重新注册所有内置工具，包括：

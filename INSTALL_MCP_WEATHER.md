@@ -147,10 +147,10 @@ registered_tools.append(air_quality_tool.name)
 
 ```bash
 # 初始化工具
-python -m src.qd_agents.cli.main --init-tools
+python -m src.qd_agents.cli.main tools init
 
 # 列出所有工具
-python -m src.qd_agents.cli.main --list-tools
+python -m src.qd_agents.cli.main tools list
 ```
 
 应该能看到新注册的天气工具:
@@ -166,7 +166,7 @@ python -m src.qd_agents.cli.main --list-tools
 
 ### 2. 工具未注册
 - 检查数据库路径是否正确
-- 确认 `--init-tools` 命令已执行
+- 确认 `tools init` 命令已执行
 - 查看注册代码是否正确添加
 
 ### 3. 执行错误
