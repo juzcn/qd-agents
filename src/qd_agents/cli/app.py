@@ -60,8 +60,6 @@ def tools_init(
 def main(
     ctx: typer.Context,
     list_models: bool = typer.Option(False, "--list-models", help="列出可用模型"),
-    list_tools_option: bool = typer.Option(False, "--list-tools", help="列出已注册的工具"),
-    init_tools_option: bool = typer.Option(False, "--init-tools", help="初始化内置工具"),
     version: bool = typer.Option(False, "--version", help="显示版本信息"),
     mode: AgentMode = typer.Option(AgentMode.TOOL_USE, "--mode", help="智能体工作模式: tool-use, code-plan"),
 ):
@@ -90,19 +88,6 @@ def main(
         asyncio.run(list_models_async(console, None, None, None))
         options_executed = True
 
-    # 3. 列出工具
-    if list_tools_option:
-        if options_executed:
-            print()  # 添加空行分隔不同选项的输出
-        list_tools(console, None, None)
-        options_executed = True
-
-    # 4. 初始化工具
-    if init_tools_option:
-        if options_executed:
-            print()  # 添加空行分隔不同选项的输出
-        init_tools(console, None, None)
-        options_executed = True
 
     # 如果没有任何选项被指定，执行默认操作（聊天）
     if not options_executed:

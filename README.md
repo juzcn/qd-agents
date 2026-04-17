@@ -184,7 +184,6 @@ uv run qd-agents tools init
 - 实用工具 (echo)
 - MCP 天气工具 (get_current_weather, get_air_quality)
 - Bash 工具 (execute_bash)
-- PDF 解析 Skill 工具 (parse_pdf) - 需提前下载 skill 到 `skills/` 目录
 
 ### 启动交互式聊天
 
