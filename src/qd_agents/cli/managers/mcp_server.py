@@ -175,9 +175,15 @@ class MCPWeatherServerManager:
                 pass
         finally:
             # 确保管道关闭
-            await self._close_pipes_async()
-            # 帮助垃圾回收
-            self.server_process = None
+            try:
+                await self._close_pipes_async()
+            except Exception:
+                # 忽略所有关闭管道时的错误
+                pass
+            finally:
+                # 帮助垃圾回收 - 确保server_process被设置为None
+                # 即使前面的清理抛出异常
+                self.server_process = None
 
     def _close_pipes(self):
         """关闭子进程的管道（stdout/stderr）以避免Windows上的资源警告"""
@@ -185,20 +191,28 @@ class MCPWeatherServerManager:
             return
 
         try:
+            # 在Windows上，需要特别小心处理管道关闭
+            # 避免在__del__中访问已关闭的管道属性
+            import sys
+
+            # 保存引用，避免在清理过程中server_process被设置为None
+            process = self.server_process
+
             # 关闭stdout管道
-            if hasattr(self.server_process, 'stdout') and self.server_process.stdout:
-                if hasattr(self.server_process.stdout, 'close'):
+            if hasattr(process, 'stdout') and process.stdout:
+                if hasattr(process.stdout, 'close'):
                     try:
-                        self.server_process.stdout.close()
-                    except:
+                        process.stdout.close()
+                    except (BrokenPipeError, ConnectionResetError, ValueError, OSError):
+                        # 在Windows上，管道可能已经关闭，忽略这些错误
                         pass
 
             # 关闭stderr管道
-            if hasattr(self.server_process, 'stderr') and self.server_process.stderr:
-                if hasattr(self.server_process.stderr, 'close'):
+            if hasattr(process, 'stderr') and process.stderr:
+                if hasattr(process.stderr, 'close'):
                     try:
-                        self.server_process.stderr.close()
-                    except:
+                        process.stderr.close()
+                    except (BrokenPipeError, ConnectionResetError, ValueError, OSError):
                         pass
 
         except Exception:
@@ -211,32 +225,41 @@ class MCPWeatherServerManager:
             return
 
         try:
+            # 在Windows上，需要特别小心处理管道关闭
+            # 避免在__del__中访问已关闭的管道属性
+            import sys
+
+            # 保存引用，避免在清理过程中server_process被设置为None
+            process = self.server_process
+
             # 关闭stdout管道并等待
-            if hasattr(self.server_process, 'stdout') and self.server_process.stdout:
-                if hasattr(self.server_process.stdout, 'close'):
+            if hasattr(process, 'stdout') and process.stdout:
+                if hasattr(process.stdout, 'close'):
                     try:
-                        self.server_process.stdout.close()
-                    except:
+                        process.stdout.close()
+                    except (BrokenPipeError, ConnectionResetError, ValueError, OSError):
+                        # 在Windows上，管道可能已经关闭，忽略这些错误
                         pass
                 # 对于asyncio.StreamReader，等待关闭完成
-                if hasattr(self.server_process.stdout, 'wait_closed'):
+                if hasattr(process.stdout, 'wait_closed'):
                     try:
-                        await self.server_process.stdout.wait_closed()
-                    except:
+                        await process.stdout.wait_closed()
+                    except (BrokenPipeError, ConnectionResetError, ValueError, OSError, RuntimeError):
+                        # 忽略所有关闭管道时的错误，特别是在Windows上
                         pass
 
             # 关闭stderr管道并等待
-            if hasattr(self.server_process, 'stderr') and self.server_process.stderr:
-                if hasattr(self.server_process.stderr, 'close'):
+            if hasattr(process, 'stderr') and process.stderr:
+                if hasattr(process.stderr, 'close'):
                     try:
-                        self.server_process.stderr.close()
-                    except:
+                        process.stderr.close()
+                    except (BrokenPipeError, ConnectionResetError, ValueError, OSError):
                         pass
                 # 对于asyncio.StreamReader，等待关闭完成
-                if hasattr(self.server_process.stderr, 'wait_closed'):
+                if hasattr(process.stderr, 'wait_closed'):
                     try:
-                        await self.server_process.stderr.wait_closed()
-                    except:
+                        await process.stderr.wait_closed()
+                    except (BrokenPipeError, ConnectionResetError, ValueError, OSError, RuntimeError):
                         pass
 
         except Exception:
@@ -280,9 +303,15 @@ class MCPWeatherServerManager:
                 pass
         finally:
             # 确保管道关闭
-            self._close_pipes()
-            # 帮助垃圾回收
-            self.server_process = None
+            try:
+                self._close_pipes()
+            except Exception:
+                # 忽略所有关闭管道时的错误
+                pass
+            finally:
+                # 帮助垃圾回收 - 确保server_process被设置为None
+                # 即使前面的清理抛出异常
+                self.server_process = None
 
     async def auto_start_mcp_weather_server(self) -> Optional[Callable[[], Any]]:
         """
