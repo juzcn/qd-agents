@@ -15,10 +15,8 @@ from prompt_toolkit.history import InMemoryHistory
 from rich.console import Console
 
 from ..managers import (
-    MCPWeatherServerManager,
     LLMClientManager,
     setup_configuration,
-    auto_register_mcp_weather_tools,
     auto_register_pdf_skill,
 )
 from qd_agents.registry import ToolRegistry
@@ -327,15 +325,11 @@ async def chat_async(
     # 显示当前模式
     console.print(f"[dim]工作模式:[/] {config.llm.mode.value}")
 
-    # 2. 启动 MCP 服务器
-    mcp_server_manager = MCPWeatherServerManager(console)
-    cleanup_mcp_server = await mcp_server_manager.start_server()
 
     # 3. 初始化工具和上下文
     tool_registry = ToolRegistry(
         db_path=config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
     )
-    auto_register_mcp_weather_tools(console, tool_registry)
 
 
     prompt_loader = (
@@ -376,25 +370,21 @@ async def chat_async(
     )
 
     # 8. 聊天循环
-    try:
-        while True:
-            try:
-                user_input = await session.prompt_async(
-                    [("class:prompt", "你: ")],
-                )
+    while True:
+        try:
+            user_input = await session.prompt_async(
+                [("class:prompt", "你: ")],
+            )
 
-                continue_chat = await command_handler.handle_command(user_input)
-                if not continue_chat:
-                    break
-
-            except KeyboardInterrupt:
-                console.print("\n[yellow]按 /quit 退出[/]")
-                continue
-            except EOFError:
-                console.print("\n[bold]再见！[/]")
+            continue_chat = await command_handler.handle_command(user_input)
+            if not continue_chat:
                 break
-            except Exception as e:
-                console.print(f"\n[red]错误: {e}[/]\n")
-    finally:
-        if cleanup_mcp_server:
-            await mcp_server_manager.cleanup_async()
+
+        except KeyboardInterrupt:
+            console.print("\n[yellow]按 /quit 退出[/]")
+            continue
+        except EOFError:
+            console.print("\n[bold]再见！[/]")
+            break
+        except Exception as e:
+            console.print(f"\n[red]错误: {e}[/]\n")

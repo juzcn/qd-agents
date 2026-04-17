@@ -182,7 +182,6 @@ uv run qd-agents tools init
 此命令会清空现有工具数据库并重新注册所有内置工具，包括：
 - 搜索工具 (serper_search, tavily_search, baidu_search, web_search)
 - 实用工具 (echo)
-- MCP 天气工具 (get_current_weather, get_air_quality)
 - Bash 工具 (execute_bash)
 
 ### 启动交互式聊天

@@ -12,7 +12,6 @@ from rich.console import Console
 
 from qd_agents.config import load_config
 from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
-from qd_agents.tools.executor import create_mcp_tool
 from qd_agents.agent.builtins import echo
 
 
@@ -242,53 +241,6 @@ def init_tools(
     registry.register(echo_tool)
     registered_tools.append(echo_tool.name)
 
-    # ==================== MCP 天气工具 ====================
-
-    # 当前天气工具
-    current_weather_tool = create_mcp_tool(
-        name="get_current_weather",
-        description="获取指定城市的当前天气信息，包括温度、湿度、风速、天气描述等",
-        server="weather",
-        tool_name="get_current_weather",
-        parameters={
-            "type": "object",
-            "properties": {
-                "city": {"type": "string", "description": "城市名称，如 'Beijing' 或 '上海'"},
-                "country": {"type": "string", "description": "国家代码，如 'CN'，可选"},
-                "latitude": {"type": "number", "description": "纬度，可选"},
-                "longitude": {"type": "number", "description": "经度，可选"},
-            },
-            "required": ["city"],
-        },
-        transport="sse",
-        endpoint="http://localhost:8000",
-        category="weather",
-        tags=["weather", "mcp", "current"],
-    )
-    registry.register(current_weather_tool)
-    registered_tools.append(current_weather_tool.name)
-
-    # 空气质量工具
-    air_quality_tool = create_mcp_tool(
-        name="get_air_quality",
-        description="获取指定城市的空气质量信息，包括 PM2.5、PM10、臭氧、NO₂、CO 等级和健康建议",
-        server="weather",
-        tool_name="get_air_quality",
-        parameters={
-            "type": "object",
-            "properties": {
-                "city": {"type": "string", "description": "城市名称"},
-                "country": {"type": "string", "description": "国家代码，可选"},
-            },
-            "required": ["city"],
-        },
-        transport="sse",
-        endpoint="http://localhost:8000",
-        category="air-quality",
-        tags=["air-quality", "mcp", "pollution"],
-    )
-    registry.register(air_quality_tool)
-    registered_tools.append(air_quality_tool.name)
 
     # ==================== Bash 工具 ====================
     from qd_agents.tools.executor import create_bash_tool
