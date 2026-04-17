@@ -32,6 +32,7 @@ class ToolExecutionType(str, Enum):
     HTTP = "http"
     MCP = "mcp"
     BASH = "bash"
+    SKILL = "skill"
 
 
 class ToolExecutionConfig(BaseModel):
