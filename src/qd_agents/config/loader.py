@@ -102,7 +102,6 @@ class ObservabilityConfig(BaseModel):
     log_level: str = "INFO"
     log_format: str = "json"
     log_output: list[str] = Field(default_factory=lambda: ["console"])
-    log_file_path: Path | None = None
     log_session_dir: Path | None = None
     log_rotation: str = "daily"
     log_retention_days: int = 30
@@ -192,7 +191,6 @@ class Config(BaseSettings):
                 audit_dir=data_dir / "audit",
             ),
             observability=ObservabilityConfig(
-                log_file_path=data_dir / "logs" / "app.log",
                 log_session_dir=Path("."),
             ),
         )
@@ -219,8 +217,6 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
         s['traces_dir'] = base_dir / s['traces_dir']
         s['audit_dir'] = base_dir / s['audit_dir']
 
-    if 'observability' in data and data['observability'].get('log_file_path'):
-        data['observability']['log_file_path'] = base_dir / data['observability']['log_file_path']
     if 'observability' in data and data['observability'].get('log_session_dir'):
         data['observability']['log_session_dir'] = base_dir / data['observability']['log_session_dir']
 
@@ -268,8 +264,6 @@ def _config_to_dict(config: Config, base_dir: Path | None = None) -> dict[str, A
         if data['storage'].get('audit_dir'):
             data['storage']['audit_dir'] = str(Path(data['storage']['audit_dir']).relative_to(base_dir))
 
-    if data.get('observability') and data['observability'].get('log_file_path'):
-        data['observability']['log_file_path'] = str(Path(data['observability']['log_file_path']).relative_to(base_dir))
     if data.get('observability') and data['observability'].get('log_session_dir'):
         data['observability']['log_session_dir'] = str(Path(data['observability']['log_session_dir']).relative_to(base_dir))
 

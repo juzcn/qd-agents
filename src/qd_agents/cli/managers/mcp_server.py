@@ -133,12 +133,16 @@ class MCPWeatherServerManager:
                 is_running = self.server_process.returncode is None
 
             if not is_running:
+                # 即使进程已经结束，也要确保管道关闭
+                await self._close_pipes_async()
                 return
 
             self.console.print("[dim]正在停止 MCP 天气服务器...[/]", style="dim")
 
             # 根据进程类型执行清理
             if hasattr(self.server_process, 'terminate'):
+                # 先关闭管道，避免进程阻塞在写输出上
+                await self._close_pipes_async()
                 self.server_process.terminate()
 
                 # 等待进程结束
@@ -169,6 +173,75 @@ class MCPWeatherServerManager:
                     self.server_process.kill()
             except:
                 pass
+        finally:
+            # 确保管道关闭
+            await self._close_pipes_async()
+            # 帮助垃圾回收
+            self.server_process = None
+
+    def _close_pipes(self):
+        """关闭子进程的管道（stdout/stderr）以避免Windows上的资源警告"""
+        if self.server_process is None:
+            return
+
+        try:
+            # 关闭stdout管道
+            if hasattr(self.server_process, 'stdout') and self.server_process.stdout:
+                if hasattr(self.server_process.stdout, 'close'):
+                    try:
+                        self.server_process.stdout.close()
+                    except:
+                        pass
+
+            # 关闭stderr管道
+            if hasattr(self.server_process, 'stderr') and self.server_process.stderr:
+                if hasattr(self.server_process.stderr, 'close'):
+                    try:
+                        self.server_process.stderr.close()
+                    except:
+                        pass
+
+        except Exception:
+            # 忽略所有关闭管道时的错误
+            pass
+
+    async def _close_pipes_async(self):
+        """异步关闭子进程的管道（stdout/stderr）并等待关闭完成"""
+        if self.server_process is None:
+            return
+
+        try:
+            # 关闭stdout管道并等待
+            if hasattr(self.server_process, 'stdout') and self.server_process.stdout:
+                if hasattr(self.server_process.stdout, 'close'):
+                    try:
+                        self.server_process.stdout.close()
+                    except:
+                        pass
+                # 对于asyncio.StreamReader，等待关闭完成
+                if hasattr(self.server_process.stdout, 'wait_closed'):
+                    try:
+                        await self.server_process.stdout.wait_closed()
+                    except:
+                        pass
+
+            # 关闭stderr管道并等待
+            if hasattr(self.server_process, 'stderr') and self.server_process.stderr:
+                if hasattr(self.server_process.stderr, 'close'):
+                    try:
+                        self.server_process.stderr.close()
+                    except:
+                        pass
+                # 对于asyncio.StreamReader，等待关闭完成
+                if hasattr(self.server_process.stderr, 'wait_closed'):
+                    try:
+                        await self.server_process.stderr.wait_closed()
+                    except:
+                        pass
+
+        except Exception:
+            # 忽略所有关闭管道时的错误
+            pass
 
     def cleanup(self):
         """同步清理函数（保持向后兼容）"""
@@ -184,12 +257,16 @@ class MCPWeatherServerManager:
                 is_running = self.server_process.returncode is None
 
             if not is_running:
+                # 即使进程已经结束，也要确保管道关闭
+                self._close_pipes()
                 return
 
             self.console.print("[dim]正在停止 MCP 天气服务器...[/]", style="dim")
 
             # 对于 asyncio 子进程，直接发送终止信号，不等待
             if hasattr(self.server_process, 'terminate'):
+                # 先关闭管道，避免进程阻塞在写输出上
+                self._close_pipes()
                 self.server_process.terminate()
 
             self.console.print("[dim]✅ MCP 天气服务器已停止[/]", style="dim")
@@ -201,6 +278,11 @@ class MCPWeatherServerManager:
                     self.server_process.kill()
             except:
                 pass
+        finally:
+            # 确保管道关闭
+            self._close_pipes()
+            # 帮助垃圾回收
+            self.server_process = None
 
     async def auto_start_mcp_weather_server(self) -> Optional[Callable[[], Any]]:
         """
