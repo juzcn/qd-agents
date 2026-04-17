@@ -17,7 +17,6 @@ from rich.console import Console
 from ..managers import (
     LLMClientManager,
     setup_configuration,
-    auto_register_pdf_skill,
 )
 from qd_agents.registry import ToolRegistry
 from qd_agents.prompts import PromptLoader

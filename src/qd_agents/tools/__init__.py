@@ -11,12 +11,10 @@ from .executors import (
     create_cli_tool,
     create_function_tool,
     create_bash_tool,
-    create_skill_tool,
     HTTPToolExecutor,
     CLIToolExecutor,
     BashToolExecutor,
     FunctionToolExecutor,
-    SkillToolExecutor,
 )
 
 __all__ = [
@@ -27,10 +25,8 @@ __all__ = [
     "create_cli_tool",
     "create_function_tool",
     "create_bash_tool",
-    "create_skill_tool",
     "HTTPToolExecutor",
     "CLIToolExecutor",
     "BashToolExecutor",
     "FunctionToolExecutor",
-    "SkillToolExecutor",
 ]

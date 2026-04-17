@@ -178,7 +178,6 @@ class QDAgent:
             serper_search,
             tavily_search,
             baidu_search,
-            web_search,
             meta_direct,
             meta_find_tools,
             meta_coding_tool_use,
@@ -187,7 +186,6 @@ class QDAgent:
         self.executor_registry.register_function("serper_search", serper_search)
         self.executor_registry.register_function("tavily_search", tavily_search)
         self.executor_registry.register_function("baidu_search", baidu_search)
-        self.executor_registry.register_function("web_search", web_search)
         # 注册元工具执行器（占位实现）
         self.executor_registry.register_function("meta_direct", meta_direct)
         self.executor_registry.register_function("meta_find_tools", meta_find_tools)

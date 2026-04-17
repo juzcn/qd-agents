@@ -173,46 +173,6 @@ def init_tools(
     registry.register(baidu_tool)
     registered_tools.append(baidu_tool.name)
 
-    # search.web (统一接口)
-    web_search_tool = Tool(
-        id="search.web",
-        name="web_search",
-        description="通用网络搜索工具，自动选择合适的搜索引擎进行搜索",
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "搜索关键词或问题"},
-                "num_results": {
-                    "type": "integer",
-                    "description": "返回结果数量，默认 5",
-                    "default": 5,
-                },
-                "engine": {
-                    "type": "string",
-                    "enum": ["auto", "serper", "tavily", "baidu"],
-                    "description": "指定搜索引擎，auto 表示自动选择",
-                    "default": "auto",
-                },
-                "language": {
-                    "type": "string",
-                    "description": "搜索结果语言偏好，例如 zh-CN、en-US",
-                    "default": "zh-CN",
-                },
-            },
-            "required": ["query"],
-        },
-        execution=ToolExecutionConfig(
-            type=ToolExecutionType.FUNCTION,
-            module="qd_agents.agent.builtin_tools",
-            function="web_search",
-        ),
-        metadata=ToolMetadata(
-            category="search",
-            tags=["web", "search", "unified"],
-        ),
-    )
-    registry.register(web_search_tool)
-    registered_tools.append(web_search_tool.name)
 
     # ==================== 实用工具 ====================
 
