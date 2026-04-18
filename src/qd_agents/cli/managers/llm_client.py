@@ -124,10 +124,20 @@ class LLMClientManager:
         return self.llm_client.switch_model(model_name)
 
     async def close(self):
-        """关闭 LLM 客户端"""
+        """关闭 LLM 客户端和代理"""
+        # 先关闭代理（它会关闭MCP连接等资源）
+        if self.agent is not None:
+            try:
+                await self.agent.close()
+            except Exception as e:
+                logger.warning(f"Error closing agent: {e}")
+            finally:
+                self.agent = None
+
+        # 然后关闭LLM客户端
         if self.llm_client is not None:
             await self.llm_client.close()
             self.llm_client = None
-            self.agent = None
-            self.provider_name = None
-            self.provider_config = None
+
+        self.provider_name = None
+        self.provider_config = None

@@ -194,13 +194,27 @@ class MCPToolExecutor(ToolExecutor):
         """关闭连接"""
         # 先关闭会话
         if self._session:
-            await self._session.__aexit__(None, None, None)
-            self._session = None
+            try:
+                await self._session.__aexit__(None, None, None)
+            except (RuntimeError, GeneratorExit, asyncio.CancelledError) as e:
+                # 忽略常见的关闭错误，特别是"Attempted to exit cancel scope in a different task"
+                logger.debug(f"Ignoring error during MCP session close: {type(e).__name__}: {e}")
+            except Exception as e:
+                logger.warning(f"Error during MCP session close: {e}")
+            finally:
+                self._session = None
 
         # 然后关闭上下文管理器
         if self._context_manager:
-            await self._context_manager.__aexit__(None, None, None)
-            self._context_manager = None
+            try:
+                await self._context_manager.__aexit__(None, None, None)
+            except (RuntimeError, GeneratorExit, asyncio.CancelledError) as e:
+                # 忽略常见的关闭错误
+                logger.debug(f"Ignoring error during MCP context manager close: {type(e).__name__}: {e}")
+            except Exception as e:
+                logger.warning(f"Error during MCP context manager close: {e}")
+            finally:
+                self._context_manager = None
 
         # 清空工具缓存
         self._tools_cache.clear()

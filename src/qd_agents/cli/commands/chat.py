@@ -387,3 +387,12 @@ async def chat_async(
             break
         except Exception as e:
             console.print(f"\n[red]错误: {e}[/]\n")
+
+    # 清理资源
+    try:
+        await llm_manager.close()
+        console.print("[dim]资源已清理[/]")
+    except Exception as e:
+        console.print(f"[dim]清理资源时出错: {e}[/]")
+
+    console.print("\n[bold]再见！[/]")

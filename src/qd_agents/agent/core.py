@@ -140,8 +140,17 @@ class QDAgent:
         # 预加载 MCP 工具（在会话开始时连接 MCP 服务器）
         await self._preload_mcp_tools()
 
-        # 初始化调度器
-        await self.orchestrator.initialize()
+        # 将QDAgent的MCP缓存传递给调度器
+        self.orchestrator.set_mcp_cache(self._mcp_tools_cache, self._mcp_executors_cache)
+
+        # 缓存展开后的工具列表（避免每次调用都展开）
+        await self._cache_expanded_tools()
+
+        # 将展开工具缓存传递给调度器
+        self.orchestrator.set_expanded_tools_cache(self._expanded_tools_cache, self._openai_tools_cache)
+
+        # 初始化调度器，跳过MCP预加载和工具缓存（因为QDAgent已经处理了）
+        await self.orchestrator.initialize(skip_mcp_preload=True, skip_tool_caching=True)
 
         logger.info("QDAgent initialized. Models: %s", self.llm._model_names)
 
@@ -182,8 +191,7 @@ class QDAgent:
             except Exception as e:
                 logger.error(f"Error preloading MCP server '{exec_config.server}': {e}")
 
-        # 缓存展开后的工具列表（避免每次调用都展开）
-        await self._cache_expanded_tools()
+        # 注意：不在这里缓存展开工具，由initialize方法统一处理
 
     async def _cache_expanded_tools(self) -> None:
         """缓存展开后的工具列表和OpenAI格式工具"""
@@ -247,11 +255,17 @@ class QDAgent:
             try:
                 await executor.close()
                 logger.info(f"Closed MCP connection to server: {server_key}")
+            except (RuntimeError, GeneratorExit, asyncio.CancelledError) as e:
+                # 忽略常见的关闭错误，特别是"Attempted to exit cancel scope in a different task"
+                logger.debug(f"Ignoring error closing MCP connection to server {server_key}: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Error closing MCP connection to server {server_key}: {e}")
 
-        # 关闭调度器
-        await self.orchestrator.close()
+        # 关闭调度器，跳过MCP连接关闭（因为QDAgent已经关闭了）
+        try:
+            await self.orchestrator.close(skip_mcp_close=True)
+        except Exception as e:
+            logger.warning(f"Error closing orchestrator: {e}")
 
         # 清空缓存
         self._mcp_tools_cache.clear()

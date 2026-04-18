@@ -98,14 +98,52 @@ class ToolUseModeOrchestrator:
         """构建元工具定义（现在为空，使用标准工具调用）"""
         return {}
 
-    async def initialize(self) -> None:
-        """初始化调度器，预加载 MCP 工具"""
+    def set_mcp_cache(self, mcp_tools_cache: dict[str, list[Tool]], mcp_executors_cache: dict[str, Any]) -> None:
+        """设置MCP缓存（当上层已预加载MCP工具时使用）
+
+        Args:
+            mcp_tools_cache: MCP工具缓存 {server_key: [subtools]}
+            mcp_executors_cache: MCP执行器缓存 {server_key: executor}
+        """
+        # 共享引用，不复制，由QDAgent统一管理生命周期
+        self._mcp_tools_cache = mcp_tools_cache
+        self._mcp_executors_cache = mcp_executors_cache
+        logger.info(f"Set MCP cache from parent: {len(mcp_tools_cache)} servers, {sum(len(tools) for tools in mcp_tools_cache.values())} total tools")
+
+    def set_expanded_tools_cache(self, expanded_tools: list[Tool], openai_tools: list[dict[str, Any]]) -> None:
+        """设置展开工具缓存（当上层已计算展开工具时使用）
+
+        Args:
+            expanded_tools: 展开后的工具列表
+            openai_tools: OpenAI格式的工具列表
+        """
+        self._expanded_tools_cache = expanded_tools.copy() if expanded_tools else None
+        self._openai_tools_cache = openai_tools.copy() if openai_tools else None
+        logger.info(f"Set expanded tools cache from parent: {len(expanded_tools) if expanded_tools else 0} expanded tools, {len(openai_tools) if openai_tools else 0} OpenAI tools")
+
+    async def initialize(self, skip_mcp_preload: bool = False, skip_tool_caching: bool = False) -> None:
+        """初始化调度器，预加载 MCP 工具
+
+        Args:
+            skip_mcp_preload: 如果为True，跳过MCP工具预加载（当上层已预加载时使用）
+            skip_tool_caching: 如果为True，跳过工具缓存（当上层已缓存工具时使用）
+        """
         logger.info("Initializing ToolUseModeOrchestrator...")
         try:
-            # 预加载 MCP 工具（允许失败，只记录日志）
-            await self._preload_mcp_tools()
-            # 缓存展开后的工具列表
-            await self._cache_expanded_tools()
+            if not skip_mcp_preload:
+                # 预加载 MCP 工具（允许失败，只记录日志）
+                await self._preload_mcp_tools()
+
+            if not skip_tool_caching:
+                # 缓存展开后的工具列表
+                await self._cache_expanded_tools()
+            elif self._expanded_tools_cache is None or self._openai_tools_cache is None:
+                # 即使skip_tool_caching为True，但如果缓存为空，仍然需要缓存
+                logger.warning("skip_tool_caching is True but expanded tools cache is empty, caching anyway")
+                await self._cache_expanded_tools()
+            else:
+                logger.info("Skipping tool caching, using existing cache")
+
         except Exception as e:
             # MCP连接失败不应该阻止程序启动
             logger.warning(f"MCP tool preloading failed, but continuing initialization: {e}")
@@ -117,16 +155,27 @@ class ToolUseModeOrchestrator:
 
         logger.info("ToolUseModeOrchestrator initialized")
 
-    async def close(self) -> None:
-        """关闭调度器，终止所有 MCP 连接"""
+    async def close(self, skip_mcp_close: bool = False) -> None:
+        """关闭调度器，终止所有 MCP 连接
+
+        Args:
+            skip_mcp_close: 如果为True，跳过MCP连接关闭（当上层已关闭时使用）
+        """
         logger.info("Closing ToolUseModeOrchestrator...")
-        # 关闭所有 MCP 连接
-        for server_key, executor in self._mcp_executors_cache.items():
-            try:
-                await executor.close()
-                logger.info(f"Closed MCP connection to server: {server_key}")
-            except Exception as e:
-                logger.error(f"Error closing MCP connection to server {server_key}: {e}")
+
+        if not skip_mcp_close:
+            # 关闭所有 MCP 连接（如果缓存非空）
+            if self._mcp_executors_cache:
+                for server_key, executor in self._mcp_executors_cache.items():
+                    try:
+                        await executor.close()
+                        logger.info(f"Closed MCP connection to server: {server_key}")
+                    except Exception as e:
+                        logger.error(f"Error closing MCP connection to server {server_key}: {e}")
+            else:
+                logger.info("MCP executors cache is empty, nothing to close")
+        else:
+            logger.info("Skipping MCP connection close (handled by parent)")
 
         # 清空缓存
         self._mcp_tools_cache.clear()
