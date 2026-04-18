@@ -65,7 +65,7 @@ class MCPToolExecutor(ToolExecutor):
 
     async def _ensure_connected(self) -> None:
         """确保连接到 MCP 服务器"""
-        if self._session is not None and self._client is not None:
+        if self._session is not None:
             return
 
         logger.info(f"Connecting to MCP server via {self.transport}: {self.server}")
@@ -81,6 +81,7 @@ class MCPToolExecutor(ToolExecutor):
             )
             stdio_transport = await stdio_client(server_params)
             self._session = ClientSession(*stdio_transport)
+            await self._session.__aenter__()
 
         elif self.transport == "sse":
             if not self.url:
@@ -91,6 +92,7 @@ class MCPToolExecutor(ToolExecutor):
                 headers=self.headers,
             ) as sse_transport:
                 self._session = ClientSession(*sse_transport)
+                await self._session.__aenter__()
 
         elif self.transport == "streamable-http":
             if not self.url:
@@ -101,12 +103,10 @@ class MCPToolExecutor(ToolExecutor):
                 headers=self.headers,
             ) as http_transport:
                 self._session = ClientSession(*http_transport)
+                await self._session.__aenter__()
 
         else:
             raise ValueError(f"Unsupported transport: {self.transport}")
-
-        # 初始化会话
-        await self._session.__aenter__()
 
         # 获取可用工具
         tools_result = await self._session.list_tools()
