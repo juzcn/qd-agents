@@ -268,6 +268,13 @@ class RetryExecutor(Generic[T]):
         raise last_exception or RuntimeError("Unexpected error")
 
 
+def with_retry(
+    config: RetryConfig | None = None,
+    circuit_breaker: CircuitBreaker | None = None,
+):
+    """
+    重试装饰器
+
     Args:
         config: 重试配置
         circuit_breaker: 熔断器

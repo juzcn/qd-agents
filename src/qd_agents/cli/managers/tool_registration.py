@@ -28,7 +28,7 @@ def auto_register_bash_tools(
         console: Rich 控制台对象，用于输出信息
         tool_registry: 工具注册表
     """
-    from qd_agents.tools.executor import create_bash_tool
+    from qd_agents.tools.executors import create_bash_tool
 
     # 检查通用bash工具是否已存在
     if not tool_registry.get("bash.execute"):

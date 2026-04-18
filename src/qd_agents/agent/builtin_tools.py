@@ -125,24 +125,3 @@ async def baidu_search(query: str, count: int = 10) -> dict[str, Any]:
 
 
 
-# ==================== 元工具占位实现 ====================
-# 元工具由系统内部处理，不需要实际执行函数
-
-async def meta_direct() -> dict[str, Any]:
-    """direct 元工具 - 由系统内部处理"""
-    raise NotImplementedError("meta.direct is handled internally by the orchestrator")
-
-
-async def meta_find_tools() -> dict[str, Any]:
-    """find_tools 元工具 - 由系统内部处理"""
-    raise NotImplementedError("meta.find_tools is handled internally by the orchestrator")
-
-
-async def meta_coding_tool_use() -> dict[str, Any]:
-    """coding_tool_use 元工具 - 由系统内部处理"""
-    raise NotImplementedError("meta.coding_tool_use is handled internally by the orchestrator")
-
-
-async def meta_step_down() -> dict[str, Any]:
-    """step_down 元工具 - 由系统内部处理"""
-    raise NotImplementedError("meta.step_down is handled internally by the orchestrator")

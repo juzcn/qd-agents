@@ -203,7 +203,7 @@ def init_tools(
 
 
     # ==================== Bash 工具 ====================
-    from qd_agents.tools.executor import create_bash_tool
+    from qd_agents.tools.executors import create_bash_tool
 
     # 通用bash执行工具
     bash_tool = create_bash_tool(

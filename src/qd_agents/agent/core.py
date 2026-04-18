@@ -269,19 +269,10 @@ class QDAgent:
             serper_search,
             tavily_search,
             baidu_search,
-            meta_direct,
-            meta_find_tools,
-            meta_coding_tool_use,
-            meta_step_down,
         )
         self.executor_registry.register_function("serper_search", serper_search)
         self.executor_registry.register_function("tavily_search", tavily_search)
         self.executor_registry.register_function("baidu_search", baidu_search)
-        # 注册元工具执行器（占位实现）
-        self.executor_registry.register_function("meta_direct", meta_direct)
-        self.executor_registry.register_function("meta_find_tools", meta_find_tools)
-        self.executor_registry.register_function("meta_coding_tool_use", meta_coding_tool_use)
-        self.executor_registry.register_function("meta_step_down", meta_step_down)
 
         logger.info("Registered builtin tool executors")
 
@@ -385,76 +376,6 @@ class QDAgent:
                 total_duration_ms=total_duration,
             )
 
-    async def _execute_orchestration(self, orch_result: OrchestrationResult) -> str:
-        """执行调度结果"""
-        # 如果已经有最终输出，直接返回
-        if orch_result.final_output:
-            return str(orch_result.final_output)
-
-        if not orch_result.phase_two:
-            return "没有生成执行计划"
-
-        phase_two = orch_result.phase_two
-
-        # 处理 coding_tool_use
-        if phase_two.tool_choice == "coding_tool_use" and phase_two.generated_code:
-            logger.info("Executing generated code")
-            try:
-                exec_result = await self.execution.execute_code(
-                    code=phase_two.generated_code,
-                    session_id=orch_result.session_id,
-                    trace_id=orch_result.trace_id,
-                )
-                return f"代码执行结果: {exec_result.final_output}"
-            except Exception as e:
-                return f"代码执行失败: {e}"
-
-        # 处理 step_down
-        if phase_two.tool_choice == "step_down":
-            reason = phase_two.tool_input.get("reason", "unknown")
-            message = phase_two.tool_input.get("message", "")
-            return f"[降级处理] {reason}: {message}"
-
-        # 处理普通工具调用
-        tool_name = phase_two.tool_choice
-        if tool_name and tool_name not in ["direct", "find_tools", "coding_tool_use", "step_down"]:
-            # 先尝试通过 ID 查找，再通过名称查找
-            tool = self.registry.get(tool_name) or self.registry.get_by_name(tool_name)
-            if tool:
-                try:
-                    logger.info("Executing tool: %s (id: %s)", tool.name, tool.id)
-                    executor = self.executor_registry.get_executor(tool)
-                    tool_input = phase_two.tool_input
-                    result = await executor.execute(**tool_input)
-
-                    # 对于搜索工具，按照 OpenAI tool calling 标准流程：
-                    # 1. 获取工具执行结果
-                    # 2. 将结果传给 LLM，让 LLM 用用户的语言总结回答
-                    if tool.id.startswith("search."):
-                        return await self._summarize_search_results(
-                            user_input=orch_result.user_input,
-                            search_result=result,
-                        )
-
-                    # 对于其他工具（如天气工具），也按照 OpenAI tool calling 标准流程
-                    # 让 LLM 用用户的语言总结回答
-                    logger.info("Calling _summarize_tool_result for tool: %s (id: %s), result type: %s",
-                               tool.name, tool.id, type(result).__name__)
-                    return await self._summarize_tool_result(
-                        user_input=orch_result.user_input,
-                        tool_name=tool.name,
-                        tool_result=result,
-                    )
-                except Exception as e:
-                    logger.exception("Tool execution failed")
-                    return f"工具调用失败: {e}"
-            else:
-                logger.warning("Tool not found: %s", tool_name)
-                return f"工具未找到: {tool_name}"
-
-        # 默认返回 - 不应该到达这里，如果到达说明有逻辑错误
-        logger.warning("Reached default return in _execute_orchestration, tool_choice: %s", phase_two.tool_choice if phase_two else None)
-        return "处理完成"
 
 
 
