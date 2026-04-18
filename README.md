@@ -13,6 +13,7 @@
 - **上下文管理** - 统一管理会话历史和提示词构建
 - **Tool Registry** - SQLite 存储的工具注册中心
 - **多种工具执行** - 支持 HTTP/CLI/Function/MCP 工具
+- **MCP 服务器管理** - 通过命令行注册、列出和移除 MCP 服务器
 - **重试与熔断** - 4 种退避策略 + 熔断器模式
 - **CLI 界面** - 简洁的命令行交互
 - **内置搜索工具** - 支持 Baidu、Tavily、Serper 搜索引擎
@@ -184,6 +185,37 @@ uv run qd-agents tools init
 - 实用工具 (echo)
 - Bash 工具 (execute_bash)
 
+### 管理 MCP 服务器
+
+MCP (Model Context Protocol) 服务器可以通过以下命令管理：
+
+```bash
+# 添加 MCP 服务器
+uv run qd-agents mcp add <name> <server> [options]
+
+# 列出已注册的 MCP 服务器
+uv run qd-agents mcp list
+
+# 移除 MCP 服务器
+uv run qd-agents mcp remove <name>
+```
+
+**示例：注册 open-meteo-mcp 服务器**
+
+```bash
+# 构建 MCP 服务器（如果尚未构建）
+cd tools/mcp/open-meteo-mcp
+npm install
+npm run build
+cd ../..
+
+# 注册到 qd-agents
+uv run qd-agents mcp add open-meteo "Open Meteo Weather" \
+  --transport stdio \
+  --command "node" \
+  --args "tools/mcp/open-meteo-mcp/dist/index.js"
+```
+
 ### 启动交互式聊天
 
 ```bash
@@ -203,7 +235,7 @@ uv run qd-agents --mode code-plan
 - `/tools` - 列出可用工具
 - `/model` - 显示当前模型
 - `/help` - 显示帮助信息
-- `/quit` - 退出程序
+- `/quit` 或 `/q` - 退出程序
 - `/clear` - 清空屏幕
 - `/history` - 显示历史记录
 

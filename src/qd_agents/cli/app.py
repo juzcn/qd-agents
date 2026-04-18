@@ -11,7 +11,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from .commands import chat_async, list_models_async, list_tools, init_tools, show_version
+from .commands import chat_async, list_models_async, list_tools, init_tools, show_version, mcp_add, mcp_list, mcp_remove
 from qd_agents.config import AgentMode
 
 
@@ -36,6 +36,17 @@ console = Console()
 # 将 tools 子命令组添加到主应用
 app.add_typer(tools_app)
 
+# 创建 mcp 子命令组
+mcp_app = typer.Typer(
+    name="mcp",
+    help="MCP 服务器管理命令",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
+# 将 mcp 子命令组添加到主应用
+app.add_typer(mcp_app)
+
 # tools list 命令
 @tools_app.command("list", help="列出已注册的工具")
 def tools_list(
@@ -55,6 +66,42 @@ def tools_init(
     init_tools(console, base_dir, config_file)
 
 
+# mcp add 命令
+@mcp_app.command("add", help="添加 MCP 服务器")
+def mcp_add_command(
+    name: str = typer.Argument(..., help="工具名称"),
+    server: str = typer.Argument(..., help="MCP 服务器标识或路径"),
+    transport: str = typer.Option("stdio", "--transport", "-t", help="传输模式: stdio, sse, streamable-http"),
+    command: Optional[str] = typer.Option(None, "--command", "--cmd", help="stdio 模式下的命令"),
+    args: Optional[str] = typer.Option(None, "--args", "-a", help="stdio 模式下的参数 (JSON 数组或逗号分隔)"),
+    url: Optional[str] = typer.Option(None, "--url", "-u", help="SSE 或 streamable-http 模式的 URL"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+):
+    """添加 MCP 服务器"""
+    mcp_add(console, name, server, transport, command, args, url, config_file, base_dir)
+
+
+# mcp list 命令
+@mcp_app.command("list", help="列出已注册的 MCP 服务器")
+def mcp_list_command(
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+):
+    """列出已注册的 MCP 服务器"""
+    mcp_list(console, config_file, base_dir)
+
+
+# mcp remove 命令
+@mcp_app.command("remove", help="移除 MCP 服务器")
+def mcp_remove_command(
+    name: str = typer.Argument(..., help="工具名称"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+):
+    """移除 MCP 服务器"""
+    mcp_remove(console, name, config_file, base_dir)
+
 
 @app.callback(invoke_without_command=True)
 def main(
@@ -62,6 +109,8 @@ def main(
     list_models: bool = typer.Option(False, "--list-models", help="列出可用模型"),
     version: bool = typer.Option(False, "--version", help="显示版本信息"),
     mode: AgentMode = typer.Option(AgentMode.TOOL_USE, "--mode", help="智能体工作模式: tool-use, code-plan"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
 ):
     """
     qd-agents - 从对话到自动化流程的智能体系统
@@ -85,10 +134,10 @@ def main(
     if list_models:
         if options_executed:
             print()  # 添加空行分隔不同选项的输出
-        asyncio.run(list_models_async(console, None, None, None))
+        asyncio.run(list_models_async(console, base_dir, config_file, None))
         options_executed = True
 
 
     # 如果没有任何选项被指定，执行默认操作（聊天）
     if not options_executed:
-        asyncio.run(chat_async(console, None, None, None, None, mode))
+        asyncio.run(chat_async(console, base_dir, config_file, None, None, mode))
