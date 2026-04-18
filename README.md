@@ -223,7 +223,7 @@ uv run qd-agents mcp add open-meteo "Open Meteo Weather" \
   --args "tools/mcp/open-meteo-mcp/dist/index.js"
 ```
 
-**注意**：MCP工具执行器具有自动发现功能，连接到MCP服务器时会自动获取服务器提供的所有工具，无需手动注册每个工具。
+**注意**：MCP工具执行器具有自动发现功能，在上下文管理中会自动连接到MCP服务器并展开所有可用工具，将MCP服务器提供的每个工具作为独立工具加载到可用工具列表中，无需手动注册每个工具。这使得大模型在使用tool calling时可以获得完整的工具信息。
 
 ### 启动交互式聊天
 
@@ -265,7 +265,7 @@ qd-agents/
 │   ├── prompts/         # 提示词模板
 │   │   └── templates/
 │   ├── context/         # 上下文管理器
-│   ├── orchestrator/    # 调度器（单阶段架构）
+│   ├── orchestrator/    # 调度器（工具调用模式，支持MCP工具展开）
 │   ├── tools/           # 工具执行器
 │   ├── execution/       # 执行引擎
 │   ├── agent/           # Agent 核心
@@ -330,6 +330,8 @@ qd-agents/
 | `skill` | 预置技能/工作流 |
 | `mcp` | Model Context Protocol |
 | `bash` | Bash 命令执行 |
+
+**MCP 工具展开**：在上下文管理中，MCP 工具会自动连接到 MCP 服务器并展开所有可用工具，将 MCP 服务器提供的每个工具作为独立工具加载到可用工具列表中，使得大模型在使用 tool calling 时可以获得完整的工具信息。
 
 ### 重试与熔断 (utils/retry.py)
 

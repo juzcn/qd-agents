@@ -37,6 +37,9 @@ class ContextManager:
         """
         self.prompts = prompt_loader
         self._session_history: list[dict[str, str]] = []
+        self._cached_system_prompt: str | None = None  # 缓存的系统提示词
+        self._cached_tools: list[Any] | None = None    # 缓存的工具列表
+        self._tool_use_cache: dict[tuple, str] = {}    # 缓存工具调用提示词
 
     def add_to_history(self, role: str, content: str) -> None:
         """
@@ -155,22 +158,35 @@ class ContextManager:
         Returns:
             完整的消息列表
         """
-        if self.prompts:
-            system_prompt = self.prompts.render(
-                "tool_use",
-                tools=tools,
-                search_web_available=search_web_available,
-            )
+        # 构建缓存键：使用工具ID列表和search_web_available
+        tool_ids = tuple(sorted(tool.id for tool in tools))
+        cache_key = (tool_ids, search_web_available)
+
+        # 检查缓存
+        if cache_key in self._tool_use_cache:
+            system_prompt = self._tool_use_cache[cache_key]
+            logger.debug("Using cached system prompt for tool_use")
         else:
-            # 回退到硬编码
-            if search_web_available:
-                system_prompt = (
-                    "你是一个智能助手，可以调用工具帮助用户。\n"
-                    "如果用户的问题需要实时信息或外部知识，请优先使用 search.web 工具进行网络搜索。\n"
-                    "注意：我们是在Windows环境下工作。"
+            if self.prompts:
+                system_prompt = self.prompts.render(
+                    "tool_use",
+                    tools=tools,
+                    search_web_available=search_web_available,
                 )
             else:
-                system_prompt = "你是一个智能助手，可以调用工具帮助用户。\n注意：我们是在Windows环境下工作。"
+                # 回退到硬编码
+                if search_web_available:
+                    system_prompt = (
+                        "你是一个智能助手，可以调用工具帮助用户。\n"
+                        "如果用户的问题需要实时信息或外部知识，请优先使用 search.web 工具进行网络搜索。\n"
+                        "注意：我们是在Windows环境下工作。"
+                    )
+                else:
+                    system_prompt = "你是一个智能助手，可以调用工具帮助用户。\n注意：我们是在Windows环境下工作。"
+
+            # 缓存结果
+            self._tool_use_cache[cache_key] = system_prompt
+            logger.debug(f"Cached system prompt for {len(tools)} tools, search_web_available={search_web_available}")
 
         return self._build_messages(
             system_prompt=system_prompt,

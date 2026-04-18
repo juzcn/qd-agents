@@ -76,6 +76,7 @@ def create_executor(tool: Tool) -> ToolExecutor:
             url=exec_config.endpoint,  # 复用 endpoint 作为 URL
             headers=exec_config.headers,
             timeout=exec_config.timeout,
+            tool_name=exec_config.tool,  # 如果指定了具体工具名
         )
 
     else:

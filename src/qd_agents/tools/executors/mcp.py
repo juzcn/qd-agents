@@ -38,6 +38,7 @@ class MCPToolExecutor(ToolExecutor):
         url: str | None = None,
         headers: dict[str, str] | None = None,
         timeout: int = 30,
+        tool_name: str | None = None,
     ):
         """
         初始化 MCP 工具执行器
@@ -50,6 +51,7 @@ class MCPToolExecutor(ToolExecutor):
             url: SSE 或 streamable-http 模式的 URL
             headers: HTTP 请求头
             timeout: 超时时间（秒）
+            tool_name: 固定的工具名（如果指定，则执行器专用于该工具）
         """
         self.server = server
         self.transport = transport
@@ -58,6 +60,7 @@ class MCPToolExecutor(ToolExecutor):
         self.url = url
         self.headers = headers or {}
         self.timeout = timeout
+        self.tool_name = tool_name
 
         # 缓存客户端会话
         self._session: ClientSession | None = None
@@ -121,6 +124,15 @@ class MCPToolExecutor(ToolExecutor):
         for tool in tools_result.tools:
             self._tools_cache[tool.name] = tool
 
+    def get_cached_tools(self) -> dict[str, Any]:
+        """
+        获取缓存的 MCP 工具
+
+        Returns:
+            工具名字典，键为工具名，值为 mcp.Tool 对象
+        """
+        return self._tools_cache.copy()
+
     async def execute(self, **kwargs: Any) -> Any:
         """执行 MCP 工具"""
         await self._ensure_connected()
@@ -128,11 +140,14 @@ class MCPToolExecutor(ToolExecutor):
         if not self._session:
             raise RuntimeError("MCP client not initialized")
 
-        # 提取工具名称
+        # 确定工具名称
+        # 优先使用参数中的 tool_name，否则使用执行器指定的固定工具名
         # MCP 工具调用有两种格式：
         # 1. {tool_name: "...", arguments: {...}} - 通过arguments对象传递参数
         # 2. {tool_name: "...", param1: value1, param2: value2} - 扁平化参数
         tool_name = kwargs.pop("tool_name", None)
+        if not tool_name:
+            tool_name = self.tool_name
 
         if not tool_name:
             raise ValueError("tool_name is required for MCP execution")
