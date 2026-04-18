@@ -62,6 +62,8 @@ class MCPToolExecutor(ToolExecutor):
         # 缓存客户端会话
         self._session: ClientSession | None = None
         self._tools_cache: dict[str, dict] = {}
+        # 存储异步上下文管理器
+        self._context_manager: Any = None
 
     async def _ensure_connected(self) -> None:
         """确保连接到 MCP 服务器"""
@@ -79,27 +81,34 @@ class MCPToolExecutor(ToolExecutor):
                 args=self.args,
                 env=None,
             )
-            self._session = ClientSession(*await stdio_client(server_params))
+            # stdio_client 返回异步上下文管理器
+            self._context_manager = stdio_client(server_params)
+            transport = await self._context_manager.__aenter__()
+            self._session = ClientSession(*transport)
 
         elif self.transport == "sse":
             if not self.url:
                 raise ValueError("sse transport requires url")
 
-            sse_transport = await sse_client(
+            # sse_client 返回异步上下文管理器
+            self._context_manager = sse_client(
                 url=self.url,
                 headers=self.headers,
             )
-            self._session = ClientSession(*sse_transport)
+            transport = await self._context_manager.__aenter__()
+            self._session = ClientSession(*transport)
 
         elif self.transport == "streamable-http":
             if not self.url:
                 raise ValueError("streamable-http transport requires url")
 
-            http_transport = await streamable_http_client(
+            # streamable_http_client 返回异步上下文管理器
+            self._context_manager = streamable_http_client(
                 url=self.url,
                 headers=self.headers,
             )
-            self._session = ClientSession(*http_transport)
+            transport = await self._context_manager.__aenter__()
+            self._session = ClientSession(*transport)
 
         else:
             raise ValueError(f"Unsupported transport: {self.transport}")
@@ -119,12 +128,13 @@ class MCPToolExecutor(ToolExecutor):
         if not self._session:
             raise RuntimeError("MCP client not initialized")
 
-        # 从工具名获取实际的工具名称
-        # 假设第一个参数是 tool_name，或者从上下文中获取
+        # 提取工具名称
+        # MCP 工具调用有两种格式：
+        # 1. {tool_name: "...", arguments: {...}} - 通过arguments对象传递参数
+        # 2. {tool_name: "...", param1: value1, param2: value2} - 扁平化参数
         tool_name = kwargs.pop("tool_name", None)
+
         if not tool_name:
-            # 如果没有指定 tool_name，尝试从参数中推断
-            # 这里需要根据具体实现调整
             raise ValueError("tool_name is required for MCP execution")
 
         if tool_name not in self._tools_cache:
@@ -132,8 +142,13 @@ class MCPToolExecutor(ToolExecutor):
 
         logger.info(f"Executing MCP tool: {tool_name}")
 
+        # 确定参数
+        # 如果kwargs中包含arguments键，使用arguments对象的内容
+        # 否则使用kwargs中剩余的所有参数
+        arguments = kwargs.pop("arguments", kwargs)
+
         try:
-            result = await self._session.call_tool(tool_name, arguments=kwargs)
+            result = await self._session.call_tool(tool_name, arguments=arguments)
             return result.content
         except Exception as e:
             logger.error(f"Error executing MCP tool {tool_name}: {e}")
@@ -141,9 +156,18 @@ class MCPToolExecutor(ToolExecutor):
 
     async def close(self) -> None:
         """关闭连接"""
+        # 先关闭会话
         if self._session:
             await self._session.__aexit__(None, None, None)
             self._session = None
+
+        # 然后关闭上下文管理器
+        if self._context_manager:
+            await self._context_manager.__aexit__(None, None, None)
+            self._context_manager = None
+
+        # 清空工具缓存
+        self._tools_cache.clear()
 
     async def __aenter__(self):
         await self._ensure_connected()
