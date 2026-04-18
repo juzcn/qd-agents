@@ -189,6 +189,13 @@ uv run qd-agents tools init
 
 MCP (Model Context Protocol) 服务器可以通过以下命令管理：
 
+**参数说明**：
+- `name`：工具名称，在聊天中使用的名称
+- `server`：MCP服务器标识，描述性名称（如 "Open Meteo Weather"）
+- `--command`：stdio模式下启动服务器的命令（如 "node"、"npx"）
+- `--args`：stdio模式下命令的参数（JSON数组或逗号分隔）
+- `--transport`：传输模式（stdio/sse/streamable-http）
+
 ```bash
 # 添加 MCP 服务器
 uv run qd-agents mcp add <name> <server> [options]
@@ -215,6 +222,8 @@ uv run qd-agents mcp add open-meteo "Open Meteo Weather" \
   --command "node" \
   --args "tools/mcp/open-meteo-mcp/dist/index.js"
 ```
+
+**注意**：MCP工具执行器具有自动发现功能，连接到MCP服务器时会自动获取服务器提供的所有工具，无需手动注册每个工具。
 
 ### 启动交互式聊天
 
