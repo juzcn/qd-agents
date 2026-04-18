@@ -79,9 +79,9 @@ class MCPToolExecutor(ToolExecutor):
                 args=self.args,
                 env=None,
             )
-            stdio_transport = await stdio_client(server_params)
-            self._session = ClientSession(*stdio_transport)
-            await self._session.__aenter__()
+            async with stdio_client(server_params) as stdio_transport:
+                self._session = ClientSession(*stdio_transport)
+                await self._session.__aenter__()
 
         elif self.transport == "sse":
             if not self.url:
@@ -92,7 +92,7 @@ class MCPToolExecutor(ToolExecutor):
                 headers=self.headers,
             ) as sse_transport:
                 self._session = ClientSession(*sse_transport)
-                await self._session.__aenter__()
+                # 会话已经通过上下文管理器初始化
 
         elif self.transport == "streamable-http":
             if not self.url:
@@ -103,7 +103,7 @@ class MCPToolExecutor(ToolExecutor):
                 headers=self.headers,
             ) as http_transport:
                 self._session = ClientSession(*http_transport)
-                await self._session.__aenter__()
+                # 会话已经通过上下文管理器初始化
 
         else:
             raise ValueError(f"Unsupported transport: {self.transport}")
