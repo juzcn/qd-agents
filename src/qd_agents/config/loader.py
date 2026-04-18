@@ -97,22 +97,6 @@ class PromptsConfig(BaseModel):
     cache_ttl: int = 3600
 
 
-class ObservabilityConfig(BaseModel):
-    """可观测性配置"""
-    log_level: str = "INFO"
-    log_format: str = "json"
-    log_output: list[str] = Field(default_factory=lambda: ["console"])
-    log_session_dir: Path | None = None
-    log_rotation: str = "daily"
-    log_retention_days: int = 30
-    tracing_enabled: bool = True
-    tracing_exporter: str = "otlp"
-    tracing_endpoint: str | None = None
-    tracing_sample_rate: float = 1.0
-    metrics_enabled: bool = True
-    metrics_exporter: str = "prometheus"
-    metrics_port: int = 9090
-
 
 class StorageConfig(BaseModel):
     """存储配置"""
@@ -123,22 +107,6 @@ class StorageConfig(BaseModel):
     audit_retention_days: int = 90
 
 
-class SecurityConfig(BaseModel):
-    """安全配置"""
-    require_confirmation_for: list[str] = Field(
-        default_factory=lambda: ["destructive", "readwrite"]
-    )
-    audit_log_enabled: bool = True
-    sensitive_fields: list[str] = Field(
-        default_factory=lambda: ["api_key", "password", "secret"]
-    )
-
-
-class VersioningConfig(BaseModel):
-    """版本管理配置"""
-    default_version_strategy: str = "latest_active"
-    deprecation_warning_days: int = 30
-    auto_migrate: bool = False
 
 
 class SystemConfig(BaseModel):
@@ -163,10 +131,10 @@ class Config(BaseSettings):
     tool_registry: ToolRegistryConfig | None = None
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     prompts: PromptsConfig | None = None
-    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+
     storage: StorageConfig | None = None
-    security: SecurityConfig = Field(default_factory=SecurityConfig)
-    versioning: VersioningConfig = Field(default_factory=VersioningConfig)
+
+
 
     @classmethod
     def with_defaults(cls, base_dir: Path | None = None) -> Self:
@@ -190,11 +158,7 @@ class Config(BaseSettings):
                 traces_dir=data_dir / "traces",
                 audit_dir=data_dir / "audit",
             ),
-            observability=ObservabilityConfig(
-                log_session_dir=Path("."),
-            ),
         )
-
 
 def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Config:
     """将字典转换为 Config 对象"""

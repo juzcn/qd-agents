@@ -16,7 +16,7 @@ from ..llm import LLMClient
 from ..registry import ToolRegistry, Tool, ToolExecutionType, ToolMetadata
 from ..prompts import PromptLoader
 from ..execution import ExecutionEngine
-from ..orchestrator import TwoPhaseOrchestrator, OrchestrationResult
+from ..orchestrator import ToolUseModeOrchestrator, OrchestrationResult
 from ..tools import ToolExecutor, ToolExecutorRegistry, create_executor
 from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig
 from ..context import ContextManager
@@ -25,44 +25,6 @@ from ..context import ContextManager
 logger = logging.getLogger(__name__)
 
 
-def _format_search_result(result: dict[str, Any]) -> str:
-    """格式化搜索结果为易读的文本（不直接使用 Tavily 的英文 answer）"""
-    try:
-        # 提取搜索结果列表（不使用 Tavily 的 answer）
-        results = result.get("results", [])
-        if results:
-            output = ""
-            for i, r in enumerate(results[:5], 1):
-                title = r.get("title", "")
-                snippet = r.get("snippet", r.get("content", ""))
-                link = r.get("url", r.get("link", ""))
-                if title:
-                    output += f"\n[{i}] {title}"
-                    if snippet:
-                        output += f"\n    {snippet}"
-                    if link:
-                        output += f"\n    {link}"
-            return output.strip()
-
-        # 其他格式
-        return json.dumps(result, ensure_ascii=False)
-    except Exception:
-        return json.dumps(result, ensure_ascii=False)
-
-
-def _format_references(result: dict[str, Any]) -> str:
-    """格式化参考链接"""
-    results = result.get("results", [])
-    if not results:
-        return ""
-
-    output = "参考链接：\n"
-    for i, r in enumerate(results[:3], 1):
-        title = r.get("title", "")
-        link = r.get("url", r.get("link", ""))
-        if title and link:
-            output += f"{i}. {title}: {link}\n"
-    return output.strip()
 
 
 class AgentResult:
@@ -121,7 +83,7 @@ class QDAgent:
         self.context = context_manager or ContextManager(prompt_loader=prompt_loader)
 
         # 初始化调度器
-        self.orchestrator = TwoPhaseOrchestrator(
+        self.orchestrator = ToolUseModeOrchestrator(
             llm_client=llm_client,
             tool_registry=tool_registry,
             context_manager=self.context,
@@ -494,90 +456,7 @@ class QDAgent:
         logger.warning("Reached default return in _execute_orchestration, tool_choice: %s", phase_two.tool_choice if phase_two else None)
         return "处理完成"
 
-    async def _summarize_search_results(
-        self,
-        user_input: str,
-        search_result: dict[str, Any],
-    ) -> str:
-        """让 LLM 根据搜索结果用中文总结回答"""
-        # 格式化搜索结果为文本
-        formatted_results = _format_search_result(search_result)
 
-        messages = [
-            {
-                "role": "system",
-                "content": "你是一个专业的助手。请根据以下搜索结果，用中文回答用户的问题。回答要准确、客观，使用搜索结果中的信息。"
-            },
-            {
-                "role": "user",
-                "content": f"用户问题: {user_input}\n\n搜索结果:\n{formatted_results}"
-            }
-        ]
-
-        try:
-            response = await self.llm.chat(
-                messages=messages,
-                temperature=0.7,
-            )
-            answer = response.choices[0].message.content or "抱歉，无法生成回答"
-
-            # 添加参考链接
-            references = _format_references(search_result)
-            if references:
-                answer += "\n\n" + references
-
-            return answer
-        except Exception as e:
-            logger.exception("Failed to summarize search results")
-            # 如果 LLM 总结失败，返回格式化的搜索结果
-            return _format_search_result(search_result)
-
-    async def _summarize_tool_result(
-        self,
-        user_input: str,
-        tool_name: str,
-        tool_result: Any,
-    ) -> str:
-        """让 LLM 根据工具执行结果用中文总结回答"""
-        logger.info("Summarizing tool result for tool: %s, result type: %s",
-                   tool_name, type(tool_result).__name__)
-
-        # 格式化工具结果为文本
-        try:
-            if isinstance(tool_result, dict):
-                formatted_result = json.dumps(tool_result, ensure_ascii=False, indent=2)
-                logger.debug("Tool result is dict, keys: %s", list(tool_result.keys()))
-            else:
-                formatted_result = str(tool_result)
-                logger.debug("Tool result is not dict: %s", formatted_result[:200])
-        except Exception as e:
-            formatted_result = str(tool_result)
-            logger.warning("Failed to format tool result: %s", e)
-
-        messages = [
-            {
-                "role": "system",
-                "content": f"你是一个专业的助手。请根据以下{tool_name}工具的执行结果，用中文回答用户的问题。回答要自然、友好，使用工具结果中的信息。"
-            },
-            {
-                "role": "user",
-                "content": f"用户问题: {user_input}\n\n工具执行结果:\n{formatted_result}"
-            }
-        ]
-
-        try:
-            logger.info("Calling LLM to summarize tool result for tool: %s", tool_name)
-            response = await self.llm.chat(
-                messages=messages,
-                temperature=0.7,
-            )
-            answer = response.choices[0].message.content or "抱歉，无法生成回答"
-            logger.info("LLM summarization successful for tool: %s", tool_name)
-            return answer
-        except Exception as e:
-            logger.exception("Failed to summarize tool result for tool: %s", tool_name)
-            # 如果 LLM 总结失败，返回格式化的工具结果
-            return f"工具调用结果: {formatted_result}"
 
     async def _get_mcp_server_tools(self, server_config: dict) -> tuple[list[Tool], Any]:
         """
@@ -868,7 +747,29 @@ class QDAgent:
                             tool_result = await executor.execute(**tool_input)
                         # 确保工具结果是字符串
                         if not isinstance(tool_result, str):
-                            tool_result = json.dumps(tool_result, ensure_ascii=False)
+                            # 尝试处理 MCP 返回的 TextContent 等类型
+                            if hasattr(tool_result, 'text'):
+                                # TextContent 对象
+                                tool_result = tool_result.text
+                            elif isinstance(tool_result, list):
+                                # 可能是 List[ToolContent]，提取文本
+                                text_parts = []
+                                for item in tool_result:
+                                    if hasattr(item, 'text'):
+                                        text_parts.append(item.text)
+                                    elif hasattr(item, 'type') and getattr(item, 'type', None) == 'text':
+                                        # 兼容不同版本的 MCP
+                                        text_parts.append(getattr(item, 'text', str(item)))
+                                    else:
+                                        text_parts.append(str(item))
+                                tool_result = "\n\n".join(text_parts) if text_parts else ""
+                            else:
+                                # 其他类型尝试 JSON 序列化
+                                try:
+                                    tool_result = json.dumps(tool_result, ensure_ascii=False)
+                                except (TypeError, ValueError):
+                                    # 如果 JSON 序列化失败，转换为字符串
+                                    tool_result = str(tool_result)
                     except Exception as e:
                         logger.exception("Tool execution failed")
                         tool_result = f"工具调用失败: {e}"

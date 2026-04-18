@@ -164,7 +164,28 @@ class MCPToolExecutor(ToolExecutor):
 
         try:
             result = await self._session.call_tool(tool_name, arguments=arguments)
-            return result.content
+            # MCP 返回的 result.content 可能是 List[ToolContent]，需要转换为字符串
+            content = result.content
+            if isinstance(content, list):
+                # 提取所有文本内容
+                text_parts = []
+                for item in content:
+                    # 检查是否为 TextContent 类型
+                    if hasattr(item, 'text'):
+                        text_parts.append(item.text)
+                    elif hasattr(item, 'type') and item.type == 'text':
+                        # 兼容不同版本的 MCP
+                        text_parts.append(item.text)
+                    else:
+                        # 其他类型的内容转换为字符串表示
+                        text_parts.append(str(item))
+                return "\n\n".join(text_parts) if text_parts else ""
+            elif hasattr(content, 'text'):
+                # 单个 TextContent 对象
+                return content.text
+            else:
+                # 其他类型直接转换为字符串
+                return str(content)
         except Exception as e:
             logger.error(f"Error executing MCP tool {tool_name}: {e}")
             raise
