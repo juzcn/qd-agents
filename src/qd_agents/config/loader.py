@@ -107,6 +107,22 @@ class StorageConfig(BaseModel):
     audit_retention_days: int = 90
 
 
+class ObservabilityConfig(BaseModel):
+    """可观测性配置"""
+    log_level: str = "INFO"
+    log_format: str = "json"
+    log_output: list[str] = Field(default_factory=lambda: ["file"])
+    log_session_dir: Path = Path(".")
+    log_rotation: str = "daily"
+    log_retention_days: int = 30
+    tracing_enabled: bool = True
+    tracing_exporter: str = "otlp"
+    tracing_endpoint: str = ""
+    tracing_sample_rate: float = 1.0
+    metrics_enabled: bool = True
+    metrics_exporter: str = "prometheus"
+    metrics_port: int = 9090
+    log_file_path: Path = Path(".")
 
 
 class SystemConfig(BaseModel):
@@ -133,6 +149,7 @@ class Config(BaseSettings):
     prompts: PromptsConfig | None = None
 
     storage: StorageConfig | None = None
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 
 
 
