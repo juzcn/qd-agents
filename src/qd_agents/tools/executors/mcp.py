@@ -43,7 +43,7 @@ class MCPToolExecutor(ToolExecutor):
         初始化 MCP 工具执行器
 
         Args:
-            server: MCP 服务器标识或路径
+            server: MCP服务器标识
             transport: 传输模式 ("stdio", "sse", "streamable-http")
             command: stdio 模式下的命令（如 "npx"）
             args: stdio 模式下的参数（如 ["-y", "@modelcontextprotocol/server-weather"]）

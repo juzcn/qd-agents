@@ -70,7 +70,7 @@ def tools_init(
 @mcp_app.command("add", help="添加 MCP 服务器")
 def mcp_add_command(
     name: str = typer.Argument(..., help="工具名称"),
-    server: str = typer.Argument(..., help="MCP 服务器标识或路径"),
+    server: str = typer.Argument(..., help="MCP服务器标识"),
     transport: str = typer.Option("stdio", "--transport", "-t", help="传输模式: stdio, sse, streamable-http"),
     command: Optional[str] = typer.Option(None, "--command", "--cmd", help="stdio 模式下的命令"),
     args: Optional[str] = typer.Option(None, "--args", "-a", help="stdio 模式下的参数 (JSON 数组或逗号分隔)"),

@@ -39,7 +39,7 @@ async def mcp_add_async(
     Args:
         console: Rich 控制台对象
         name: 工具名称
-        server: MCP 服务器标识或路径
+        server: MCP服务器标识
         transport: 传输模式 ("stdio", "sse", "streamable-http")
         command: stdio 模式下的命令
         args: stdio 模式下的参数（JSON 字符串或逗号分隔）
@@ -100,7 +100,7 @@ async def mcp_add_async(
 def mcp_add(
     console: Console,
     name: str = typer.Argument(..., help="工具名称"),
-    server: str = typer.Argument(..., help="MCP 服务器标识或路径"),
+    server: str = typer.Argument(..., help="MCP服务器标识"),
     transport: str = typer.Option("stdio", "--transport", "-t", help="传输模式: stdio, sse, streamable-http"),
     command: Optional[str] = typer.Option(None, "--command", "-c", help="stdio 模式下的命令"),
     args: Optional[str] = typer.Option(None, "--args", "-a", help="stdio 模式下的参数 (JSON 数组或逗号分隔)"),
