@@ -98,8 +98,8 @@ def tools_skill2mcp(
 # mcp add 命令
 @mcp_app.command("add", help="添加 MCP 服务器")
 def mcp_add_command(
-    name: Optional[str] = typer.Argument(None, help="工具名称"),
-    server: Optional[str] = typer.Argument(None, help="MCP服务器标识"),
+    name: str = typer.Argument(..., help="工具名称（必需）"),
+    server: str = typer.Argument(..., help="MCP服务器标识（必需）"),
     transport: str = typer.Option("stdio", "--transport", "-t", help="传输模式: stdio, sse, streamable-http"),
     command: Optional[str] = typer.Option(None, "--command", "--cmd", help="stdio 模式下的命令"),
     args: Optional[str] = typer.Option(None, "--args", "-a", help="stdio 模式下的参数 (JSON 数组或逗号分隔)"),
@@ -109,12 +109,12 @@ def mcp_add_command(
     json: bool = typer.Option(False, "--json", "-j", help="从同名JSON文件读取配置（tools/mcp/<name>.json）"),
 ):
     """添加 MCP 服务器"""
-    # 验证必需参数
-    if not name:
-        console.print("[red][ERROR][/] 缺少工具名称（必需参数）")
+    # 验证必需参数（防止空字符串）
+    if not name or not name.strip():
+        console.print("[red][ERROR][/] 工具名称不能为空")
         return
-    if not server:
-        console.print("[red][ERROR][/] 缺少 MCP 服务器标识（必需参数）")
+    if not server or not server.strip():
+        console.print("[red][ERROR][/] MCP服务器标识不能为空")
         return
 
     # 如果指定了 --json，构建JSON文件路径

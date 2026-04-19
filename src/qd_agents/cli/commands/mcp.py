@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 
 async def mcp_add_async(
     console: Console,
-    name: Optional[str],
-    server: Optional[str],
+    name: str,
+    server: str,
     transport: str = "stdio",
     command: Optional[str] = None,
     args: Optional[str] = None,
@@ -39,8 +39,8 @@ async def mcp_add_async(
 
     Args:
         console: Rich 控制台对象
-        name: 工具名称（如果未提供--json则为必需）
-        server: MCP服务器标识（如果未提供--json则为必需）
+        name: 工具名称（必需）
+        server: MCP服务器标识（必需）
         transport: 传输模式 ("stdio", "sse", "streamable-http")
         command: stdio 模式下的命令
         args: stdio 模式下的参数（JSON 字符串或逗号分隔）
@@ -101,10 +101,10 @@ async def mcp_add_async(
 
     # 验证必需参数
     if not final_name:
-        console.print("[red][ERROR][/] 缺少工具名称（请通过命令行参数或 JSON 文件提供）")
+        console.print("[red][ERROR][/] 工具名称不能为空")
         return
     if not final_server:
-        console.print("[red][ERROR][/] 缺少 MCP 服务器标识（请通过命令行参数或 JSON 文件提供）")
+        console.print("[red][ERROR][/] MCP服务器标识不能为空")
         return
 
     # 如果 args 是列表（来自 JSON），将其转换为 JSON 字符串以便后续解析
@@ -201,8 +201,8 @@ async def mcp_add_async(
 
 def mcp_add(
     console: Console,
-    name: Optional[str] = typer.Argument(None, help="工具名称（如果未提供--json则为必需）"),
-    server: Optional[str] = typer.Argument(None, help="MCP服务器标识（如果未提供--json则为必需）"),
+    name: str = typer.Argument(..., help="工具名称（必需）"),
+    server: str = typer.Argument(..., help="MCP服务器标识（必需）"),
     transport: str = typer.Option("stdio", "--transport", "-t", help="传输模式: stdio, sse, streamable-http"),
     command: Optional[str] = typer.Option(None, "--command", "-c", help="stdio 模式下的命令"),
     args: Optional[str] = typer.Option(None, "--args", "-a", help="stdio 模式下的参数 (JSON 数组或逗号分隔)"),
