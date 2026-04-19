@@ -282,11 +282,9 @@ class QDAgent:
         from .builtin_tools import (
             serper_search,
             tavily_search,
-            baidu_search,
         )
         self.executor_registry.register_function("serper_search", serper_search)
         self.executor_registry.register_function("tavily_search", tavily_search)
-        self.executor_registry.register_function("baidu_search", baidu_search)
 
         logger.info("Registered builtin tool executors")
 
