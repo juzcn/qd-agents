@@ -29,7 +29,6 @@ async def skill2mcp_async(
     console: Console,
     skill_path: Path,
     output_dir: Optional[Path] = None,
-    register: bool = False,
     config_file: Optional[Path] = None,
     base_dir: Optional[Path] = None,
 ) -> None:
@@ -40,7 +39,6 @@ async def skill2mcp_async(
         console: Rich 控制台对象
         skill_path: 技能目录路径
         output_dir: 输出目录（可选）
-        register: 是否注册到工具注册表
         config_file: 配置文件路径
         base_dir: 基础目录
     """
@@ -54,6 +52,9 @@ async def skill2mcp_async(
         return
 
     console.print(f"[blue][INFO][/] 分析技能: {skill_path.name}")
+
+    # 初始化 MCP 服务器目录变量
+    mcp_server_dir: Optional[Path] = None
 
     # 加载配置
     config = load_config(base_dir=base_dir, config_file=config_file)
@@ -169,20 +170,56 @@ async def skill2mcp_async(
     ))
 
     # 生成完整的 MCP 服务器（如果指定了输出目录）
+    final_tool = tool  # 默认使用通用包装器
     if output_dir:
         try:
             server_generator = MCPServerGenerator(base_dir or Path.cwd(), skill_path, output_dir)
             mcp_server_dir = server_generator.generate_server(analysis, tool)
             console.print(f"[green][OK][/] MCP 服务器已生成到: {mcp_server_dir}")
 
-            # 保存工具定义 JSON 文件
-            output_file = output_dir / f"{tool.name}.json"
+            # 生成指向 MCP 服务器的工具定义
+            final_tool = generator.generate_tool_definition(analysis, mcp_server_dir)
+
+            # 保存工具定义 JSON 文件到输出目录（供参考）
+            output_file = output_dir / f"{final_tool.name}.json"
             with open(output_file, 'w', encoding='utf-8') as f:
+                tool_dict = {
+                    "name": final_tool.name,
+                    "description": final_tool.description,
+                    "parameters": final_tool.parameters,
+                    "execution": {
+                        "type": final_tool.execution.type.value,
+                        "server": final_tool.execution.server,
+                        "transport": final_tool.execution.transport,
+                        "command": final_tool.execution.command,
+                        "args": final_tool.execution.args,
+                        "env": final_tool.execution.env
+                    }
+                }
                 json.dump(tool_dict, f, indent=2, ensure_ascii=False)
             console.print(f"[green][OK][/] 工具定义已保存到: {output_file}")
 
+            # 保存 MCP 服务器配置文件到 tools/mcp 目录（用于 MCP 服务器配置）
+            mcp_config_dir = (base_dir or Path.cwd()) / "tools" / "mcp"
+            mcp_config_dir.mkdir(parents=True, exist_ok=True)
+            mcp_config_file = mcp_config_dir / f"{final_tool.name}.json"
+
+            # 构建 MCP 服务器配置
+            server_config = {
+                "mcpServers": {
+                    final_tool.execution.server: {
+                        "command": final_tool.execution.command,
+                        "args": final_tool.execution.args
+                    }
+                }
+            }
+
+            with open(mcp_config_file, 'w', encoding='utf-8') as f:
+                json.dump(server_config, f, indent=2, ensure_ascii=False)
+            console.print(f"[green][OK][/] MCP 服务器配置文件已保存到: {mcp_config_file}")
+
             # 生成验证脚本
-            server_generator.generate_validation_script(analysis, tool)
+            server_generator.generate_validation_script(analysis, final_tool)
             console.print(f"[green][OK][/] 验证脚本已生成")
 
             # 显示后续步骤
@@ -217,23 +254,22 @@ async def skill2mcp_async(
             console.print(f"[yellow][WARN][/] 生成 MCP 服务器时出错: {e}")
             console.print("[dim]继续生成工具定义...[/]")
 
-    # 注册到工具注册表（如果请求）
-    if register:
-        try:
-            db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-            registry = ToolRegistry(db_path=db_path)
-
-            tool_id = registry.register(tool)
-            console.print(f"[green][OK][/] 工具已注册: {tool.name} (ID: {tool_id})")
-        except Exception as e:
-            console.print(f"[red][ERROR][/] 工具注册失败: {e}")
+    # 注册到工具注册表（自动注册）
+    try:
+        db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
+        registry = ToolRegistry(db_path=db_path)
+        tool_id = registry.register(final_tool)
+        console.print(f"[green][OK][/] 工具已注册: {final_tool.name} (ID: {tool_id})")
+        if mcp_server_dir and mcp_server_dir.exists():
+            console.print(f"[dim]服务器目录: {mcp_server_dir}[/]")
+    except Exception as e:
+        console.print(f"[red][ERROR][/] 工具注册失败: {e}")
 
 
 def skill2mcp(
     console: Console,
     skill_path: Path = typer.Argument(..., help="技能目录路径"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="输出目录"),
-    register: bool = typer.Option(False, "--register", "-r", help="注册到工具注册表"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
 ) -> None:
@@ -242,7 +278,6 @@ def skill2mcp(
         console=console,
         skill_path=skill_path,
         output_dir=output_dir,
-        register=register,
         config_file=config_file,
         base_dir=base_dir,
     ))

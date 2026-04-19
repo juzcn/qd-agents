@@ -94,8 +94,8 @@ async def mcp_add_async(
     # 合并参数：JSON 配置作为默认值，命令行参数优先级更高
     # 如果命令行没有提供 name，尝试使用配置中的服务器名
     final_name = name if name is not None else (config_server_name or extracted_config.get("name"))
-    # 总是使用配置中的服务器名，确保与配置一致
-    final_server = config_server_name or extracted_config.get("server")
+    # 总是使用配置中的服务器名，确保与配置一致，如果都没有则使用命令行提供的 server
+    final_server = config_server_name or extracted_config.get("server") or server
     final_transport = transport if transport != "stdio" or "transport" not in extracted_config else extracted_config.get("transport", "stdio")
     final_command = command if command is not None else extracted_config.get("command")
     final_args = args if args is not None else extracted_config.get("args")

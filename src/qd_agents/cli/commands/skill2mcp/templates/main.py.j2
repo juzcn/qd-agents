@@ -1,7 +1,7 @@
 """
-baidu-search MCP 服务器
+{{ skill_name }} MCP 服务器
 
-将 baidu-search 技能包装为 MCP 服务器。
+将 {{ skill_name }} 技能包装为 MCP 服务器。
 """
 
 import asyncio
@@ -21,9 +21,9 @@ from pydantic import BaseModel, Field
 # 技能配置
 # 计算项目根目录：从 scripts/main.py 向上 5 级到项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
-SKILL_PATH = PROJECT_ROOT / "tools" / "skills" / "baidu-search"
+SKILL_PATH = PROJECT_ROOT / "tools" / "skills" / "{{ skill_name }}"
 CONFIG_PATH = PROJECT_ROOT / "config.json"
-INVOCATION_COMMAND = "python3 skills/baidu-search/scripts/search.py '{JSON}'"
+INVOCATION_COMMAND = {{ invocation_command|tojson }}
 
 def load_skill_config() -> dict:
     """从 config.json 加载技能配置"""
@@ -31,16 +31,18 @@ def load_skill_config() -> dict:
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             config = json.load(f)
         # 首先尝试从 skills.<skill_name> 获取配置
-        skill_config = config.get('skills', {}).get('baidu-search', {})
+        skill_config = config.get('skills', {}).get('{{ skill_name }}', {})
         if skill_config:
             return skill_config
         # 对于特定技能，尝试其他配置路径
+{% if skill_name == 'baidu-search' %}
         baidu_config = config.get('search', {}).get('baidu', {})
         if baidu_config:
             # 映射 API 密钥到环境变量
             api_key = baidu_config.get('api_key_1') or baidu_config.get('api_key_2')
             if api_key:
                 return {'BAIDU_API_KEY': api_key}
+{% endif %}
         # 如果找不到配置，返回空字典
         return {}
     except Exception as e:
@@ -48,31 +50,46 @@ def load_skill_config() -> dict:
 
 
 # 参数模型定义
-class BaiduSearchParams(BaseModel):
+class {{ skill_name_pascal }}Params(BaseModel):
     """
-    baidu-search 工具参数
+    {{ skill_name }} 工具参数
     """
-    query: str
-    edition: str = Field(default='standard', description="Search edition: `standard` (full) or `lite` (light)")
-    resource_type_filter: List[Any] = Field(default=[{'type': 'web', 'top_k': 20}], description="Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5). Format: list of objects with 'type' and 'top_k' fields")
-    search_filter: Dict[str, Any] = Field(default={}, description="Advanced filters including site matching and date range filtering")
-    block_websites: List[Any] | None = Field(default=None, description="Sites to block, e.g. [\"tieba.baidu.com\"]")
-    search_recency_filter: str = Field(default='year', description="Time filter: `week`, `month`, `semiyear`, `year`")
-    safe_search: bool = Field(default=False, description="Enable strict content filtering")
+{% for param in parameters %}
+    {% if param.required %}
+    {{ param.name }}: {{ param.py_type }}
+    {% else %}
+        {% if param.default is not none %}
+            {% if param.type.lower() in ['bool', 'boolean'] %}
+                {% if param.default == True or param.default|string|lower == 'true' %}
+    {{ param.name }}: {{ param.py_type }} = Field(default=True, description="{{ param.description|replace('"', '\\"') }}")
+                {% else %}
+    {{ param.name }}: {{ param.py_type }} = Field(default=False, description="{{ param.description|replace('"', '\\"') }}")
+                {% endif %}
+            {% else %}
+    {{ param.name }}: {{ param.py_type }} = Field(default={{ param.default|python_repr }}, description="{{ param.description|replace('"', '\\"') }}")
+            {% endif %}
+        {% else %}
+    {{ param.name }}: {{ param.py_type }} | None = Field(default=None, description="{{ param.description|replace('"', '\\"') }}")
+        {% endif %}
+    {% endif %}
+{% else %}
+    # 无参数定义
+    pass
+{% endfor %}
 
 # 工具定义
-BAIDU_SEARCH_TOOL = ToolModel(
-    name="baidu-search",
-    description="Search the web using Baidu AI Search Engine (BDSE). Use for live information, documentation, or research topics.",
-    inputSchema={'type': 'object', 'properties': {'query': {'type': 'string', 'description': 'Search query'}, 'edition': {'type': 'string', 'description': 'Search edition: `standard` (full) or `lite` (light)', 'default': 'standard'}, 'resource_type_filter': {'type': 'array', 'description': "Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5). Format: list of objects with 'type' and 'top_k' fields", 'default': [{'type': 'web', 'top_k': 20}]}, 'search_filter': {'type': 'object', 'description': 'Advanced filters including site matching and date range filtering', 'default': {}}, 'block_websites': {'type': 'array', 'description': 'Sites to block, e.g. ["tieba.baidu.com"]'}, 'search_recency_filter': {'type': 'string', 'description': 'Time filter: `week`, `month`, `semiyear`, `year`', 'default': 'year'}, 'safe_search': {'type': 'boolean', 'description': 'Enable strict content filtering', 'default': False}}, 'required': ['query'], 'additionalProperties': False},
+{{ skill_name_upper }}_TOOL = ToolModel(
+    name="{{ skill_name }}",
+    description="{{ skill_description }}",
+    inputSchema={{ tool_parameters|python_repr }},
 )
 
 
-class BaiduSearchMCPServer:
-    """baidu-search MCP 服务器"""
+class {{ skill_name_pascal }}MCPServer:
+    """{{ skill_name }} MCP 服务器"""
 
     def __init__(self):
-        self.server = Server("mcp-baidu-search", "1.0.0")
+        self.server = Server("mcp-{{ package_name }}", "1.0.0")
         self.setup_tools()
 
     def setup_tools(self):
@@ -81,17 +98,17 @@ class BaiduSearchMCPServer:
         @self.server.list_tools()
         async def handle_list_tools():
             """列出可用工具"""
-            return [BAIDU_SEARCH_TOOL]
+            return [{{ skill_name_upper }}_TOOL]
 
         @self.server.call_tool()
         async def handle_call_tool(name: str, arguments: Dict[str, Any]):
             """处理工具调用"""
-            if name != "baidu-search":
+            if name != "{{ skill_name }}":
                 raise ValueError(f"未知工具: {name}")
 
             # 验证参数
             try:
-                params = BaiduSearchParams(**arguments)
+                params = {{ skill_name_pascal }}Params(**arguments)
             except Exception as e:
                 raise ValueError(f"参数验证失败: {e}")
 
@@ -119,27 +136,15 @@ class BaiduSearchMCPServer:
 
         # 解析调用命令，替换占位符
         invocation_str = INVOCATION_COMMAND
-        json_str = json.dumps(params)
-        full_command = []
-
         if "'{JSON}'" in invocation_str:
             # 替换占位符为实际的 JSON 字符串
-            # 我们需要将命令分割成部分，但保持 JSON 作为一个整体
-            parts = []
-            remaining = invocation_str
-            while "'{JSON}'" in remaining:
-                before, after = remaining.split("'{JSON}'", 1)
-                if before.strip():
-                    parts.extend(before.strip().split())
-                parts.append(json_str)  # 添加 JSON 作为单独的参数
-                remaining = after
-            if remaining.strip():
-                parts.extend(remaining.strip().split())
-            full_command = parts
+            command_str = invocation_str.replace("'{JSON}'", json.dumps(params))
+            cmd_parts = command_str.split()
         else:
             # 如果没有占位符，将 JSON 字符串作为最后一个参数添加
             cmd_parts = invocation_str.split()
-            full_command = cmd_parts + [json_str]
+            args = [json.dumps(params)]
+            full_command = cmd_parts + args
 
         # 设置环境变量（包含配置中的键值对）
         env = os.environ.copy()
@@ -171,7 +176,7 @@ class BaiduSearchMCPServer:
 
 async def main():
     """主函数"""
-    server = BaiduSearchMCPServer()
+    server = {{ skill_name_pascal }}MCPServer()
 
     async with stdio_server() as (read_stream, write_stream):
         await server.server.run(

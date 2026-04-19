@@ -121,23 +121,30 @@ class SkillAnalyzer:
             {
                 "role": "system",
                 "content": (
-                    "你是一个代码分析专家。你的任务是分析技能文件并提取以下信息：\n"
-                    "1. 技能名称和描述\n"
-                    "2. 输入参数（名称、类型、是否必需、描述、默认值）\n"
-                    "3. 输出格式\n"
-                    "4. 依赖关系（环境变量、二进制文件、Python包等）\n"
-                    "5. 调用方式（命令行命令）\n"
-                    "6. 任何其他重要信息\n"
-                    "\n"
+                    "你是一个专业的技能分析专家，擅长将技能封装为 MCP 工具。\n\n"
+                    "你的任务是：\n"
+                    "1. 仔细分析技能文件，提取完整的技能信息\n"
+                    "2. 准确识别参数类型和约束条件\n"
+                    "3. 确定技能调用方式和依赖关系\n"
+                    "4. 评估技能复杂度（简单包装 vs 复杂编排）\n\n"
                     "请以 JSON 格式回复，包含以下字段：\n"
-                    "- name: 技能名称\n"
-                    "- description: 技能描述\n"
-                    "- parameters: 参数列表，每个参数包含 name, type, required, description, default\n"
-                    "- output_format: 输出格式描述\n"
-                    "- dependencies: 依赖关系列表\n"
-                    "- invocation_command: 调用命令（如 python script.py '{JSON}'）\n"
-                    "- env_vars: 所需环境变量列表\n"
-                    "- binary_deps: 所需二进制文件列表\n"
+                    "- name: 技能名称（字符串）\n"
+                    "- description: 技能描述（字符串）\n"
+                    "- parameters: 参数列表，每个参数包含：\n"
+                    "  - name: 参数名称（字符串）\n"
+                    "  - type: 参数类型（字符串：str, int, float, bool, list, dict, object, json）\n"
+                    "  - required: 是否必需（布尔值）\n"
+                    "  - description: 参数描述（字符串）\n"
+                    "  - default: 默认值（如果存在，否则为 null）\n"
+                    "- output_format: 输出格式描述（字符串）\n"
+                    "- dependencies: 依赖关系列表（字符串数组）\n"
+                    "- invocation_command: 调用命令（字符串，如 \"python3 script.py '{JSON}'\"）\n"
+                    "- env_vars: 所需环境变量列表（字符串数组）\n"
+                    "- binary_deps: 所需二进制文件列表（字符串数组）\n"
+                    "- complexity: 技能复杂度评估（字符串：\"simple\" 或 \"complex\"）\n"
+                    "- skill_type: 技能类型（字符串：\"command_line\", \"api_service\", \"script\", \"composite\"）\n"
+                    "- has_config: 是否需要配置文件（布尔值）\n"
+                    "- config_example: 配置示例（对象，如果 has_config 为 true）\n"
                 )
             },
             {
@@ -172,16 +179,60 @@ class SkillAnalyzer:
 
     def _build_analysis_prompt(self, skill_name: str, file_contents: Dict[str, str]) -> str:
         """构建分析提示词"""
-        prompt = f"请分析以下技能 '{skill_name}' 的文件内容：\n\n"
+        prompt = f"请分析以下技能 '{skill_name}' 的文件内容，提取 MCP 工具所需的信息：\n\n"
+
+        # 优先显示重要文件
+        priority_files = []
+        other_files = []
 
         for filename, content in file_contents.items():
+            filename_lower = filename.lower()
+            if filename_lower in ['skill.md', 'readme.md', '_meta.json', 'package.json', 'pyproject.toml']:
+                priority_files.append((filename, content))
+            elif filename_lower.endswith(('.py', '.js', '.ts', '.sh')):
+                priority_files.append((filename, content))
+            else:
+                other_files.append((filename, content))
+
+        # 显示优先级文件
+        for filename, content in priority_files:
             prompt += f"=== 文件: {filename} ===\n{content}\n\n"
 
-        prompt += (
-            "基于以上文件内容，请提取技能信息。"
-            "特别注意 SKILL.md 文件中的 frontmatter（以 --- 包围的 YAML 部分），其中包含 name 和 description 字段。"
-            "参数信息在 SKILL.md 的参数表格中。"
-            "调用命令在 Usage 部分。"
-        )
+        # 显示其他文件
+        for filename, content in other_files:
+            prompt += f"=== 文件: {filename} ===\n{content}\n\n"
+
+        prompt += """基于以上文件内容，请详细分析该技能并提取以下信息：
+
+## 技能核心信息
+1. 技能名称（name）：从 SKILL.md 的 frontmatter 中提取
+2. 技能描述（description）：从 SKILL.md 的 frontmatter 中提取
+
+## 参数分析
+仔细分析 SKILL.md 中的参数表格，提取每个参数的：
+- name: 参数名称
+- type: 参数类型（str, int, float, bool, list, dict, object, json 等）
+- required: 是否为必需参数（true/false）
+- description: 参数描述
+- default: 默认值（如果有）
+
+注意处理复杂参数类型，如 list[obj]、obj 等，将其映射到合适的 JSON Schema 类型。
+
+## 调用方式
+从 Usage 部分提取调用命令（invocation_command），格式如：python3 script.py '<JSON>'
+
+## 依赖关系
+分析技能需要：
+- env_vars: 所需环境变量列表
+- binary_deps: 所需二进制文件列表
+- dependencies: 其他依赖关系（如 Python 包）
+
+## 技能复杂度评估
+根据技能实现判断：
+- 简单技能：直接命令调用即可完成
+- 复杂技能：需要逻辑编排、多个步骤或条件判断
+
+请以 JSON 格式回复，确保字段名与上述要求一致，类型正确。
+"""
 
         return prompt

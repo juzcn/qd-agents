@@ -71,7 +71,6 @@ def tools_init(
 def tools_skill2mcp(
     skill_name: str = typer.Argument(..., help="技能名称（在 tools/skills/ 目录下）"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="输出目录（默认为 tools/mcp/<技能名>）"),
-    register: bool = typer.Option(False, "--register", "-r", help="注册到工具注册表"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
 ):
@@ -92,7 +91,7 @@ def tools_skill2mcp(
     if output_dir is None:
         output_dir = Path("tools") / "mcp" / skill_name
 
-    skill2mcp(console, skill_path, output_dir, register, config_file, base_dir)
+    skill2mcp(console, skill_path, output_dir, config_file, base_dir)
 
 
 # mcp add 命令
