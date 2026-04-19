@@ -1,0 +1,3 @@
+[submodule "tools/mcp/open-meteo-mcp"]
+	path = tools/mcp/open-meteo-mcp
+	url = https://github.com/cmer81/open-meteo-mcp
