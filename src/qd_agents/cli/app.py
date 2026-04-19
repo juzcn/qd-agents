@@ -98,17 +98,18 @@ def tools_skill2mcp(
 # mcp add 命令
 @mcp_app.command("add", help="添加 MCP 服务器")
 def mcp_add_command(
-    name: str = typer.Argument(..., help="工具名称"),
-    server: str = typer.Argument(..., help="MCP服务器标识"),
+    name: Optional[str] = typer.Argument(None, help="工具名称（如果未提供--json则为必需）"),
+    server: Optional[str] = typer.Argument(None, help="MCP服务器标识（如果未提供--json则为必需）"),
     transport: str = typer.Option("stdio", "--transport", "-t", help="传输模式: stdio, sse, streamable-http"),
     command: Optional[str] = typer.Option(None, "--command", "--cmd", help="stdio 模式下的命令"),
     args: Optional[str] = typer.Option(None, "--args", "-a", help="stdio 模式下的参数 (JSON 数组或逗号分隔)"),
     url: Optional[str] = typer.Option(None, "--url", "-u", help="SSE 或 streamable-http 模式的 URL"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    json_file: Optional[Path] = typer.Option(None, "--json", "-j", help="JSON配置文件路径（如果提供，将从文件读取配置）"),
 ):
     """添加 MCP 服务器"""
-    mcp_add(console, name, server, transport, command, args, url, config_file, base_dir)
+    mcp_add(console, name, server, transport, command, args, url, config_file, base_dir, json_file)
 
 
 # mcp list 命令
