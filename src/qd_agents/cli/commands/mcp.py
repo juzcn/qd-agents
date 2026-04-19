@@ -98,6 +98,7 @@ async def mcp_add_async(
     final_command = command if command is not None else extracted_config.get("command")
     final_args = args if args is not None else extracted_config.get("args")
     final_url = url if url is not None else extracted_config.get("url")
+    final_env = extracted_config.get("env")
 
     # 验证必需参数
     if not final_name:
@@ -175,6 +176,7 @@ async def mcp_add_async(
         command=final_command,
         args=parsed_args,
         url=final_url,
+        env=final_env,
         parameters={
             "type": "object",
             "properties": {

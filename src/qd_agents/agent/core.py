@@ -177,6 +177,7 @@ class QDAgent:
                 'args': exec_config.args,
                 'endpoint': exec_config.endpoint,
                 'headers': exec_config.headers,
+                'env': exec_config.env or {},
                 'timeout': exec_config.timeout,
                 'tool': None,
             }
@@ -422,6 +423,7 @@ class QDAgent:
                 args=server_config.get('args', []),
                 url=server_config.get('endpoint'),  # 复用 endpoint 作为 URL
                 headers=server_config.get('headers', {}),
+                env=server_config.get('env', {}),
                 timeout=server_config.get('timeout', 30),
             )
 
