@@ -41,6 +41,7 @@ class ToolExecutionConfig(BaseModel):
     endpoint: str | None = None
     method: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
+    env: dict[str, str] = Field(default_factory=dict)
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     timeout: int = 30
