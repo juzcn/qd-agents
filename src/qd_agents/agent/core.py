@@ -429,8 +429,13 @@ class QDAgent:
 
             # 连接到服务器（异步上下文管理器）
             # 注意：这里我们不使用 async with，因为我们要保持连接打开
-            # 设置连接超时（使用配置的超时或默认5秒）
-            connect_timeout = server_config.get('timeout', 5)
+            # 设置连接超时（使用配置的超时或默认值）
+            # 对于Node.js服务器（如filesystem），需要更长的连接超时
+            default_connect_timeout = 5  # 默认5秒
+            if "filesystem" in server_key.lower() or server_config.get('command') in ["npx", "node"]:
+                default_connect_timeout = 15  # Node.js服务器需要更长时间
+
+            connect_timeout = server_config.get('timeout', default_connect_timeout)
             try:
                 await asyncio.wait_for(executor._ensure_connected(), timeout=connect_timeout)
             except asyncio.TimeoutError:
