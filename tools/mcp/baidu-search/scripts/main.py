@@ -1,7 +1,7 @@
 """
-baidu-search MCP 服务器
+test-search MCP 服务器
 
-将 baidu-search 技能包装为 MCP 服务器。
+将 test-search 技能包装为 MCP 服务器。
 """
 
 import asyncio
@@ -18,76 +18,60 @@ from pydantic import BaseModel, Field
 
 
 # 技能配置
-SKILL_PATH = Path(__file__).parent.parent / "tools/skills/baidu-search"
-INVOCATION_COMMAND = "python3 skills/baidu-search/scripts/search.py '{JSON}'"
+import os
+# 从项目根目录计算技能路径（MCP服务器在 tools/mcp/<技能名>/scripts/main.py）
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+SKILL_PATH = PROJECT_ROOT / "tools" / "skills" / "test-search"
+CONFIG_PATH = PROJECT_ROOT / "config.json"
+INVOCATION_COMMAND = "python scripts/search.py"
+
+def load_baidu_api_key() -> str:
+    """从 config.json 加载百度 API 密钥"""
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        # 从 search.baidu 获取 API 密钥
+        baidu_config = config.get('search', {}).get('baidu', {})
+        # 尝试获取 api_key_1 或 api_key_2
+        api_key = baidu_config.get('api_key_1') or baidu_config.get('api_key_2')
+        if not api_key:
+            raise ValueError("在 config.json 中未找到百度 API 密钥 (api_key_1 或 api_key_2)")
+        return api_key
+    except Exception as e:
+        raise RuntimeError(f"加载百度 API 密钥失败: {e}")
 
 
 # 参数模型定义
-class BaiduSearchParams(BaseModel):
+class TestSearchParams(BaseModel):
     """
-    baidu-search 工具参数
+    test-search 工具参数
     """
     query: str
-    edition: str = Field(default='standard', description="`standard` (full) or `lite` (light)")
-    resource_type_filter: str = Field(default='web:20, others:0', description="Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5)")
-    search_filter: str | None = Field(default=None, description="Advanced filters (see below)")
-    block_websites: str | None = Field(default=None, description="Sites to block, e.g. ["tieba.baidu.com"]")
-    search_recency_filter: str | None = Field(default=None, description="Time filter: `week`, `month`, `semiyear`, `year`")
-    safe_search: bool = Field(default='false', description="Enable strict content filtering")
 
 
 # 工具定义
-BAIDU_SEARCH_TOOL = ToolModel(
-    name="baidu-search",
-    description="Enable strict content filtering",
+TEST_SEARCH_TOOL = ToolModel(
+    name="test-search",
+    description="Test search description",
     inputSchema={
   "type": "object",
   "properties": {
     "query": {
-      "type": "string",
-      "description": "Search query"
-    },
-    "edition": {
-      "type": "string",
-      "description": "`standard` (full) or `lite` (light)",
-      "default": "standard"
-    },
-    "resource_type_filter": {
-      "type": "string",
-      "description": "Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5)",
-      "default": "web:20, others:0"
-    },
-    "search_filter": {
-      "type": "string",
-      "description": "Advanced filters (see below)"
-    },
-    "block_websites": {
-      "type": "string",
-      "description": "Sites to block, e.g. [\"tieba.baidu.com\"]"
-    },
-    "search_recency_filter": {
-      "type": "string",
-      "description": "Time filter: `week`, `month`, `semiyear`, `year`"
-    },
-    "safe_search": {
-      "type": "boolean",
-      "description": "Enable strict content filtering",
-      "default": "false"
+      "type": "string"
     }
   },
   "required": [
     "query"
-  ],
-  "additionalProperties": false
+  ]
 },
 )
 
 
-class BaiduSearchMCPServer:
-    """baidu-search MCP 服务器"""
+class TestSearchMCPServer:
+    """test-search MCP 服务器"""
 
     def __init__(self):
-        self.server = Server("mcp-baidu-search", "1.0.0")
+        self.server = Server("mcp-test-search", "1.0.0")
         self.setup_tools()
 
     def setup_tools(self):
@@ -96,17 +80,17 @@ class BaiduSearchMCPServer:
         @self.server.list_tools()
         async def handle_list_tools():
             """列出可用工具"""
-            return [BAIDU_SEARCH_TOOL]
+            return [TEST_SEARCH_TOOL]
 
         @self.server.call_tool()
         async def handle_call_tool(name: str, arguments: Dict[str, Any]):
             """处理工具调用"""
-            if name != "baidu-search":
+            if name != "test-search":
                 raise ValueError(f"未知工具: {name}")
 
             # 验证参数
             try:
-                params = BaiduSearchParams(**arguments)
+                params = TestSearchParams(**arguments)
             except Exception as e:
                 raise ValueError(f"参数验证失败: {e}")
 
@@ -133,6 +117,9 @@ class BaiduSearchMCPServer:
 
     async def execute_skill(self, params: Dict[str, Any]) -> Any:
         """执行技能"""
+        # 加载百度 API 密钥
+        api_key = load_baidu_api_key()
+
         # 解析调用命令
         cmd_parts = INVOCATION_COMMAND.split()
 
@@ -140,12 +127,17 @@ class BaiduSearchMCPServer:
         args = [json.dumps(params)]
         full_command = cmd_parts + args
 
+        # 设置环境变量（包含 API 密钥）
+        env = os.environ.copy()
+        env['BAIDU_API_KEY'] = api_key
+
         # 执行命令
         process = await asyncio.create_subprocess_exec(
             *full_command,
             cwd=str(SKILL_PATH),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
 
         stdout, stderr = await process.communicate()
@@ -164,7 +156,7 @@ class BaiduSearchMCPServer:
 
 async def main():
     """主函数"""
-    server = BaiduSearchMCPServer()
+    server = TestSearchMCPServer()
 
     async with stdio_server() as (read_stream, write_stream):
         await server.server.run(

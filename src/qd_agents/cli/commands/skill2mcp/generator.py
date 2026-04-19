@@ -6,8 +6,9 @@ MCP 工具和服务器生成器模块
 
 import json
 import logging
+import shutil
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from qd_agents.registry import Tool, ToolMetadata, ToolExecutionType
 from qd_agents.tools.executors import create_mcp_tool
@@ -125,10 +126,13 @@ class MCPToolGenerator:
 class MCPServerGenerator:
     """MCP 服务器生成器，在 tools/mcp 目录下创建完整 MCP 服务器"""
 
-    def __init__(self, base_dir: Path, skill_path: Path):
+    def __init__(self, base_dir: Path, skill_path: Path, output_dir: Optional[Path] = None):
         self.base_dir = base_dir
         self.skill_path = skill_path
-        self.mcp_dir = base_dir / "tools" / "mcp" / skill_path.name
+        if output_dir:
+            self.mcp_dir = output_dir
+        else:
+            self.mcp_dir = base_dir / "tools" / "mcp" / skill_path.name
 
     def generate_server(self, analysis: Dict[str, Any], tool_definition: Tool) -> Path:
         """
@@ -141,8 +145,10 @@ class MCPServerGenerator:
         Returns:
             生成的 MCP 服务器目录路径
         """
-        # 创建 MCP 服务器目录
-        self.mcp_dir.mkdir(parents=True, exist_ok=True)
+        # 删除现有目录（如果存在）并重新创建
+        if self.mcp_dir.exists():
+            shutil.rmtree(self.mcp_dir)
+        self.mcp_dir.mkdir(parents=True)
 
         # 生成 README.md
         self._generate_readme(analysis)
@@ -153,8 +159,7 @@ class MCPServerGenerator:
         # 生成 main.py (Python MCP 服务器实现)
         self._generate_main_py(analysis, tool_definition)
 
-        # 生成技能包装器脚本
-        self._generate_skill_wrapper(analysis)
+        # 注意：不再生成 skill_wrapper.py，MCP 服务器直接调用原始技能脚本
 
         # 生成 requirements.txt
         self._generate_requirements_txt(analysis)
@@ -210,7 +215,7 @@ The server provides a single tool:
 
 ```bash
 # Start the MCP server
-uv run {name.lower().replace('_', '-')} -m {name.lower().replace('_', '-')}.main
+uv run {name.lower().replace('_', '-')} -m scripts.main
 ```
 
 ## Configuration
@@ -229,7 +234,7 @@ pip install uv
 uv pip install -e .
 
 # Run the server directly
-python -m {name.lower().replace('_', '-')}.main
+python -m scripts.main
 ```
 
 ## Package Management
@@ -263,7 +268,7 @@ dependencies = [
 ]
 
 [project.scripts]
-{name}-mcp = "{name}_mcp.main:main"
+{name}-mcp = "scripts.main:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -276,13 +281,15 @@ build-backend = "hatchling.build"
     def _generate_main_py(self, analysis: Dict[str, Any], tool_definition: Tool) -> None:
         """生成 Python MCP 服务器实现"""
         name = analysis.get('name', self.skill_path.name)
+        package_name = name.lower().replace('_', '-')
         description = analysis.get('description', '')
         parameters = analysis.get('parameters', [])
+        invocation_command = analysis.get('invocation_command', 'python scripts/search.py')
+        env_vars = analysis.get('env_vars', [])
 
-        # 创建包目录
-        package_name = name.lower().replace('_', '-')
-        package_dir = self.mcp_dir / package_name
-        package_dir.mkdir(exist_ok=True)
+        # 创建 scripts 目录
+        scripts_dir = self.mcp_dir / "scripts"
+        scripts_dir.mkdir(exist_ok=True)
 
         # 生成 main.py
         main_py = f'''"""
@@ -298,15 +305,39 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
 
-from mcp import Server
-from mcp.server.models import Tool as ToolModel
+from mcp.server import Server
+from mcp import Tool as ToolModel
 from mcp.server.stdio import stdio_server
 from pydantic import BaseModel, Field
 
 
 # 技能配置
-SKILL_PATH = Path(__file__).parent.parent / "{self._get_relative_skill_path()}"
-INVOCATION_COMMAND = "{analysis.get('invocation_command', 'python scripts/search.py')}"
+import os
+# 计算技能路径相对位置（MCP服务器在 tools/mcp/<技能名>/scripts/main.py）
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+SKILL_PATH = PROJECT_ROOT / "tools" / "skills" / "{name}"
+CONFIG_PATH = PROJECT_ROOT / "config.json"
+INVOCATION_COMMAND = {repr(invocation_command)}
+
+def load_skill_config() -> dict:
+    """从 config.json 加载技能配置"""
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        # 首先尝试从 skills.<name> 获取配置
+        skill_config = config.get('skills', {{}}).get('{name}', {{}})
+        if skill_config:
+            return skill_config
+        # 回退到百度搜索特定配置
+        if '{name}' == 'baidu-search':
+            baidu_config = config.get('search', {{}}).get('baidu', {{}})
+            api_key = baidu_config.get('api_key_1') or baidu_config.get('api_key_2')
+            if api_key:
+                return {{'api_key': api_key}}
+        # 如果找不到配置，返回空字典
+        return {{}}
+    except Exception as e:
+        raise RuntimeError(f"加载技能配置失败: {{e}}")
 
 
 # 参数模型定义
@@ -321,7 +352,7 @@ class {self._to_pascal_case(name)}Params(BaseModel):
             param_name = param.get('name', '')
             param_type = param.get('type', 'string')
             py_type = self._map_to_py_type(param_type)
-            description = param.get('description', '')
+            param_description = param.get('description', '')
             required = param.get('required', False)
             default = param.get('default')
 
@@ -329,9 +360,18 @@ class {self._to_pascal_case(name)}Params(BaseModel):
                 field_def = f'    {param_name}: {py_type}'
             else:
                 if default is not None:
-                    field_def = f'    {param_name}: {py_type} = Field(default={repr(default)}, description="{description}")'
+                    # 处理布尔类型的默认值
+                    if param_type.lower() in ['bool', 'boolean']:
+                        default_value = 'True' if str(default).lower() == 'true' else 'False'
+                    else:
+                        default_value = repr(default)
+                    # 转义描述中的引号
+                    escaped_description = param_description.replace('"', '\\"')
+                    field_def = f'    {param_name}: {py_type} = Field(default={default_value}, description="{escaped_description}")'
                 else:
-                    field_def = f'    {param_name}: {py_type} | None = Field(default=None, description="{description}")'
+                    # 转义描述中的引号
+                    escaped_description = param_description.replace('"', '\\"')
+                    field_def = f'    {param_name}: {py_type} | None = Field(default=None, description="{escaped_description}")'
 
             main_py += f'{field_def}\n'
 
@@ -344,7 +384,7 @@ class {self._to_pascal_case(name)}Params(BaseModel):
 {name.upper().replace('-', '_')}_TOOL = ToolModel(
     name="{name}",
     description="{description}",
-    inputSchema={json.dumps(tool_definition.parameters, indent=2)},
+    inputSchema={repr(tool_definition.parameters)},
 )
 
 
@@ -398,6 +438,9 @@ class {self._to_pascal_case(name)}MCPServer:
 
     async def execute_skill(self, params: Dict[str, Any]) -> Any:
         """执行技能"""
+        # 加载技能配置
+        config = load_skill_config()
+
         # 解析调用命令
         cmd_parts = INVOCATION_COMMAND.split()
 
@@ -405,12 +448,18 @@ class {self._to_pascal_case(name)}MCPServer:
         args = [json.dumps(params)]
         full_command = cmd_parts + args
 
+        # 设置环境变量（包含配置中的键值对）
+        env = os.environ.copy()
+        for key, value in config.items():
+            env[key.upper()] = str(value)
+
         # 执行命令
         process = await asyncio.create_subprocess_exec(
             *full_command,
             cwd=str(SKILL_PATH),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
 
         stdout, stderr = await process.communicate()
@@ -443,7 +492,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 '''
 
-        main_path = package_dir / "main.py"
+        main_path = scripts_dir / "main.py"
         main_path.write_text(main_py, encoding='utf-8')
 
     def _generate_skill_wrapper(self, analysis: Dict[str, Any]) -> None:
@@ -536,7 +585,9 @@ if __name__ == "__main__":
         sys.exit(1)
 '''
 
-        wrapper_path = self.mcp_dir / "skill_wrapper.py"
+        scripts_dir = self.mcp_dir / "scripts"
+        scripts_dir.mkdir(exist_ok=True)
+        wrapper_path = scripts_dir / "skill_wrapper.py"
         wrapper_path.write_text(wrapper_py, encoding='utf-8')
 
     def _generate_claude_md(self, analysis: Dict[str, Any]) -> None:
@@ -550,7 +601,7 @@ This MCP server provides access to the {name} skill via the Model Context Protoc
 
 ## Architecture
 
-- `{package_name}/main.py` - Main MCP server implementation (Python)
+- `scripts/main.py` - Main MCP server implementation (Python)
 - `skill_wrapper.py` - Python wrapper for the original skill
 - `pyproject.toml` - Python project configuration and dependencies
 - `test/validate.py` - Python validation script to verify server functionality
@@ -567,10 +618,10 @@ pip install uv
 uv pip install -e .
 
 # Run the server
-uv run {package_name} -m {package_name}.main
+uv run {package_name} -m scripts.main
 
 # Or run directly
-python -m {package_name}.main
+python -m scripts.main
 ```
 
 ## Configuration
@@ -616,7 +667,7 @@ async def validate_server():
 
     # 启动服务器进程
     server_process = subprocess.Popen(
-        [sys.executable, "-m", f"{package_name}.main"],
+        [sys.executable, "-m", "scripts.main"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -722,22 +773,18 @@ pydantic>=2.0.0
         requirements_path.write_text(requirements_txt, encoding='utf-8')
 
     def _generate_init_py(self, analysis: Dict[str, Any]) -> None:
-        """生成 __init__.py 文件"""
-        # 为 MCP 服务器包生成 __init__.py
-        name = analysis.get('name', self.skill_path.name)
-        package_name = name.lower().replace('_', '-')
-        package_dir = self.mcp_dir / package_name
+        """生成 __init__.py 文件（可选，放在 scripts 目录下）"""
+        # 创建 scripts 目录
+        scripts_dir = self.mcp_dir / "scripts"
+        scripts_dir.mkdir(exist_ok=True)
 
-        # 确保包目录存在
-        package_dir.mkdir(exist_ok=True)
-
-        # 生成 __init__.py
-        init_py = f'''"""
-{name} MCP Server Package
+        # 生成 __init__.py（可选，scripts 目录不需要，但为了兼容性生成）
+        init_py = '''"""
+MCP Server Scripts Package
 """
 __version__ = "1.0.0"
 '''
-        init_path = package_dir / "__init__.py"
+        init_path = scripts_dir / "__init__.py"
         init_path.write_text(init_py, encoding='utf-8')
 
     def _to_pascal_case(self, name: str) -> str:
