@@ -70,6 +70,21 @@ class MCPTemplateRenderer:
         parameters = analysis.get('parameters', [])
         invocation_command = analysis.get('invocation_command', 'python skill_wrapper.py')
 
+        # 调整调用命令为相对于技能目录的路径
+        if invocation_command and isinstance(invocation_command, str):
+            # 如果包含 skills/<skill_name>/ 前缀，将其转换为相对于技能目录的路径
+            skill_prefix = f"skills/{skill_name}/"
+            if skill_prefix in invocation_command:
+                # 提取scripts/后的部分
+                scripts_part = invocation_command.split(skill_prefix)[1]
+                # 确保使用正确的Python命令（python而不是python3）
+                if invocation_command.startswith('python3 '):
+                    invocation_command = 'python ' + scripts_part
+                elif invocation_command.startswith('python '):
+                    invocation_command = 'python ' + scripts_part
+                else:
+                    invocation_command = 'python ' + scripts_part
+
         # 处理参数类型映射和默认值转换
         processed_params = []
         for param in parameters:

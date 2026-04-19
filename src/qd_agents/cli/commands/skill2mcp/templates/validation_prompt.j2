@@ -1,0 +1,23 @@
+请分析以下技能 '{{ skill_name }}' 的 MCP 服务器实现：
+
+## 技能信息
+- 名称: {{ skill_name }}
+- 描述: {{ skill_description }}
+
+## 工具定义
+{{ tool_definition|tojson(indent=2) }}
+
+## 生成的代码文件
+{% for filename, content in generated_files.items() %}
+=== 文件: {{ filename }} ===
+{{ content }}
+{% endfor %}
+
+基于以上信息，请验证生成的 MCP 服务器是否：
+1. 正确实现了原始技能的功能
+2. 正确处理所有参数
+3. 符合 MCP 协议标准
+4. 具有适当的错误处理
+5. 代码结构合理
+
+请提供详细的验证反馈。

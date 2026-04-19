@@ -136,15 +136,27 @@ class {{ skill_name_pascal }}MCPServer:
 
         # 解析调用命令，替换占位符
         invocation_str = INVOCATION_COMMAND
+        full_command = []
+
+        if invocation_str is None:
+            raise ValueError("invocation_command 不能为 None")
+
+        if not isinstance(invocation_str, str):
+            invocation_str = str(invocation_str)
+
         if "'{JSON}'" in invocation_str:
             # 替换占位符为实际的 JSON 字符串
             command_str = invocation_str.replace("'{JSON}'", json.dumps(params))
-            cmd_parts = command_str.split()
+            full_command = command_str.split()
         else:
             # 如果没有占位符，将 JSON 字符串作为最后一个参数添加
             cmd_parts = invocation_str.split()
             args = [json.dumps(params)]
             full_command = cmd_parts + args
+
+        # 将 python/python3 替换为当前 Python 解释器
+        if full_command and full_command[0] in ['python', 'python3']:
+            full_command[0] = sys.executable
 
         # 设置环境变量（包含配置中的键值对）
         env = os.environ.copy()

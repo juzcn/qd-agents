@@ -13,7 +13,7 @@ The server provides a single tool:
 ### `baidu-search`
 - **Description**: Search the web using Baidu AI Search Engine (BDSE). Use for live information, documentation, or research topics.
 - **Parameters**:
-  - `query` (str): Search query  - `edition` (str, optional): Search edition: `standard` (full) or `lite` (light) (default: standard)  - `resource_type_filter` (list, optional): Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5). Example: [{"type":"web","top_k":20},{"type":"video","top_k":5}] (default: [{"type": "web", "top_k": 20}])  - `search_filter` (dict, optional): Advanced filters including site matching and date range. Example: {"match":{"site":["news.baidu.com"]}, "range":{"pageTime":{"gte":"2024-01-01","lte":"2024-12-31"}}} (default: {})  - `block_websites` (list, optional): Sites to block, e.g. ["tieba.baidu.com"]  - `search_recency_filter` (str, optional): Time filter: `week`, `month`, `semiyear`, `year` (default: year)  - `safe_search` (bool, optional): Enable strict content filtering
+  - `query` (str): Search query  - `edition` (str, optional): Search edition: `standard` (full) or `lite` (light) (default: standard)  - `resource_type_filter` (list, optional): Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5) (default: [{'type': 'web', 'top_k': 20}])  - `search_filter` (dict, optional): Advanced filters including site matching and date range  - `block_websites` (list, optional): Sites to block, e.g. ["tieba.baidu.com"]  - `search_recency_filter` (str, optional): Time filter: `week`, `month`, `semiyear`, `year` (default: year)  - `safe_search` (bool, optional): Enable strict content filtering
 ## Usage
 
 ```bash

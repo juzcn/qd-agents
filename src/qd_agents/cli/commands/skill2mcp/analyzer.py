@@ -43,6 +43,17 @@ class SkillAnalyzer:
         # 使用 LLM 分析技能
         analysis = await self._analyze_with_llm(skill_path.name, file_contents)
 
+        # 提取 SKILL.md 中的示例（如果存在）
+        skill_md_path = skill_path / "SKILL.md"
+        if skill_md_path.exists():
+            try:
+                skill_md_content = skill_md_path.read_text(encoding='utf-8')
+                examples = self._extract_examples_from_skill_md(skill_md_content)
+                if examples:
+                    analysis["examples"] = examples
+            except Exception as e:
+                logger.warning(f"提取 SKILL.md 示例失败: {e}")
+
         return analysis
 
     def _collect_skill_files(self, skill_path: Path) -> List[Path]:
