@@ -7,7 +7,9 @@ MCP 工具执行器
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -55,6 +57,20 @@ class MCPToolExecutor(ToolExecutor):
             timeout: 超时时间（秒）
             tool_name: 固定的工具名（如果指定，则执行器专用于该工具）
         """
+        # 首先检查 env 中是否有完整的 MCP 配置
+        if env and "__mcp_config__" in env:
+            try:
+                config = json.loads(env["__mcp_config__"])
+                # 使用辅助函数提取服务器配置
+                servers_dict, config_server_name = extract_mcp_servers_config(config)
+                if servers_dict and config_server_name:
+                    # 如果从配置中提取到了服务器配置，可以用于调试或补充信息
+                    # 注意：命令行参数已经在 mcp_add 中合并，优先级更高
+                    # 这里我们只是记录信息，不覆盖传入的参数
+                    logger.debug(f"从配置中提取到 MCP 服务器字典: {list(servers_dict.keys())}")
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"Failed to parse __mcp_config__: {e}")
+
         self.server = server
         self.transport = transport
         self.command = command
@@ -72,6 +88,8 @@ class MCPToolExecutor(ToolExecutor):
         self._context_manager: Any = None
         # 关闭标志
         self._closed = False
+        # 进程引用（用于手动stdio模式）
+        self._process = None
 
     async def _ensure_connected(self) -> None:
         """确保连接到 MCP 服务器"""
@@ -79,6 +97,30 @@ class MCPToolExecutor(ToolExecutor):
             return
 
         logger.info(f"Connecting to MCP server via {self.transport}: {self.server}")
+        # 输出重要的配置信息用于调试
+        logger.info(f"MCP server configuration for '{self.server}':")
+        logger.info(f"  - transport: {self.transport}")
+        logger.info(f"  - command: {self.command}")
+        logger.info(f"  - args: {self.args}")
+        if self.url:
+            logger.info(f"  - url: {self.url}")
+        # 输出详细的配置信息用于调试（DEBUG级别）
+        logger.debug(f"MCP server detailed configuration:")
+        logger.debug(f"  - server: {self.server}")
+        logger.debug(f"  - transport: {self.transport}")
+        logger.debug(f"  - command: {self.command}")
+        logger.debug(f"  - args: {self.args}")
+        logger.debug(f"  - url: {self.url}")
+        logger.debug(f"  - timeout: {self.timeout}")
+        logger.debug(f"  - tool_name: {self.tool_name}")
+        if self.env:
+            logger.debug(f"  - env keys: {list(self.env.keys())}")
+            if "__mcp_config__" in self.env:
+                try:
+                    config = json.loads(self.env["__mcp_config__"])
+                    logger.debug(f"  - __mcp_config__: {json.dumps(config, indent=2)}")
+                except:
+                    logger.debug(f"  - __mcp_config__: (parse error)")
 
         try:
             if self.transport == "stdio":
@@ -90,15 +132,47 @@ class MCPToolExecutor(ToolExecutor):
                 if hasattr(self, 'env') and self.env:
                     env = self.env
 
-                server_params = StdioServerParameters(
-                    command=self.command,
-                    args=self.args,
-                    env=env,
-                )
-                # stdio_client 返回异步上下文管理器
-                self._context_manager = stdio_client(server_params)
-                transport = await self._context_manager.__aenter__()
-                self._session = ClientSession(*transport)
+                # 方法1：使用 subprocess.Popen 手动管理进程（参考用户提供的代码）
+                try:
+                    cmd = [self.command] + self.args
+                    # 合并环境变量
+                    process_env = os.environ.copy()
+                    if env:
+                        process_env.update(env)
+
+                    # 启动进程，使用二进制流（text=False）
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=process_env,
+                        text=False,  # MCP 需要二进制流
+                        bufsize=0,   # 无缓冲
+                    )
+
+                    # 存储进程引用以便清理
+                    self._process = proc
+
+                    # 使用 stdio_client 与进程通信
+                    self._context_manager = stdio_client(proc.stdout, proc.stdin)
+                    transport = await self._context_manager.__aenter__()
+                    self._session = ClientSession(*transport)
+
+                except Exception as e:
+                    # 如果手动方法失败，回退到原来的方法
+                    logger.warning(f"Manual stdio connection failed: {e}, falling back to StdioServerParameters")
+
+                    server_params = StdioServerParameters(
+                        command=self.command,
+                        args=self.args,
+                        env=env,
+                        encoding='utf-8',
+                    )
+                    # stdio_client 返回异步上下文管理器
+                    self._context_manager = stdio_client(server_params)
+                    transport = await self._context_manager.__aenter__()
+                    self._session = ClientSession(*transport)
 
             elif self.transport == "sse":
                 if not self.url:
@@ -240,6 +314,18 @@ class MCPToolExecutor(ToolExecutor):
             finally:
                 self._context_manager = None
 
+        # 清理进程（如果使用手动stdio模式）
+        if hasattr(self, '_process') and self._process:
+            try:
+                self._process.kill()
+                self._process.wait(timeout=1)
+            except (subprocess.TimeoutExpired, ProcessLookupError):
+                pass
+            except Exception as e:
+                logger.debug(f"Ignoring error during process cleanup: {e}")
+            finally:
+                self._process = None
+
         # 清空工具缓存
         self._tools_cache.clear()
 
@@ -249,6 +335,38 @@ class MCPToolExecutor(ToolExecutor):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
+
+
+def extract_mcp_servers_config(config: dict[str, Any]) -> tuple[dict[str, dict[str, Any]] | None, str | None]:
+    """
+    从 MCP 配置中提取服务器配置字典
+
+    支持两种格式：
+    1. {"mcp": {"servers": {"server_name": {...}}}}
+    2. {"mcpServers": {"server_name": {...}}}
+
+    Args:
+        config: MCP 配置字典
+
+    Returns:
+        tuple[服务器字典, 第一个服务器名称] 或 (None, None)
+        服务器字典: {服务器名称: 服务器配置}
+    """
+    servers = None
+
+    # 格式1: {"mcp": {"servers": {"server_name": {...}}}}
+    if "mcp" in config and "servers" in config["mcp"]:
+        servers = config["mcp"]["servers"]
+    # 格式2: {"mcpServers": {"server_name": {...}}}
+    elif "mcpServers" in config:
+        servers = config["mcpServers"]
+
+    if not servers:
+        return None, None
+
+    # 返回服务器字典和第一个服务器名称
+    first_server_name = next(iter(servers))
+    return servers, first_server_name
 
 
 def create_mcp_tool(

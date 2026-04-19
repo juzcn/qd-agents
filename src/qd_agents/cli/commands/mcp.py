@@ -16,7 +16,7 @@ from rich.syntax import Syntax
 
 from qd_agents.config import load_config
 from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
-from qd_agents.tools.executors import create_mcp_tool
+from qd_agents.tools.executors import create_mcp_tool, extract_mcp_servers_config
 
 
 logger = logging.getLogger(__name__)
@@ -67,38 +67,46 @@ async def mcp_add_async(
 
     # 从 JSON 配置中提取 MCP 服务器配置
     extracted_config = {}
-    if json_config:
-        # 尝试多种 MCP 服务器配置格式
-        servers = None
-        server_key = server  # 使用命令行提供的 server 参数作为键
+    config_server_name = None  # 从配置中提取的服务器名
 
-        # 格式1: {"mcp": {"servers": {"server_name": {...}}}}
-        if "mcp" in json_config and "servers" in json_config["mcp"]:
-            servers = json_config["mcp"]["servers"]
-        # 格式2: {"mcpServers": {"server_name": {...}}}
-        elif "mcpServers" in json_config:
-            servers = json_config["mcpServers"]
+    if json_config:
+        # 使用辅助函数提取服务器配置字典
+        servers, first_server_name = extract_mcp_servers_config(json_config)
 
         if servers:
+            # 保存配置中的服务器名
+            config_server_name = first_server_name
+
             # 使用 server 参数作为键查找配置
-            if server_key and server_key in servers:
-                extracted_config = servers[server_key]
-            elif servers:
+            if server and server in servers:
+                extracted_config = servers[server]
+                # 如果命令行提供了 server 参数且匹配，使用它
+                config_server_name = server
+            else:
                 # 如果没有匹配的 server，使用第一个服务器
-                first_server = next(iter(servers))
-                extracted_config = servers[first_server]
+                extracted_config = servers[first_server_name]
+                # 命令行提供的 server 不匹配，所以使用配置中的服务器名
+                # config_server_name 已经是 first_server_name
         else:
             # 扁平配置格式
             extracted_config = json_config
 
     # 合并参数：JSON 配置作为默认值，命令行参数优先级更高
-    final_name = name if name is not None else extracted_config.get("name")
-    final_server = server if server is not None else extracted_config.get("server")
+    # 如果命令行没有提供 name，尝试使用配置中的服务器名
+    final_name = name if name is not None else (config_server_name or extracted_config.get("name"))
+    # 总是使用配置中的服务器名，确保与配置一致
+    final_server = config_server_name or extracted_config.get("server")
     final_transport = transport if transport != "stdio" or "transport" not in extracted_config else extracted_config.get("transport", "stdio")
     final_command = command if command is not None else extracted_config.get("command")
     final_args = args if args is not None else extracted_config.get("args")
     final_url = url if url is not None else extracted_config.get("url")
-    final_env = extracted_config.get("env")
+    # 获取环境变量配置，并添加完整的 JSON 配置用于 MCP 库解析
+    final_env = extracted_config.get("env") or {}
+    if not isinstance(final_env, dict):
+        final_env = {}
+    # 将完整的 JSON 配置存储为环境变量，供 MCP 库使用
+    final_env = final_env.copy()
+    final_env["__mcp_config__"] = json.dumps(json_config, ensure_ascii=False)
 
     # 验证必需参数
     if not final_name:

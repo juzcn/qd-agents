@@ -8,7 +8,7 @@ from .base import ToolExecutor
 from .http import HTTPToolExecutor, create_http_tool
 from .cli import CLIToolExecutor, BashToolExecutor, create_cli_tool, create_bash_tool
 from .function import FunctionToolExecutor, create_function_tool
-from .mcp import MCPToolExecutor, create_mcp_tool
+from .mcp import MCPToolExecutor, create_mcp_tool, extract_mcp_servers_config
 from .factories import create_executor, ToolExecutorRegistry
 
 # 重新导出所有公共API
@@ -32,6 +32,7 @@ __all__ = [
     "create_bash_tool",
     "create_function_tool",
     "create_mcp_tool",
+    "extract_mcp_servers_config",
 
     # 注册表
     "ToolExecutorRegistry",
