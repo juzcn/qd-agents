@@ -147,31 +147,6 @@ def init_tools(
     registry.register(tavily_tool)
     registered_tools.append(tavily_tool.name)
 
-    # search.baidu
-    baidu_tool = Tool(
-        id="search.baidu",
-        name="baidu_search",
-        description="使用百度搜索 API 进行中文网络搜索",
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "搜索关键词或问题"},
-                "count": {"type": "integer", "description": "返回结果数量，默认 10 (1-50)", "default": 10},
-            },
-            "required": ["query"],
-        },
-        execution=ToolExecutionConfig(
-            type=ToolExecutionType.FUNCTION,
-            module="qd_agents.agent.builtin_tools",
-            function="baidu_search",
-        ),
-        metadata=ToolMetadata(
-            category="search",
-            tags=["web", "search", "baidu", "chinese"],
-        ),
-    )
-    registry.register(baidu_tool)
-    registered_tools.append(baidu_tool.name)
 
 
     # ==================== 实用工具 ====================

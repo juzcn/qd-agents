@@ -40,6 +40,6 @@ test_*.py
 *.tmp
 *.log
 
-# Data directory (runtime generated)
-data/
+# Data directory (runtime generated) - now tracked by git
+# data/
 
