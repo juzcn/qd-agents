@@ -179,7 +179,9 @@ class SkillAnalyzer:
 
         prompt += (
             "基于以上文件内容，请提取技能信息。"
-            "特别注意 SKILL.md 文件中的参数表格和示例。"
+            "特别注意 SKILL.md 文件中的 frontmatter（以 --- 包围的 YAML 部分），其中包含 name 和 description 字段。"
+            "参数信息在 SKILL.md 的参数表格中。"
+            "调用命令在 Usage 部分。"
         )
 
         return prompt

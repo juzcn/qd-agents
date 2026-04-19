@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-baidu-search-mcp = "baidu-search_mcp.main:main"
+baidu-search-mcp = "scripts.main:main"
 
 [build-system]
 requires = ["hatchling"]

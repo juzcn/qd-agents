@@ -168,21 +168,18 @@ async def skill2mcp_async(
         border_style="green"
     ))
 
-    # 保存到文件（如果指定了输出目录）
+    # 生成完整的 MCP 服务器（如果指定了输出目录）
     if output_dir:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / f"{tool.name}.json"
-
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(tool_dict, f, indent=2, ensure_ascii=False)
-
-        console.print(f"[green][OK][/] 工具定义已保存到: {output_file}")
-
-        # 生成完整的 MCP 服务器
         try:
-            server_generator = MCPServerGenerator(base_dir or Path.cwd(), skill_path)
+            server_generator = MCPServerGenerator(base_dir or Path.cwd(), skill_path, output_dir)
             mcp_server_dir = server_generator.generate_server(analysis, tool)
             console.print(f"[green][OK][/] MCP 服务器已生成到: {mcp_server_dir}")
+
+            # 保存工具定义 JSON 文件
+            output_file = output_dir / f"{tool.name}.json"
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(tool_dict, f, indent=2, ensure_ascii=False)
+            console.print(f"[green][OK][/] 工具定义已保存到: {output_file}")
 
             # 生成验证脚本
             server_generator.generate_validation_script(analysis, tool)
