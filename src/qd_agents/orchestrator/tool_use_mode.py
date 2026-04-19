@@ -332,13 +332,25 @@ class ToolUseModeOrchestrator:
                 await asyncio.wait_for(executor._ensure_connected(), timeout=connect_timeout)
             except asyncio.TimeoutError:
                 logger.error(f"MCP server {server_key} connection timeout after {connect_timeout}s")
+                try:
+                    await executor.close()
+                except Exception:
+                    pass
                 return [], None
             except asyncio.CancelledError:
                 logger.warning(f"MCP server {server_key} connection cancelled")
                 # 不重新抛出，直接返回空结果
+                try:
+                    await executor.close()
+                except Exception:
+                    pass
                 return [], None
             except Exception as e:
                 logger.error(f"MCP server {server_key} connection failed: {e}")
+                try:
+                    await executor.close()
+                except Exception:
+                    pass
                 return [], None
 
             # 获取服务器提供的所有工具
@@ -346,6 +358,10 @@ class ToolUseModeOrchestrator:
 
             if not mcp_tools:
                 logger.warning(f"MCP server {server_key} returned no tools")
+                try:
+                    await executor.close()
+                except Exception:
+                    pass
                 return [], None
 
             # 为每个 MCP 工具创建独立的 Tool 对象

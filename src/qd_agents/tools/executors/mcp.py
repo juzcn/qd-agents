@@ -75,54 +75,63 @@ class MCPToolExecutor(ToolExecutor):
 
         logger.info(f"Connecting to MCP server via {self.transport}: {self.server}")
 
-        if self.transport == "stdio":
-            if not self.command:
-                raise ValueError("stdio transport requires command")
+        try:
+            if self.transport == "stdio":
+                if not self.command:
+                    raise ValueError("stdio transport requires command")
 
-            server_params = StdioServerParameters(
-                command=self.command,
-                args=self.args,
-                env=None,
-            )
-            # stdio_client 返回异步上下文管理器
-            self._context_manager = stdio_client(server_params)
-            transport = await self._context_manager.__aenter__()
-            self._session = ClientSession(*transport)
+                server_params = StdioServerParameters(
+                    command=self.command,
+                    args=self.args,
+                    env=None,
+                )
+                # stdio_client 返回异步上下文管理器
+                self._context_manager = stdio_client(server_params)
+                transport = await self._context_manager.__aenter__()
+                self._session = ClientSession(*transport)
 
-        elif self.transport == "sse":
-            if not self.url:
-                raise ValueError("sse transport requires url")
+            elif self.transport == "sse":
+                if not self.url:
+                    raise ValueError("sse transport requires url")
 
-            # sse_client 返回异步上下文管理器
-            self._context_manager = sse_client(
-                url=self.url,
-                headers=self.headers,
-            )
-            transport = await self._context_manager.__aenter__()
-            self._session = ClientSession(*transport)
+                # sse_client 返回异步上下文管理器
+                self._context_manager = sse_client(
+                    url=self.url,
+                    headers=self.headers,
+                )
+                transport = await self._context_manager.__aenter__()
+                self._session = ClientSession(*transport)
 
-        elif self.transport == "streamable-http":
-            if not self.url:
-                raise ValueError("streamable-http transport requires url")
+            elif self.transport == "streamable-http":
+                if not self.url:
+                    raise ValueError("streamable-http transport requires url")
 
-            # streamable_http_client 返回异步上下文管理器
-            self._context_manager = streamable_http_client(
-                url=self.url,
-                headers=self.headers,
-            )
-            transport = await self._context_manager.__aenter__()
-            self._session = ClientSession(*transport)
+                # streamable_http_client 返回异步上下文管理器
+                self._context_manager = streamable_http_client(
+                    url=self.url,
+                    headers=self.headers,
+                )
+                transport = await self._context_manager.__aenter__()
+                self._session = ClientSession(*transport)
 
-        else:
-            raise ValueError(f"Unsupported transport: {self.transport}")
+            else:
+                raise ValueError(f"Unsupported transport: {self.transport}")
 
-        # 初始化会话
-        await self._session.__aenter__()
+            # 初始化会话
+            await self._session.__aenter__()
 
-        # 获取可用工具
-        tools_result = await self._session.list_tools()
-        for tool in tools_result.tools:
-            self._tools_cache[tool.name] = tool
+            # 获取可用工具
+            tools_result = await self._session.list_tools()
+            for tool in tools_result.tools:
+                self._tools_cache[tool.name] = tool
+
+        except Exception:
+            # 如果连接失败，确保清理部分初始化的资源
+            try:
+                await self.close()
+            except Exception:
+                pass
+            raise
 
     def get_cached_tools(self) -> dict[str, Any]:
         """
