@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent
 SKILL_PATH = PROJECT_ROOT / "tools" / "skills" / "baidu-search"
 CONFIG_PATH = PROJECT_ROOT / "config.json"
-INVOCATION_COMMAND = "python3 skills/baidu-search/scripts/search.py '{JSON}'"
+INVOCATION_COMMAND = "python scripts/search.py '{JSON}'"
 
 def load_skill_config() -> dict:
     """从 config.json 加载技能配置"""
@@ -54,8 +54,8 @@ class BaiduSearchParams(BaseModel):
     """
     query: str
     edition: str = Field(default='standard', description="Search edition: `standard` (full) or `lite` (light)")
-    resource_type_filter: List[Any] = Field(default=[{'type': 'web', 'top_k': 20}], description="Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5). Example: [{\"type\":\"web\",\"top_k\":20},{\"type\":\"video\",\"top_k\":5}]")
-    search_filter: Dict[str, Any] = Field(default={}, description="Advanced filters including site matching and date range. Example: {\"match\":{\"site\":[\"news.baidu.com\"]}, \"range\":{\"pageTime\":{\"gte\":\"2024-01-01\",\"lte\":\"2024-12-31\"}}}")
+    resource_type_filter: List[Any] = Field(default=[{'type': 'web', 'top_k': 20}], description="Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5)")
+    search_filter: Dict[str, Any] = Field(default={}, description="Advanced filters including site matching and date range")
     block_websites: List[Any] | None = Field(default=None, description="Sites to block, e.g. [\"tieba.baidu.com\"]")
     search_recency_filter: str = Field(default='year', description="Time filter: `week`, `month`, `semiyear`, `year`")
     safe_search: bool = Field(default=False, description="Enable strict content filtering")
@@ -64,7 +64,7 @@ class BaiduSearchParams(BaseModel):
 BAIDU_SEARCH_TOOL = ToolModel(
     name="baidu-search",
     description="Search the web using Baidu AI Search Engine (BDSE). Use for live information, documentation, or research topics.",
-    inputSchema={'type': 'object', 'properties': {'query': {'type': 'string', 'description': 'Search query'}, 'edition': {'type': 'string', 'description': 'Search edition: `standard` (full) or `lite` (light)', 'default': 'standard'}, 'resource_type_filter': {'type': 'array', 'description': 'Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5). Example: [{"type":"web","top_k":20},{"type":"video","top_k":5}]', 'default': [{'type': 'web', 'top_k': 20}]}, 'search_filter': {'type': 'object', 'description': 'Advanced filters including site matching and date range. Example: {"match":{"site":["news.baidu.com"]}, "range":{"pageTime":{"gte":"2024-01-01","lte":"2024-12-31"}}}', 'default': {}}, 'block_websites': {'type': 'array', 'description': 'Sites to block, e.g. ["tieba.baidu.com"]'}, 'search_recency_filter': {'type': 'string', 'description': 'Time filter: `week`, `month`, `semiyear`, `year`', 'default': 'year'}, 'safe_search': {'type': 'boolean', 'description': 'Enable strict content filtering', 'default': False}}, 'required': ['query'], 'additionalProperties': False},
+    inputSchema={'type': 'object', 'properties': {'query': {'type': 'string', 'description': 'Search query'}, 'edition': {'type': 'string', 'description': 'Search edition: `standard` (full) or `lite` (light)', 'default': 'standard'}, 'resource_type_filter': {'type': 'array', 'description': 'Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5)', 'default': [{'type': 'web', 'top_k': 20}]}, 'search_filter': {'type': 'object', 'description': 'Advanced filters including site matching and date range', 'default': {}}, 'block_websites': {'type': 'array', 'description': 'Sites to block, e.g. ["tieba.baidu.com"]'}, 'search_recency_filter': {'type': 'string', 'description': 'Time filter: `week`, `month`, `semiyear`, `year`', 'default': 'year'}, 'safe_search': {'type': 'boolean', 'description': 'Enable strict content filtering', 'default': False}}, 'required': ['query'], 'additionalProperties': False},
 )
 
 
@@ -119,15 +119,27 @@ class BaiduSearchMCPServer:
 
         # 解析调用命令，替换占位符
         invocation_str = INVOCATION_COMMAND
+        full_command = []
+
+        if invocation_str is None:
+            raise ValueError("invocation_command 不能为 None")
+
+        if not isinstance(invocation_str, str):
+            invocation_str = str(invocation_str)
+
         if "'{JSON}'" in invocation_str:
             # 替换占位符为实际的 JSON 字符串
             command_str = invocation_str.replace("'{JSON}'", json.dumps(params))
-            cmd_parts = command_str.split()
+            full_command = command_str.split()
         else:
             # 如果没有占位符，将 JSON 字符串作为最后一个参数添加
             cmd_parts = invocation_str.split()
             args = [json.dumps(params)]
             full_command = cmd_parts + args
+
+        # 将 python/python3 替换为当前 Python 解释器
+        if full_command and full_command[0] in ['python', 'python3']:
+            full_command[0] = sys.executable
 
         # 设置环境变量（包含配置中的键值对）
         env = os.environ.copy()

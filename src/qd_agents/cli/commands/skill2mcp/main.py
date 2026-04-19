@@ -222,6 +222,37 @@ async def skill2mcp_async(
             server_generator.generate_validation_script(analysis, final_tool)
             console.print(f"[green][OK][/] 验证脚本已生成")
 
+            # 智能验证 MCP 服务器
+            try:
+                console.print("[blue][INFO][/] 开始智能验证 MCP 服务器...")
+                # 重新创建 LLM 客户端用于验证
+                from qd_agents.llm import create_client
+                # 尝试从环境变量获取 API 密钥
+                import os
+                api_key = os.getenv('NVIDIA_API_KEY')
+                if not api_key:
+                    # 尝试从配置文件读取
+                    config_path = config_file or (base_dir or Path.cwd()) / "config.json"
+                    if config_path.exists():
+                        with open(config_path, 'r', encoding='utf-8') as f:
+                            config_data = json.load(f)
+                            api_key = config_data.get('llm', {}).get('providers', {}).get('nvidia', {}).get('api_key')
+
+                if not api_key:
+                    console.print("[yellow][WARN][/] 未找到 API 密钥，跳过智能验证")
+                else:
+                    llm_client = create_client(api_key=api_key, auto_discover=False)
+                    validator = SmartMCPValidator(llm_client, console)
+                    is_valid = await validator.validate_mcp_service(mcp_server_dir, analysis, final_tool)
+                    if is_valid:
+                        console.print("[green][OK][/] 智能验证通过")
+                    else:
+                        console.print("[yellow][WARN][/] 智能验证发现问题，请检查生成的代码")
+                    await llm_client.close()
+            except Exception as e:
+                console.print(f"[yellow][WARN][/] 智能验证失败: {e}")
+                console.print("[dim]继续执行...[/]")
+
             # 显示后续步骤
             try:
                 relative_path = mcp_server_dir.relative_to(base_dir or Path.cwd())

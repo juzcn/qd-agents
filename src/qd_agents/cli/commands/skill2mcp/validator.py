@@ -6,12 +6,16 @@
 
 import json
 import logging
+import asyncio
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 from qd_agents.llm import LLMClient
 from qd_agents.registry import Tool
+from qd_agents.tools.executors.mcp import MCPToolExecutor
 from rich.console import Console
+
+from .template_renderer import MCPTemplateRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +23,17 @@ logger = logging.getLogger(__name__)
 class SmartMCPValidator:
     """智能 MCP 验证器，使用 LLM 自主验证 MCP 服务"""
 
-    def __init__(self, llm_client: LLMClient, console: Console):
+    def __init__(self, llm_client: LLMClient, console: Console, template_renderer: MCPTemplateRenderer = None):
         self.llm_client = llm_client
         self.console = console
+
+        # 初始化模板渲染器
+        if template_renderer is None:
+            from pathlib import Path
+            template_dir = Path(__file__).parent / "templates"
+            self.template_renderer = MCPTemplateRenderer(template_dir)
+        else:
+            self.template_renderer = template_renderer
 
     async def validate_mcp_service(self, mcp_server_dir: Path, analysis: Dict[str, Any], tool_definition: Tool) -> bool:
         """
@@ -54,10 +66,12 @@ class SmartMCPValidator:
         try:
             # 读取主要文件
             files_to_read = [
-                "src/index.ts",
-                "skill_wrapper.py",
-                "package.json",
-                "README.md"
+                "scripts/main.py",
+                "pyproject.toml",
+                "README.md",
+                "test/validate.py",
+                "requirements.txt",
+                "scripts/__init__.py"
             ]
 
             file_contents = {}
@@ -99,32 +113,18 @@ class SmartMCPValidator:
         Returns:
             验证结果
         """
-        prompt = self._build_validation_prompt(validation_info)
+        # 使用模板渲染系统提示词和用户提示词
+        system_prompt = self.template_renderer.render_template('validation_system.j2', validation_info)
+        user_prompt = self.template_renderer.render_template('validation_prompt.j2', validation_info)
 
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "你是一个代码审查专家。你的任务是分析生成的 MCP 服务器代码并提供验证反馈。\n"
-                    "请检查以下方面：\n"
-                    "1. 代码结构和完整性\n"
-                    "2. 与原始技能的功能匹配度\n"
-                    "3. 参数处理是否正确\n"
-                    "4. 错误处理是否完善\n"
-                    "5. 是否符合 MCP 协议标准\n"
-                    "6. 是否存在明显的逻辑错误\n"
-                    "\n"
-                    "请以 JSON 格式回复，包含以下字段：\n"
-                    "- is_valid: 布尔值，表示验证是否通过\n"
-                    "- feedback: 验证反馈信息\n"
-                    "- issues: 发现的问题列表（如果有）\n"
-                    "- suggestions: 改进建议列表\n"
-                    "- confidence: 验证置信度 (0-1)\n"
-                )
+                "content": system_prompt
             },
             {
                 "role": "user",
-                "content": prompt
+                "content": user_prompt
             }
         ]
 
@@ -159,36 +159,3 @@ class SmartMCPValidator:
                 "confidence": 0.0
             }
 
-    def _build_validation_prompt(self, validation_info: Dict[str, Any]) -> str:
-        """构建验证提示词"""
-        skill_name = validation_info.get('skill_name', 'unknown')
-        skill_description = validation_info.get('skill_description', '')
-
-        prompt = f"""请分析以下技能 '{skill_name}' 的 MCP 服务器实现：
-
-## 技能信息
-- 名称: {skill_name}
-- 描述: {skill_description}
-
-## 工具定义
-{json.dumps(validation_info.get('tool_definition', {}), indent=2, ensure_ascii=False)}
-
-## 生成的代码文件
-"""
-
-        file_contents = validation_info.get('generated_files', {})
-        for filename, content in file_contents.items():
-            prompt += f"\n=== 文件: {filename} ===\n{content}\n"
-
-        prompt += """
-基于以上信息，请验证生成的 MCP 服务器是否：
-1. 正确实现了原始技能的功能
-2. 正确处理所有参数
-3. 符合 MCP 协议标准
-4. 具有适当的错误处理
-5. 代码结构合理
-
-请提供详细的验证反馈。
-"""
-
-        return prompt

@@ -831,7 +831,7 @@ async def validate_server():
     finally:
         # 清理
         try:
-            server_process.send_signal(signal.SIGTERM)
+            server_process.terminate()
             server_process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             server_process.kill()

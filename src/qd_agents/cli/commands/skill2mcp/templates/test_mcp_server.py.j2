@@ -1,0 +1,213 @@
+"""
+{{ skill_name }} MCP 服务器完整测试套件
+"""
+
+import asyncio
+import json
+import subprocess
+import sys
+import time
+import signal
+from pathlib import Path
+import pytest
+
+
+class {{ skill_name_pascal }}MCPTest:
+    """{{ skill_name }} MCP 服务器测试类"""
+
+    def __init__(self):
+        self.server_process = None
+        self.server_ready = False
+
+    async def start_server(self):
+        """启动 MCP 服务器"""
+        print(f"启动 {{ skill_name }} MCP 服务器...")
+        self.server_process = subprocess.Popen(
+            [sys.executable, "-m", "scripts.main"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        # 等待服务器启动
+        await asyncio.sleep(2)
+
+    async def stop_server(self):
+        """停止 MCP 服务器"""
+        if self.server_process:
+            try:
+                self.server_process.send_signal(signal.SIGTERM)
+                self.server_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.server_process.kill()
+            except Exception as e:
+                print(f"停止服务器时出错: {e}")
+
+    async def send_request(self, request: dict) -> str:
+        """发送请求到服务器并返回响应"""
+        if not self.server_process:
+            raise RuntimeError("服务器未启动")
+
+        request_str = json.dumps(request) + "\n"
+        self.server_process.stdin.write(request_str)
+        self.server_process.stdin.flush()
+
+        # 读取响应
+        response_lines = []
+        start_time = time.time()
+        while time.time() - start_time < 5:  # 5秒超时
+            line = self.server_process.stdout.readline()
+            if not line:
+                await asyncio.sleep(0.1)
+                continue
+            response_lines.append(line)
+            # 检查是否包含响应ID
+            if f'"id":{request["id"]}' in line:
+                break
+
+        return "".join(response_lines)
+
+    async def test_server_initialization(self):
+        """测试服务器初始化"""
+        print("测试服务器初始化...")
+
+        init_request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "test-client",
+                    "version": "1.0.0"
+                }
+            }
+        }
+
+        response = await self.send_request(init_request)
+        assert '"result"' in response or '"error"' in response
+        print("✓ 服务器初始化测试通过")
+
+    async def test_tools_list(self):
+        """测试工具列表"""
+        print("测试工具列表...")
+
+        list_request = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+        }
+
+        response = await self.send_request(list_request)
+        assert '"result"' in response
+        # 检查是否包含 {{ skill_name }} 工具
+        assert '{{ skill_name }}' in response
+        print("✓ 工具列表测试通过")
+
+    async def test_tool_call(self):
+        """测试工具调用"""
+        print("测试工具调用...")
+
+        # 构建工具调用请求
+        tool_call_request = {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "{{ skill_name }}",
+                "arguments": {
+                    "query": "测试查询"
+                }
+            }
+        }
+
+        response = await self.send_request(tool_call_request)
+        assert '"result"' in response or '"error"' in response
+        print("✓ 工具调用测试通过")
+
+    async def test_invalid_tool(self):
+        """测试无效工具调用"""
+        print("测试无效工具调用...")
+
+        invalid_request = {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "invalid-tool",
+                "arguments": {}
+            }
+        }
+
+        response = await self.send_request(invalid_request)
+        # 应该返回错误
+        assert '"error"' in response
+        print("✓ 无效工具调用测试通过")
+
+    async def test_invalid_parameters(self):
+        """测试无效参数"""
+        print("测试无效参数...")
+
+        invalid_params_request = {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "{{ skill_name }}",
+                "arguments": {
+                    # 缺少必需参数或无效参数
+                }
+            }
+        }
+
+        response = await self.send_request(invalid_params_request)
+        # 应该返回错误
+        assert '"error"' in response
+        print("✓ 无效参数测试通过")
+
+
+async def run_all_tests():
+    """运行所有测试"""
+    tester = {{ skill_name_pascal }}MCPTest()
+
+    try:
+        await tester.start_server()
+
+        # 运行测试
+        await tester.test_server_initialization()
+        await tester.test_tools_list()
+        await tester.test_tool_call()
+        await tester.test_invalid_tool()
+        await tester.test_invalid_parameters()
+
+        print("\n" + "="*50)
+        print("所有测试通过！")
+        print("="*50)
+        return True
+
+    except Exception as e:
+        print(f"\n测试失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+    finally:
+        await tester.stop_server()
+
+
+def main():
+    """主函数"""
+    try:
+        success = asyncio.run(run_all_tests())
+        sys.exit(0 if success else 1)
+    except Exception as e:
+        print(f"测试运行失败: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

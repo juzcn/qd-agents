@@ -15,7 +15,7 @@
       },
       "resource_type_filter": {
         "type": "array",
-        "description": "Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5). Example: [{\"type\":\"web\",\"top_k\":20},{\"type\":\"video\",\"top_k\":5}]",
+        "description": "Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5)",
         "default": [
           {
             "type": "web",
@@ -25,7 +25,7 @@
       },
       "search_filter": {
         "type": "object",
-        "description": "Advanced filters including site matching and date range. Example: {\"match\":{\"site\":[\"news.baidu.com\"]}, \"range\":{\"pageTime\":{\"gte\":\"2024-01-01\",\"lte\":\"2024-12-31\"}}}",
+        "description": "Advanced filters including site matching and date range",
         "default": {}
       },
       "block_websites": {

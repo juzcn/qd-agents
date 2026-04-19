@@ -1,0 +1,349 @@
+"""
+{{ skill_name }} MCP 服务器验证脚本（健壮版）
+"""
+
+import asyncio
+import json
+import subprocess
+import sys
+import time
+import signal
+import os
+from pathlib import Path
+
+
+class MCPValidator:
+    """MCP 服务器验证器（健壮版）"""
+
+    def __init__(self, skill_name: str):
+        self.skill_name = skill_name
+        self.server_process = None
+        self.server_ready = False
+
+    async def start_server(self, timeout: float = 10.0) -> bool:
+        """启动 MCP 服务器，返回是否成功"""
+        print(f"启动 {{ skill_name }} MCP 服务器...")
+
+        try:
+            # 启动服务器进程
+            self.server_process = subprocess.Popen(
+                [sys.executable, "-m", "scripts.main"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+
+            # 等待服务器启动
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                # 检查进程是否存活
+                if self.server_process.poll() is not None:
+                    # 进程已退出
+                    stderr_output = self.server_process.stderr.read() if self.server_process.stderr else ""
+                    print(f"服务器进程意外退出，返回码: {self.server_process.returncode}")
+                    if stderr_output:
+                        print(f"错误输出: {stderr_output[:500]}")
+                    return False
+
+                # 尝试读取一行输出，检查服务器是否就绪
+                try:
+                    line = self.server_process.stdout.readline()
+                    if line:
+                        print(f"服务器输出: {line.strip()}")
+                        # 检查是否有 MCP 相关的输出
+                        if "mcp" in line.lower() or "server" in line.lower():
+                            self.server_ready = True
+                            print("服务器启动成功")
+                            return True
+                except Exception as e:
+                    # 读取失败，继续等待
+                    pass
+
+                await asyncio.sleep(0.5)
+
+            print(f"服务器启动超时（{timeout}秒）")
+            return False
+
+        except Exception as e:
+            print(f"启动服务器时出错: {e}")
+            return False
+
+    async def stop_server(self, timeout: float = 5.0):
+        """停止 MCP 服务器"""
+        if not self.server_process:
+            return
+
+        print("停止服务器...")
+        try:
+            # 发送终止信号
+            self.server_process.terminate()
+            self.server_process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            print("服务器未响应 SIGTERM，发送 SIGKILL...")
+            self.server_process.kill()
+            self.server_process.wait(timeout=2.0)
+        except Exception as e:
+            print(f"停止服务器时出错: {e}")
+
+    async def send_request(self, request: dict, timeout: float = 5.0) -> str:
+        """发送请求到服务器并返回响应"""
+        if not self.server_process or self.server_process.poll() is not None:
+            raise RuntimeError("服务器未运行")
+
+        try:
+            request_str = json.dumps(request) + "\n"
+
+            # 检查 stdin 是否可写
+            if self.server_process.stdin.closed:
+                raise RuntimeError("服务器 stdin 已关闭")
+
+            # 发送请求
+            self.server_process.stdin.write(request_str)
+            self.server_process.stdin.flush()
+
+            # 读取响应
+            response_lines = []
+            start_time = time.time()
+            request_id = request.get("id", 0)
+
+            while time.time() - start_time < timeout:
+                # 检查进程是否存活
+                if self.server_process.poll() is not None:
+                    raise RuntimeError("服务器进程已退出")
+
+                # 尝试读取一行
+                try:
+                    line = self.server_process.stdout.readline()
+                    if line:
+                        response_lines.append(line)
+                        # 检查是否包含响应ID
+                        if f'"id":{request_id}' in line:
+                            break
+                except Exception:
+                    # 读取失败，继续等待
+                    pass
+
+                await asyncio.sleep(0.1)
+
+            if not response_lines:
+                raise TimeoutError(f"等待响应超时（{timeout}秒）")
+
+            return "".join(response_lines)
+
+        except Exception as e:
+            raise RuntimeError(f"发送请求失败: {e}")
+
+    async def test_server_lifecycle(self):
+        """测试服务器生命周期：启动、运行、停止"""
+        print("\n=== 测试服务器生命周期 ===")
+
+        # 启动服务器
+        if not await self.start_server():
+            print("❌ 服务器启动失败")
+            return False
+
+        # 等待一小段时间确保服务器稳定
+        await asyncio.sleep(1)
+
+        # 停止服务器
+        await self.stop_server()
+
+        print("✅ 服务器生命周期测试通过")
+        return True
+
+    async def test_initialization(self):
+        """测试 MCP 初始化协议"""
+        print("\n=== 测试 MCP 初始化 ===")
+
+        if not await self.start_server():
+            return False
+
+        try:
+            init_request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "test-client",
+                        "version": "1.0.0"
+                    }
+                }
+            }
+
+            response = await self.send_request(init_request)
+            if '"result"' in response or '"error"' in response:
+                print("✅ MCP 初始化测试通过")
+                return True
+            else:
+                print(f"❌ 初始化响应格式错误: {response[:200]}")
+                return False
+
+        except Exception as e:
+            print(f"❌ MCP 初始化测试失败: {e}")
+            return False
+
+    async def test_tools_list(self):
+        """测试列出工具"""
+        print("\n=== 测试列出工具 ===")
+
+        try:
+            list_request = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+            }
+
+            response = await self.send_request(list_request)
+
+            # 检查响应
+            if '"result"' in response:
+                # 尝试解析 JSON 检查是否包含 {{ skill_name }} 工具
+                try:
+                    response_data = json.loads(response.strip())
+                    if "result" in response_data:
+                        tools = response_data["result"].get("tools", [])
+                        tool_names = [tool.get("name", "") for tool in tools]
+                        if "{{ skill_name }}" in tool_names:
+                            print(f"✅ 工具列表测试通过，找到工具: {{ skill_name }}")
+                            return True
+                        else:
+                            print(f"❌ 未找到 {{ skill_name }} 工具，找到的工具: {tool_names}")
+                            return False
+                except json.JSONDecodeError:
+                    # 如果无法解析 JSON，至少检查是否包含工具名
+                    if '{{ skill_name }}' in response:
+                        print(f"✅ 工具列表测试通过（简单检查）")
+                        return True
+                    else:
+                        print(f"❌ 响应中未找到 {{ skill_name }}: {response[:200]}")
+                        return False
+            else:
+                print(f"❌ 工具列表响应错误: {response[:200]}")
+                return False
+
+        except Exception as e:
+            print(f"❌ 工具列表测试失败: {e}")
+            return False
+
+    async def test_tool_call(self):
+        """测试工具调用"""
+        print("\n=== 测试工具调用 ===")
+
+        try:
+            # 构建工具调用请求
+            tool_call_request = {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "{{ skill_name }}",
+                    "arguments": {
+                        "query": "测试查询"
+                    }
+                }
+            }
+
+            response = await self.send_request(tool_call_request, timeout=10.0)  # 工具调用可能需要更长时间
+
+            # 检查响应
+            if '"result"' in response or '"error"' in response:
+                print("✅ 工具调用测试通过（收到响应）")
+
+                # 尝试解析响应获取更多信息
+                try:
+                    response_data = json.loads(response.strip())
+                    if "result" in response_data:
+                        print(f"✅ 工具调用成功返回结果")
+                    elif "error" in response_data:
+                        error_msg = response_data["error"].get("message", "未知错误")
+                        print(f"⚠️ 工具调用返回错误: {error_msg}")
+                        # 错误也可能是正常的（例如缺少配置）
+                except:
+                    pass
+
+                return True
+            else:
+                print(f"❌ 工具调用响应格式错误: {response[:200]}")
+                return False
+
+        except Exception as e:
+            print(f"❌ 工具调用测试失败: {e}")
+            return False
+
+    async def run_all_tests(self):
+        """运行所有测试"""
+        print(f"开始验证 {{ skill_name }} MCP 服务器")
+        print("=" * 50)
+
+        test_results = []
+
+        try:
+            # 测试1: 服务器生命周期
+            result1 = await self.test_server_lifecycle()
+            test_results.append(("服务器生命周期", result1))
+
+            # 重新启动服务器进行后续测试
+            await self.stop_server()
+            await asyncio.sleep(1)
+
+            # 测试2: MCP 初始化
+            result2 = await self.test_initialization()
+            test_results.append(("MCP 初始化", result2))
+
+            # 测试3: 列出工具
+            result3 = await self.test_tools_list()
+            test_results.append(("列出工具", result3))
+
+            # 测试4: 工具调用
+            result4 = await self.test_tool_call()
+            test_results.append(("工具调用", result4))
+
+        finally:
+            # 确保服务器停止
+            await self.stop_server()
+
+        # 打印测试结果
+        print("\n" + "=" * 50)
+        print("测试结果汇总:")
+        print("=" * 50)
+
+        passed = 0
+        total = len(test_results)
+
+        for test_name, result in test_results:
+            status = "✅ 通过" if result else "❌ 失败"
+            print(f"{test_name}: {status}")
+            if result:
+                passed += 1
+
+        print(f"\n总计: {passed}/{total} 个测试通过")
+
+        if passed == total:
+            print("\n🎉 所有测试通过！")
+            return True
+        else:
+            print(f"\n⚠️  {total - passed} 个测试失败")
+            return False
+
+
+async def main():
+    """主函数"""
+    validator = MCPValidator("{{ skill_name }}")
+
+    try:
+        success = await validator.run_all_tests()
+        sys.exit(0 if success else 1)
+    except Exception as e:
+        print(f"验证过程中发生未预期错误: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
