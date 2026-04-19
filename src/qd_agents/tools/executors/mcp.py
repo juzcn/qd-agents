@@ -178,10 +178,13 @@ class MCPToolExecutor(ToolExecutor):
             except Exception as e:
                 logger.warning(f"MCP server '{self.server}' initialize() failed: {e}")
 
-            # 给服务器一些时间完成初始化（特别是对于启动较慢的服务器如Fetch MCP）
+            # 给服务器一些时间完成初始化（特别是对于启动较慢的服务器）
             if "fetch" in self.server.lower() or self.command == "uvx":
                 logger.debug(f"Waiting for MCP server '{self.server}' to initialize...")
-                await asyncio.sleep(2.0)  # 减少等待时间，因为initialize()可能已经处理了
+                await asyncio.sleep(2.0)  # 给Python服务器时间
+            elif "filesystem" in self.server.lower() or self.command == "cmd" or self.command == "npx":
+                logger.debug(f"Waiting for Node.js MCP server '{self.server}' to initialize...")
+                await asyncio.sleep(3.0)  # 给Node.js服务器更多时间，特别是Windows上
             else:
                 await asyncio.sleep(0.5)  # 其他服务器较短等待
 
