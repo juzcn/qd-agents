@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "open-meteo": {
-      "command": "npx",
-      "args": ["-y", "-p", "open-meteo-mcp-server", "open-meteo-mcp-server"]
+      "command": "node",
+      "args": ["tools/mcp/open-meteo-mcp/dist/index.js"]
     }
   }
 }
