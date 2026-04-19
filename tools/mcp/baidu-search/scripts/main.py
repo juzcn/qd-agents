@@ -54,8 +54,8 @@ class BaiduSearchParams(BaseModel):
     """
     query: str
     edition: str = Field(default='standard', description="Search edition: `standard` (full) or `lite` (light)")
-    resource_type_filter: List[Any] = Field(default=[{'type': 'web', 'top_k': 20}], description="Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5). Format: list of objects with 'type' and 'top_k' fields")
-    search_filter: Dict[str, Any] = Field(default={}, description="Advanced filters including site matching and date range filtering")
+    resource_type_filter: List[Any] = Field(default=[{'type': 'web', 'top_k': 20}], description="Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5). Example: [{\"type\":\"web\",\"top_k\":20},{\"type\":\"video\",\"top_k\":5}]")
+    search_filter: Dict[str, Any] = Field(default={}, description="Advanced filters including site matching and date range. Example: {\"match\":{\"site\":[\"news.baidu.com\"]}, \"range\":{\"pageTime\":{\"gte\":\"2024-01-01\",\"lte\":\"2024-12-31\"}}}")
     block_websites: List[Any] | None = Field(default=None, description="Sites to block, e.g. [\"tieba.baidu.com\"]")
     search_recency_filter: str = Field(default='year', description="Time filter: `week`, `month`, `semiyear`, `year`")
     safe_search: bool = Field(default=False, description="Enable strict content filtering")
@@ -64,7 +64,7 @@ class BaiduSearchParams(BaseModel):
 BAIDU_SEARCH_TOOL = ToolModel(
     name="baidu-search",
     description="Search the web using Baidu AI Search Engine (BDSE). Use for live information, documentation, or research topics.",
-    inputSchema={'type': 'object', 'properties': {'query': {'type': 'string', 'description': 'Search query'}, 'edition': {'type': 'string', 'description': 'Search edition: `standard` (full) or `lite` (light)', 'default': 'standard'}, 'resource_type_filter': {'type': 'array', 'description': "Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5). Format: list of objects with 'type' and 'top_k' fields", 'default': [{'type': 'web', 'top_k': 20}]}, 'search_filter': {'type': 'object', 'description': 'Advanced filters including site matching and date range filtering', 'default': {}}, 'block_websites': {'type': 'array', 'description': 'Sites to block, e.g. ["tieba.baidu.com"]'}, 'search_recency_filter': {'type': 'string', 'description': 'Time filter: `week`, `month`, `semiyear`, `year`', 'default': 'year'}, 'safe_search': {'type': 'boolean', 'description': 'Enable strict content filtering', 'default': False}}, 'required': ['query'], 'additionalProperties': False},
+    inputSchema={'type': 'object', 'properties': {'query': {'type': 'string', 'description': 'Search query'}, 'edition': {'type': 'string', 'description': 'Search edition: `standard` (full) or `lite` (light)', 'default': 'standard'}, 'resource_type_filter': {'type': 'array', 'description': 'Resource types: web (max 50), video (max 10), image (max 30), aladdin (max 5). Example: [{"type":"web","top_k":20},{"type":"video","top_k":5}]', 'default': [{'type': 'web', 'top_k': 20}]}, 'search_filter': {'type': 'object', 'description': 'Advanced filters including site matching and date range. Example: {"match":{"site":["news.baidu.com"]}, "range":{"pageTime":{"gte":"2024-01-01","lte":"2024-12-31"}}}', 'default': {}}, 'block_websites': {'type': 'array', 'description': 'Sites to block, e.g. ["tieba.baidu.com"]'}, 'search_recency_filter': {'type': 'string', 'description': 'Time filter: `week`, `month`, `semiyear`, `year`', 'default': 'year'}, 'safe_search': {'type': 'boolean', 'description': 'Enable strict content filtering', 'default': False}}, 'required': ['query'], 'additionalProperties': False},
 )
 
 
@@ -119,27 +119,15 @@ class BaiduSearchMCPServer:
 
         # 解析调用命令，替换占位符
         invocation_str = INVOCATION_COMMAND
-        json_str = json.dumps(params)
-        full_command = []
-
         if "'{JSON}'" in invocation_str:
             # 替换占位符为实际的 JSON 字符串
-            # 我们需要将命令分割成部分，但保持 JSON 作为一个整体
-            parts = []
-            remaining = invocation_str
-            while "'{JSON}'" in remaining:
-                before, after = remaining.split("'{JSON}'", 1)
-                if before.strip():
-                    parts.extend(before.strip().split())
-                parts.append(json_str)  # 添加 JSON 作为单独的参数
-                remaining = after
-            if remaining.strip():
-                parts.extend(remaining.strip().split())
-            full_command = parts
+            command_str = invocation_str.replace("'{JSON}'", json.dumps(params))
+            cmd_parts = command_str.split()
         else:
             # 如果没有占位符，将 JSON 字符串作为最后一个参数添加
             cmd_parts = invocation_str.split()
-            full_command = cmd_parts + [json_str]
+            args = [json.dumps(params)]
+            full_command = cmd_parts + args
 
         # 设置环境变量（包含配置中的键值对）
         env = os.environ.copy()
