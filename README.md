@@ -16,7 +16,8 @@
 - **MCP 服务器管理** - 通过命令行注册、列出和移除 MCP 服务器
 - **重试与熔断** - 4 种退避策略 + 熔断器模式
 - **CLI 界面** - 简洁的命令行交互
-- **内置搜索工具** - 支持 Baidu、Tavily、Serper 搜索引擎
+- **内置搜索工具** - 支持 Tavily、Serper 搜索引擎
+- **技能转 MCP** - 将技能目录自动转换为 MCP 服务器
 - **详细日志记录** - LLM 请求/响应完整日志，支持 DEBUG 级别
 - **实时日志刷新** - ImmediateFlushFileHandler 确保日志实时写入磁盘
 - **模式切换** - 支持 tool-use 和 code-plan 两种工作模式，可通过命令行或聊天命令切换
@@ -67,10 +68,6 @@ cp config.json.template config.json
     },
     "tavily": {
       "api_key": "your_tavily_api_key_here"
-    },
-    "baidu": {
-      "api_key_1": "your_baidu_api_key_here",
-      "api_key_2": "your_baidu_api_key_2_here"
     }
   }
 }
@@ -149,7 +146,6 @@ cp config.json.template config.json
 ### 获取 API Keys
 
 - NVIDIA: https://build.nvidia.com/
-- Baidu Search: https://console.bce.baidu.com/ai-search/qianfan/ais/console/apiKey
 
 ## 使用
 
@@ -181,7 +177,7 @@ uv run qd-agents tools init
 ```
 
 此命令会清空现有工具数据库并重新注册所有内置工具，包括：
-- 搜索工具 (serper_search, tavily_search, baidu_search, web_search)
+- 搜索工具 (serper_search, tavily_search, web_search)
 - 实用工具 (echo)
 - Bash 工具 (execute_bash)
 
@@ -198,13 +194,13 @@ MCP (Model Context Protocol) 服务器可以通过以下命令管理：
 
 ```bash
 # 添加 MCP 服务器
-uv run qd-agents mcp add <name> <server> [options]
+uv run qd-agents tools mcp add <name> <server> [options]
 
 # 列出已注册的 MCP 服务器
-uv run qd-agents mcp list
+uv run qd-agents tools mcp list
 
 # 移除 MCP 服务器
-uv run qd-agents mcp remove <name>
+uv run qd-agents tools mcp remove <name>
 ```
 
 **示例：注册 open-meteo-mcp 服务器**
@@ -217,13 +213,53 @@ npm run build
 cd ../..
 
 # 注册到 qd-agents
-uv run qd-agents mcp add open-meteo "Open Meteo Weather" \
+uv run qd-agents tools mcp add open-meteo "Open Meteo Weather" \
   --transport stdio \
   --command "node" \
   --args "tools/mcp/open-meteo-mcp/dist/index.js"
 ```
 
 **注意**：MCP工具执行器具有自动发现功能，在上下文管理中会自动连接到MCP服务器并展开所有可用工具，将MCP服务器提供的每个工具作为独立工具加载到可用工具列表中，无需手动注册每个工具。这使得大模型在使用tool calling时可以获得完整的工具信息。
+
+### 将技能转换为 MCP 服务器
+
+qd-agents 提供了将技能目录自动转换为 MCP 服务器的功能：
+
+```bash
+# 将技能转换为 MCP 服务器（自动从 tools/skills/ 查找）
+uv run qd-agents tools skill2mcp <skill-name>
+
+# 指定输出目录
+uv run qd-agents tools skill2mcp <skill-name> --output my-mcp-servers/<skill-name>
+
+# 注册到工具注册表
+uv run qd-agents tools skill2mcp <skill-name> --register
+```
+
+**功能特性**：
+- 使用 LLM 分析技能目录，自动提取技能信息、参数和依赖
+- 生成完整的 Python MCP 服务器实现，使用 uv 包管理器
+- 自动生成技能包装器、参数模型、验证脚本等
+- 支持技能目录中的多种脚本类型（Python、Shell、JavaScript）
+
+**示例：将 baidu-search 技能转换为 MCP 服务器**
+```bash
+uv run qd-agents tools skill2mcp baidu-search
+```
+
+生成的 MCP 服务器结构：
+```
+tools/mcp/baidu-search/
+├── pyproject.toml          # Python 项目配置
+├── requirements.txt        # 依赖列表
+├── baidu-search/          # MCP 服务器包
+│   ├── __init__.py
+│   └── main.py            # MCP 服务器实现
+├── skill_wrapper.py       # 技能包装器
+├── test/validate.py       # 验证脚本
+├── README.md              # 使用说明
+└── CLAUDE.md              # 开发指南
+```
 
 ### 启动交互式聊天
 
