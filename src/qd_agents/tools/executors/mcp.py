@@ -37,6 +37,7 @@ class MCPToolExecutor(ToolExecutor):
         args: list[str] | None = None,
         url: str | None = None,
         headers: dict[str, str] | None = None,
+        env: dict[str, str] | None = None,
         timeout: int = 30,
         tool_name: str | None = None,
     ):
@@ -50,6 +51,7 @@ class MCPToolExecutor(ToolExecutor):
             args: stdio 模式下的参数（如 ["-y", "@modelcontextprotocol/server-weather"]）
             url: SSE 或 streamable-http 模式的 URL
             headers: HTTP 请求头
+            env: 环境变量字典
             timeout: 超时时间（秒）
             tool_name: 固定的工具名（如果指定，则执行器专用于该工具）
         """
@@ -59,6 +61,7 @@ class MCPToolExecutor(ToolExecutor):
         self.args = args or []
         self.url = url
         self.headers = headers or {}
+        self.env = env or {}
         self.timeout = timeout
         self.tool_name = tool_name
 
@@ -82,10 +85,15 @@ class MCPToolExecutor(ToolExecutor):
                 if not self.command:
                     raise ValueError("stdio transport requires command")
 
+                # 从配置中提取环境变量
+                env = None
+                if hasattr(self, 'env') and self.env:
+                    env = self.env
+
                 server_params = StdioServerParameters(
                     command=self.command,
                     args=self.args,
-                    env=None,
+                    env=env,
                 )
                 # stdio_client 返回异步上下文管理器
                 self._context_manager = stdio_client(server_params)
@@ -252,6 +260,7 @@ def create_mcp_tool(
     args: list[str] | None = None,
     url: str | None = None,
     headers: dict[str, str] | None = None,
+    env: dict[str, str] | None = None,
     timeout: int = 30,
     parameters: dict[str, Any] | None = None,
 ) -> Tool:
@@ -275,6 +284,7 @@ def create_mcp_tool(
             args=args or [],
             endpoint=url,  # 复用 endpoint 字段用于 URL
             headers=headers or {},
+            env=env or {},
             timeout=timeout,
         ),
         metadata=ToolMetadata(
