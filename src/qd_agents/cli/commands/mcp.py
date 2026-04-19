@@ -65,13 +65,39 @@ async def mcp_add_async(
             console.print(f"[red][ERROR][/] 读取 JSON 文件失败: {e}")
             return
 
+    # 从 JSON 配置中提取 MCP 服务器配置
+    extracted_config = {}
+    if json_config:
+        # 尝试多种 MCP 服务器配置格式
+        servers = None
+        server_key = server  # 使用命令行提供的 server 参数作为键
+
+        # 格式1: {"mcp": {"servers": {"server_name": {...}}}}
+        if "mcp" in json_config and "servers" in json_config["mcp"]:
+            servers = json_config["mcp"]["servers"]
+        # 格式2: {"mcpServers": {"server_name": {...}}}
+        elif "mcpServers" in json_config:
+            servers = json_config["mcpServers"]
+
+        if servers:
+            # 使用 server 参数作为键查找配置
+            if server_key and server_key in servers:
+                extracted_config = servers[server_key]
+            elif servers:
+                # 如果没有匹配的 server，使用第一个服务器
+                first_server = next(iter(servers))
+                extracted_config = servers[first_server]
+        else:
+            # 扁平配置格式
+            extracted_config = json_config
+
     # 合并参数：JSON 配置作为默认值，命令行参数优先级更高
-    final_name = name if name is not None else json_config.get("name")
-    final_server = server if server is not None else json_config.get("server")
-    final_transport = transport if transport != "stdio" or "transport" not in json_config else json_config.get("transport", "stdio")
-    final_command = command if command is not None else json_config.get("command")
-    final_args = args if args is not None else json_config.get("args")
-    final_url = url if url is not None else json_config.get("url")
+    final_name = name if name is not None else extracted_config.get("name")
+    final_server = server if server is not None else extracted_config.get("server")
+    final_transport = transport if transport != "stdio" or "transport" not in extracted_config else extracted_config.get("transport", "stdio")
+    final_command = command if command is not None else extracted_config.get("command")
+    final_args = args if args is not None else extracted_config.get("args")
+    final_url = url if url is not None else extracted_config.get("url")
 
     # 验证必需参数
     if not final_name:
