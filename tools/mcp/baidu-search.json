@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "baidu-search-mcp": {
+      "command": "python",
+      "args": [
+        "tools\\mcp\\baidu-search\\scripts\\main.py"
+      ]
+    }
+  }
+}

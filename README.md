@@ -237,10 +237,12 @@ uv run qd-agents tools skill2mcp <skill-name> --register
 ```
 
 **功能特性**：
-- 使用 LLM 分析技能目录，自动提取技能信息、参数和依赖
-- 生成完整的 Python MCP 服务器实现，使用 uv 包管理器
-- 自动生成技能包装器、参数模型、验证脚本等
+- 使用 LLM 智能分析技能目录，自动提取技能信息、参数和依赖
+- 基于 Jinja2 模板系统生成 MCP 服务器，避免硬编码，灵活可扩展
+- 自动生成完整的 Python MCP 服务器实现，使用 uv 包管理器
 - 支持技能目录中的多种脚本类型（Python、Shell、JavaScript）
+- 智能参数类型映射，支持复杂参数（list[obj]、obj 等）
+- 根据技能复杂度自动适配生成策略（简单包装 vs 复杂编排）
 
 **示例：将 baidu-search 技能转换为 MCP 服务器**
 ```bash
@@ -250,16 +252,22 @@ uv run qd-agents tools skill2mcp baidu-search
 生成的 MCP 服务器结构：
 ```
 tools/mcp/baidu-search/
-├── pyproject.toml          # Python 项目配置
+├── pyproject.toml          # Python 项目配置（Jinja2模板生成）
 ├── requirements.txt        # 依赖列表
-├── baidu-search/          # MCP 服务器包
+├── README.md              # 使用说明（Jinja2模板生成）
+├── scripts/               # MCP 服务器实现
 │   ├── __init__.py
-│   └── main.py            # MCP 服务器实现
-├── skill_wrapper.py       # 技能包装器
-├── test/validate.py       # 验证脚本
-├── README.md              # 使用说明
-└── CLAUDE.md              # 开发指南
+│   └── main.py            # MCP 服务器主文件（Jinja2模板生成）
+└── test/                  # 验证测试
+    └── validate.py        # 验证脚本（Jinja2模板生成）
 ```
+
+**优化特性**：
+- **模板化生成**：使用 Jinja2 模板系统，避免硬编码解决方案
+- **智能分析**：LLM 深度分析技能，提取精确参数类型和约束
+- **灵活适配**：根据技能复杂度自动选择生成策略
+- **项目集成**：复用项目现有的提示词模板管理系统
+- **自我迭代**：coding agent 风格，持续优化生成的代码质量
 
 ### 启动交互式聊天
 

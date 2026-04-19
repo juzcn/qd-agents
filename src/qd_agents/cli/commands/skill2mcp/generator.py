@@ -13,6 +13,8 @@ from typing import Dict, Any, Optional
 from qd_agents.registry import Tool, ToolMetadata, ToolExecutionType
 from qd_agents.tools.executors import create_mcp_tool
 
+from .template_renderer import MCPTemplateRenderer
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,12 +24,13 @@ class MCPToolGenerator:
     def __init__(self, base_dir: Path):
         self.base_dir = base_dir
 
-    def generate_tool_definition(self, analysis: Dict[str, Any]) -> Tool:
+    def generate_tool_definition(self, analysis: Dict[str, Any], mcp_server_dir: Optional[Path] = None) -> Tool:
         """
         基于分析结果生成 MCP 工具定义
 
         Args:
             analysis: 技能分析结果
+            mcp_server_dir: 生成的 MCP 服务器目录（如果已生成）
 
         Returns:
             MCP 工具定义
@@ -38,21 +41,37 @@ class MCPToolGenerator:
         # 构建参数 Schema
         parameters = self._build_parameters_schema(analysis)
 
-        # 创建 MCP 工具
-        # 注意：这里假设我们将创建一个通用的 MCP 服务器来包装技能
-        # 实际实现中，可能需要生成一个专门的 MCP 服务器
-        tool = create_mcp_tool(
-            name=name,
-            description=description,
-            server=f"skill-wrapper-{name}",
-            transport="stdio",
-            command="python",
-            args=[
-                "-m", "qd_agents.tools.skill_wrapper",
-                "--skill-name", name
-            ],
-            parameters=parameters,
-        )
+        # 如果提供了 MCP 服务器目录，生成指向该服务器的工具定义
+        if mcp_server_dir and mcp_server_dir.exists():
+            # 计算脚本绝对路径
+            script_path = mcp_server_dir / "scripts" / "main.py"
+            tool = create_mcp_tool(
+                name=name,
+                description=description,
+                server=f"{name}-mcp",  # MCP 服务器标识
+                transport="stdio",
+                command="python",
+                args=[
+                    str(script_path)
+                ],
+                parameters=parameters,
+                # 添加环境变量设置工作目录
+                env={"WORKING_DIR": str(mcp_server_dir)}
+            )
+        else:
+            # 否则使用通用的技能包装器
+            tool = create_mcp_tool(
+                name=name,
+                description=description,
+                server=f"skill-wrapper-{name}",
+                transport="stdio",
+                command="python",
+                args=[
+                    "-m", "qd_agents.tools.skill_wrapper",
+                    "--skill-name", name
+                ],
+                parameters=parameters,
+            )
 
         return tool
 
@@ -79,7 +98,9 @@ class MCPToolGenerator:
 
             # 添加默认值（如果有）
             if 'default' in param and param['default'] is not None:
-                properties[param_name]['default'] = param['default']
+                # 转换默认值为适当的Python类型
+                default_value = self._convert_default_value(param['default'], param_type)
+                properties[param_name]['default'] = default_value
 
             if is_required:
                 required.append(param_name)
@@ -122,6 +143,53 @@ class MCPToolGenerator:
 
         return type_mapping.get(param_type.lower(), 'string')
 
+    def _convert_default_value(self, default_value: Any, param_type: str) -> Any:
+        """转换默认值为适当的Python类型"""
+        if default_value is None:
+            return None
+
+        param_type_lower = param_type.lower()
+
+        # 如果已经是Python对象，直接返回
+        if not isinstance(default_value, str):
+            return default_value
+
+        # 尝试解析 JSON
+        try:
+            parsed = json.loads(default_value)
+            return parsed
+        except json.JSONDecodeError:
+            pass
+
+        # 对于布尔类型，检查字符串
+        if param_type_lower in ['bool', 'boolean']:
+            lower = default_value.lower()
+            if lower == 'true':
+                return True
+            elif lower == 'false':
+                return False
+            # 如果既不是 true 也不是 false，尝试当作 Python 布尔字面量
+            if default_value == 'True':
+                return True
+            if default_value == 'False':
+                return False
+
+        # 对于数字类型，尝试转换
+        if param_type_lower in ['int', 'integer']:
+            try:
+                return int(default_value)
+            except (ValueError, TypeError):
+                pass
+
+        if param_type_lower in ['float', 'number']:
+            try:
+                return float(default_value)
+            except (ValueError, TypeError):
+                pass
+
+        # 否则返回原字符串
+        return default_value
+
 
 class MCPServerGenerator:
     """MCP 服务器生成器，在 tools/mcp 目录下创建完整 MCP 服务器"""
@@ -133,6 +201,10 @@ class MCPServerGenerator:
             self.mcp_dir = output_dir
         else:
             self.mcp_dir = base_dir / "tools" / "mcp" / skill_path.name
+
+        # 初始化模板渲染器
+        template_dir = Path(__file__).parent / "templates"
+        self.template_renderer = MCPTemplateRenderer(template_dir)
 
     def generate_server(self, analysis: Dict[str, Any], tool_definition: Tool) -> Path:
         """
@@ -150,25 +222,50 @@ class MCPServerGenerator:
             shutil.rmtree(self.mcp_dir)
         self.mcp_dir.mkdir(parents=True)
 
-        # 生成 README.md
-        self._generate_readme(analysis)
+        # 创建 scripts 目录
+        scripts_dir = self.mcp_dir / "scripts"
+        scripts_dir.mkdir(exist_ok=True)
 
-        # 生成 pyproject.toml (Python MCP 服务器)
-        self._generate_pyproject_toml(analysis)
+        # 创建 test 目录
+        test_dir = self.mcp_dir / "test"
+        test_dir.mkdir(exist_ok=True)
 
-        # 生成 main.py (Python MCP 服务器实现)
-        self._generate_main_py(analysis, tool_definition)
+        # 使用模板渲染器生成文件
+        # 1. 生成 main.py
+        main_py_content = self.template_renderer.render_main_py(analysis, tool_definition)
+        main_py_path = scripts_dir / "main.py"
+        main_py_path.write_text(main_py_content, encoding='utf-8')
 
-        # 注意：不再生成 skill_wrapper.py，MCP 服务器直接调用原始技能脚本
+        # 2. 生成 pyproject.toml
+        pyproject_content = self.template_renderer.render_pyproject_toml(analysis)
+        pyproject_path = self.mcp_dir / "pyproject.toml"
+        pyproject_path.write_text(pyproject_content, encoding='utf-8')
 
-        # 生成 requirements.txt
-        self._generate_requirements_txt(analysis)
+        # 3. 生成 README.md
+        readme_content = self.template_renderer.render_readme_md(analysis)
+        readme_path = self.mcp_dir / "README.md"
+        readme_path.write_text(readme_content, encoding='utf-8')
 
-        # 生成 __init__.py
-        self._generate_init_py(analysis)
+        # 4. 生成验证脚本
+        validate_content = self.template_renderer.render_validate_py(analysis)
+        validate_path = test_dir / "validate.py"
+        validate_path.write_text(validate_content, encoding='utf-8')
 
-        # 生成 CLAUDE.md
-        self._generate_claude_md(analysis)
+        # 5. 生成 requirements.txt（保持简单，使用模板或固定内容）
+        requirements_txt = '''mcp[cli]>=1.0.0
+pydantic>=2.0.0
+'''
+        requirements_path = self.mcp_dir / "requirements.txt"
+        requirements_path.write_text(requirements_txt, encoding='utf-8')
+
+        # 6. 生成 __init__.py（可选）
+        init_py = '''"""
+MCP Server Scripts Package
+"""
+__version__ = "1.0.0"
+'''
+        init_path = scripts_dir / "__init__.py"
+        init_path.write_text(init_py, encoding='utf-8')
 
         return self.mcp_dir
 
