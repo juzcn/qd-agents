@@ -255,8 +255,9 @@ class QDAgent:
             try:
                 await executor.close()
                 logger.info(f"Closed MCP connection to server: {server_key}")
-            except (RuntimeError, GeneratorExit, asyncio.CancelledError) as e:
+            except (RuntimeError, GeneratorExit, asyncio.CancelledError, BaseException) as e:
                 # 忽略常见的关闭错误，特别是"Attempted to exit cancel scope in a different task"
+                # 也捕获 BaseException（包括 BaseExceptionGroup）
                 logger.debug(f"Ignoring error closing MCP connection to server {server_key}: {type(e).__name__}: {e}")
             except Exception as e:
                 logger.error(f"Error closing MCP connection to server {server_key}: {e}")

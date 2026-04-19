@@ -67,6 +67,8 @@ class MCPToolExecutor(ToolExecutor):
         self._tools_cache: dict[str, dict] = {}
         # 存储异步上下文管理器
         self._context_manager: Any = None
+        # 关闭标志
+        self._closed = False
 
     async def _ensure_connected(self) -> None:
         """确保连接到 MCP 服务器"""
@@ -201,6 +203,12 @@ class MCPToolExecutor(ToolExecutor):
 
     async def close(self) -> None:
         """关闭连接"""
+        # 防止重复关闭
+        if hasattr(self, '_closed') and self._closed:
+            return
+
+        self._closed = True
+
         # 先关闭会话
         if self._session:
             try:
@@ -217,11 +225,10 @@ class MCPToolExecutor(ToolExecutor):
         if self._context_manager:
             try:
                 await self._context_manager.__aexit__(None, None, None)
-            except (RuntimeError, GeneratorExit, asyncio.CancelledError) as e:
-                # 忽略常见的关闭错误
+            except BaseException as e:
+                # 捕获所有异常，包括 BaseExceptionGroup
+                # 我们不希望关闭时抛出任何异常
                 logger.debug(f"Ignoring error during MCP context manager close: {type(e).__name__}: {e}")
-            except Exception as e:
-                logger.warning(f"Error during MCP context manager close: {e}")
             finally:
                 self._context_manager = None
 
