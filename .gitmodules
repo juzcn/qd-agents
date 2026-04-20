@@ -4,3 +4,9 @@
 [submodule "skills/superpowers"]
 	path = skills/superpowers
 	url = https://github.com/obra/superpowers
+[submodule "skills/everything-claude-code"]
+	path = skills/everything-claude-code
+	url = https://github.com/affaan-m/everything-claude-code
+[submodule "skills/awesome-claude-code"]
+	path = skills/awesome-claude-code
+	url = https://github.com/hesreallyhim/awesome-claude-code
