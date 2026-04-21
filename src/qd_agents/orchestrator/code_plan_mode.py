@@ -170,6 +170,9 @@ class CodePlanModeOrchestrator:
                 await self._cache_tool_disclosure_levels()
             else:
                 logger.info("Skipping tool caching, using existing cache")
+                # 即使有缓存，也需要构建工具披露层级
+                if self._tool_l0_cache is None or self._tool_l1_cache is None:
+                    await self._cache_tool_disclosure_levels()
 
         except Exception as e:
             logger.warning(f"CodePlanModeOrchestrator initialization failed, but continuing: {e}")
@@ -557,29 +560,97 @@ class CodePlanModeOrchestrator:
 
     async def _cache_expanded_tools(self) -> None:
         """缓存展开后的工具列表和OpenAI格式工具"""
-        # 实现与 ToolUseMode 类似，这里先留空，复用父类的缓存
-        logger.info("Tool caching handled by parent or already cached")
-
-    async def _cache_tool_disclosure_levels(self) -> None:
-        """缓存工具披露层级（L0和L1）"""
-        logger.info("Caching tool disclosure levels...")
+        logger.info("Caching expanded tools...")
 
         # 获取所有工具
         all_tools = self.registry.list_all()
 
+        # 展开 MCP 工具（使用缓存）
+        expanded_tools = []
+        for tool in all_tools:
+            if tool.execution.type != ToolExecutionType.MCP:
+                # 非 MCP 工具直接添加
+                expanded_tools.append(tool)
+                continue
+
+            # 检查缓存中是否有该服务器的工具
+            exec_config = tool.execution
+            server_key = exec_config.server or ""
+            if server_key in self._mcp_tools_cache:
+                mcp_subtools = self._mcp_tools_cache[server_key]
+                if mcp_subtools:
+                    # 添加所有子工具
+                    expanded_tools.extend(mcp_subtools)
+                else:
+                    # 缓存为空，保留原始工具
+                    logger.warning(f"Cached MCP tools for server '{server_key}' is empty, keeping original tool")
+                    expanded_tools.append(tool)
+            else:
+                # 缓存中没有该服务器的工具，保留原始工具
+                logger.warning(f"MCP server '{server_key}' not in cache, keeping original tool")
+                expanded_tools.append(tool)
+
+        # 构建 OpenAPI 格式工具
+        openai_tools = []
+        # 优先添加 search.web 工具（如果可用）
+        search_web = self.registry.get("search.web")
+        if search_web:
+            openai_tools.append(search_web.to_openai_function())
+            # 从 expanded_tools 中移除 search.web 工具，避免重复
+            expanded_tools = [t for t in expanded_tools if t.id != "search.web"]
+
+        # 添加其他工具
+        openai_tools.extend([t.to_openai_function() for t in expanded_tools])
+
+        # 缓存结果
+        self._expanded_tools_cache = expanded_tools
+        self._openai_tools_cache = openai_tools
+
+        logger.info(f"Cached {len(expanded_tools)} expanded tools and {len(openai_tools)} OpenAI tools")
+
+    async def _cache_tool_disclosure_levels(self) -> None:
+        """缓存工具披露层级（L0和L1），优先使用展开的工具缓存"""
+        logger.info("Caching tool disclosure levels...")
+
+        # 获取工具列表：优先使用展开的工具缓存，如果不可用则使用注册中心的工具
+        if self._expanded_tools_cache:
+            all_tools = self._expanded_tools_cache
+            logger.info(f"Using expanded tools cache with {len(all_tools)} tools")
+        else:
+            all_tools = self.registry.list_all()
+            logger.warning(f"Expanded tools cache is None, falling back to registry list with {len(all_tools)} tools")
+            # 尝试异步构建展开工具缓存
+            try:
+                await self._cache_expanded_tools()
+                if self._expanded_tools_cache:
+                    all_tools = self._expanded_tools_cache
+                    logger.info(f"Built expanded tools cache with {len(all_tools)} tools")
+            except Exception as e:
+                logger.warning(f"Failed to build expanded tools cache: {e}")
+
         # 构建 L0 缓存（名称 + 一句话描述）
         l0_list = []
+        l0_seen = set()  # 用于去重
+
         for tool in all_tools:
+            # 去重：避免重复的工具名称
+            if tool.name in l0_seen:
+                logger.debug(f"Skipping duplicate L0 tool: {tool.name}")
+                continue
+
+            l0_seen.add(tool.name)
             l0_list.append({
                 "name": tool.name,
                 "description": tool.description,
                 "id": tool.id,
             })
+
         self._tool_l0_cache = l0_list
 
         # 构建 L1 缓存（参数、输出格式、副作用类型）
         l1_dict = {}
         for tool in all_tools:
+            # L1缓存使用工具ID作为键，允许不同工具但有相同名称的情况
             l1_dict[tool.id] = {
                 "name": tool.name,
                 "description": tool.description,
@@ -587,6 +658,7 @@ class CodePlanModeOrchestrator:
                 "execution_type": tool.execution.type,
                 "security": tool.security,
             }
+
         self._tool_l1_cache = l1_dict
 
         logger.info(f"Cached {len(l0_list)} L0 tools and {len(l1_dict)} L1 tools")
