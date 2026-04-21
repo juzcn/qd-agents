@@ -10,3 +10,6 @@
 [submodule "skills/awesome-claude-code"]
 	path = skills/awesome-claude-code
 	url = https://github.com/hesreallyhim/awesome-claude-code
+[submodule "tools/mcp/n8n-mcp"]
+	path = tools/mcp/n8n-mcp
+	url = https://github.com/czlonkowski/n8n-mcp
