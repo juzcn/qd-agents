@@ -213,6 +213,15 @@ class LLMClient:
 
                 if not stream:
                     logger.debug("Response: %s", response.model_dump_json() if hasattr(response, 'model_dump_json') else str(response))  # type: ignore
+                    # 记录 token 使用情况
+                    if hasattr(response, 'usage') and response.usage:
+                        logger.info(
+                            "Token usage - model: %s, prompt: %d, completion: %d, total: %d",
+                            use_model,
+                            response.usage.prompt_tokens,
+                            response.usage.completion_tokens,
+                            response.usage.total_tokens
+                        )
 
                 return response
 
@@ -274,6 +283,15 @@ class LLMClient:
         )
 
         async for chunk in stream:
+            # 记录 token 使用情况（流式响应的最后一个 chunk 包含 usage）
+            if hasattr(chunk, 'usage') and chunk.usage:
+                logger.info(
+                    "Token usage - model: %s, prompt: %d, completion: %d, total: %d",
+                    use_model,
+                    chunk.usage.prompt_tokens,
+                    chunk.usage.completion_tokens,
+                    chunk.usage.total_tokens
+                )
             yield chunk
 
     async def close(self) -> None:

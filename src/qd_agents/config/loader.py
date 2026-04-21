@@ -53,7 +53,7 @@ class LLMConfig(BaseModel):
     default_provider: str = "nvidia"
     default_model: str | None = None
     providers: dict[str, LLMProviderConfig] = Field(default_factory=dict)
-    mode: AgentMode = AgentMode.TOOL_USE
+    mode: AgentMode = AgentMode.CODE_PLAN
     tool_threshold: int = 50
 
 
