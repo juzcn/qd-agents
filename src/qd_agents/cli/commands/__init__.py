@@ -7,7 +7,6 @@ from .models import list_models_async
 from .tools import list_tools, init_tools
 from .version import show_version
 from .mcp import mcp_add, mcp_list, mcp_remove
-from .skill2mcp import skill2mcp
 
 __all__ = [
     "ChatCommandHandler",
@@ -19,5 +18,4 @@ __all__ = [
     "mcp_add",
     "mcp_list",
     "mcp_remove",
-    "skill2mcp",
 ]

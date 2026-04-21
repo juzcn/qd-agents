@@ -221,54 +221,6 @@ uv run qd-agents tools mcp add open-meteo "Open Meteo Weather" \
 
 **注意**：MCP工具执行器具有自动发现功能，在上下文管理中会自动连接到MCP服务器并展开所有可用工具，将MCP服务器提供的每个工具作为独立工具加载到可用工具列表中，无需手动注册每个工具。这使得大模型在使用tool calling时可以获得完整的工具信息。
 
-### 将技能转换为 MCP 服务器
-
-qd-agents 提供了将技能目录自动转换为 MCP 服务器的功能：
-
-```bash
-# 将技能转换为 MCP 服务器（自动从 tools/skills/ 查找）
-uv run qd-agents tools skill2mcp <skill-name>
-
-# 指定输出目录
-uv run qd-agents tools skill2mcp <skill-name> --output my-mcp-servers/<skill-name>
-
-# 注册到工具注册表
-uv run qd-agents tools skill2mcp <skill-name> --register
-```
-
-**功能特性**：
-- 使用 LLM 智能分析技能目录，自动提取技能信息、参数和依赖
-- 基于 Jinja2 模板系统生成 MCP 服务器，避免硬编码，灵活可扩展
-- 自动生成完整的 Python MCP 服务器实现，使用 uv 包管理器
-- 支持技能目录中的多种脚本类型（Python、Shell、JavaScript）
-- 智能参数类型映射，支持复杂参数（list[obj]、obj 等）
-- 根据技能复杂度自动适配生成策略（简单包装 vs 复杂编排）
-
-**示例：将 baidu-search 技能转换为 MCP 服务器**
-```bash
-uv run qd-agents tools skill2mcp baidu-search
-```
-
-生成的 MCP 服务器结构：
-```
-tools/mcp/baidu-search/
-├── pyproject.toml          # Python 项目配置（Jinja2模板生成）
-├── requirements.txt        # 依赖列表
-├── README.md              # 使用说明（Jinja2模板生成）
-├── scripts/               # MCP 服务器实现
-│   ├── __init__.py
-│   └── main.py            # MCP 服务器主文件（Jinja2模板生成）
-└── test/                  # 验证测试
-    └── validate.py        # 验证脚本（Jinja2模板生成）
-```
-
-**优化特性**：
-- **模板化生成**：使用 Jinja2 模板系统，避免硬编码解决方案
-- **智能分析**：LLM 深度分析技能，提取精确参数类型和约束
-- **灵活适配**：根据技能复杂度自动选择生成策略
-- **项目集成**：复用项目现有的提示词模板管理系统
-- **自我迭代**：coding agent 风格，持续优化生成的代码质量
-
 ### 启动交互式聊天
 
 ```bash

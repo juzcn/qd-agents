@@ -11,7 +11,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from .commands import chat_async, list_models_async, list_tools, init_tools, show_version, mcp_add, mcp_list, mcp_remove, skill2mcp
+from .commands import chat_async, list_models_async, list_tools, init_tools, show_version, mcp_add, mcp_list, mcp_remove
 from qd_agents.config import AgentMode
 
 
@@ -66,32 +66,6 @@ def tools_init(
     init_tools(console, base_dir, config_file)
 
 
-# tools skill2mcp 命令
-@tools_app.command("skill2mcp", help="将技能转换为 MCP 工具")
-def tools_skill2mcp(
-    skill_name: str = typer.Argument(..., help="技能名称（在 tools/skills/ 目录下）"),
-    output_dir: Optional[Path] = typer.Option(None, "--output", "-o", help="输出目录（默认为 tools/mcp/<技能名>）"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-):
-    """将技能转换为 MCP 工具"""
-    # 构建技能路径
-    if base_dir:
-        skill_path = base_dir / "tools" / "skills" / skill_name
-    else:
-        skill_path = Path.cwd() / "tools" / "skills" / skill_name
-
-    # 检查路径是否存在
-    if not skill_path.exists():
-        console.print(f"[red][ERROR][/] 技能路径不存在: {skill_path}")
-        console.print(f"[dim]请确认技能 '{skill_name}' 在 tools/skills/ 目录下[/]")
-        return
-
-    # 如果未指定输出目录，默认使用 tools/mcp/<技能名>
-    if output_dir is None:
-        output_dir = Path("tools") / "mcp" / skill_name
-
-    skill2mcp(console, skill_path, output_dir, config_file, base_dir)
 
 
 # mcp add 命令
