@@ -74,6 +74,7 @@
     "log_format": "json",
     "log_output": ["file"],
     "log_session_dir": ".",
+    "log_external_api": false,
     "log_rotation": "daily",
     "log_retention_days": 30,
     "tracing_enabled": true,

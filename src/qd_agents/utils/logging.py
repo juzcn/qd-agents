@@ -81,6 +81,7 @@ def setup_logging(
     level: str = "INFO",
     log_format: str = "console",
     log_file: Optional[Path] = None,
+    log_external_api: bool = False,
 ) -> None:
     """
     配置结构化日志
@@ -89,6 +90,7 @@ def setup_logging(
         level: 日志级别
         log_format: 日志格式 (console/json)
         log_file: 日志文件路径
+        log_external_api: 是否记录外部API调用日志
     """
     # 配置标准库 logging
     handlers = []
@@ -106,6 +108,14 @@ def setup_logging(
         handlers=handlers,
         level=getattr(logging, level.upper()),
     )
+
+    # 控制外部HTTP客户端日志级别
+    if not log_external_api:
+        # 设置httpx和httpcore日志级别为WARNING，减少详细的HTTP请求日志
+        httpx_logger = logging.getLogger("httpx")
+        httpx_logger.setLevel(logging.WARNING)
+        httpcore_logger = logging.getLogger("httpcore")
+        httpcore_logger.setLevel(logging.WARNING)
 
     # 配置 structlog
     processors = [
@@ -134,6 +144,7 @@ def setup_session_logging(
     level: str = "INFO",
     log_format: str = "json",
     trace_id: Optional[str] = None,
+    log_external_api: bool = False,
 ) -> tuple[Path, str]:
     """
     配置会话日志（仅输出到文件）
@@ -143,6 +154,7 @@ def setup_session_logging(
         level: 日志级别
         log_format: 日志格式 (console/json)
         trace_id: 可选的追踪 ID
+        log_external_api: 是否记录外部API调用日志
 
     Returns:
         (日志文件路径, trace_id)
@@ -151,7 +163,12 @@ def setup_session_logging(
         trace_id = str(uuid.uuid4())
 
     log_file = generate_session_log_path(log_dir, trace_id)
-    setup_logging(level=level, log_format=log_format, log_file=log_file)
+    setup_logging(
+        level=level,
+        log_format=log_format,
+        log_file=log_file,
+        log_external_api=log_external_api
+    )
 
     # 设置 trace_id 上下文
     structlog.contextvars.bind_contextvars(trace_id=trace_id)
