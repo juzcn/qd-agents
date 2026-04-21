@@ -243,7 +243,9 @@ class ChatCommandHandler:
         # 根据模式处理
         current_mode = self.config.llm.mode
         if current_mode == AgentMode.CODE_PLAN:
-            self.console.print("\n[yellow]注意: code-plan 模式暂未实现，使用 tool-use 模式替代[/]\n")
+            self.console.print(f"\n[green]使用 Code-Plan 模式[/]")
+        else:
+            self.console.print(f"\n[green]使用 Tool-Use 模式[/]")
 
         with self.console.status("[bold]思考中...[/]"):
             result = await self.llm_manager.agent.process(user_input=user_input)
