@@ -16,7 +16,7 @@ from ..llm import LLMClient
 from ..registry import ToolRegistry, Tool, ToolExecutionType, ToolMetadata
 from ..prompts import PromptLoader
 from ..execution import ExecutionEngine
-from ..orchestrator import ToolUseModeOrchestrator, OrchestrationResult
+from ..orchestrator import ToolUseModeOrchestrator, OrchestrationResult, CodePlanModeOrchestrator, CodePlanResult
 from ..tools import ToolExecutor, ToolExecutorRegistry, create_executor
 from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig
 from ..context import ContextManager
@@ -76,20 +76,37 @@ class QDAgent:
         self.llm = llm_client
         self.registry = tool_registry
         self.prompts = prompt_loader
-        self.execution = execution_engine or ExecutionEngine()
+        self.execution = execution_engine or ExecutionEngine(
+            allowed_modules=self.config.execution.code_exec_allowed_modules,
+            blocked_builtins=self.config.execution.code_exec_blocked_builtins,
+            timeout=self.config.execution.code_exec_timeout,
+        )
         self.executor_registry = ToolExecutorRegistry()
 
         # 初始化上下文管理器
         self.context = context_manager or ContextManager(prompt_loader=prompt_loader)
 
         # 初始化调度器
-        self.orchestrator = ToolUseModeOrchestrator(
+        self.tool_use_orchestrator = ToolUseModeOrchestrator(
             llm_client=llm_client,
             tool_registry=tool_registry,
             context_manager=self.context,
             prompt_loader=prompt_loader,
             tool_threshold=config.llm.tool_threshold,
         )
+
+        # 初始化 Code-Plan 模式调度器
+        self.code_plan_orchestrator = CodePlanModeOrchestrator(
+            llm_client=llm_client,
+            tool_registry=tool_registry,
+            context_manager=self.context,
+            prompt_loader=prompt_loader,
+            execution_engine=self.execution,
+            tool_threshold=config.llm.tool_threshold,
+        )
+
+        # 当前使用的调度器（根据配置模式选择）
+        self._current_orchestrator = None
 
         # 初始化重试和熔断
         self._setup_retry_and_circuit_breaker()
@@ -141,16 +158,30 @@ class QDAgent:
         await self._preload_mcp_tools()
 
         # 将QDAgent的MCP缓存传递给调度器
-        self.orchestrator.set_mcp_cache(self._mcp_tools_cache, self._mcp_executors_cache)
+        self.tool_use_orchestrator.set_mcp_cache(self._mcp_tools_cache, self._mcp_executors_cache)
+        self.code_plan_orchestrator.set_mcp_cache(self._mcp_tools_cache, self._mcp_executors_cache)
 
         # 缓存展开后的工具列表（避免每次调用都展开）
         await self._cache_expanded_tools()
 
         # 将展开工具缓存传递给调度器
-        self.orchestrator.set_expanded_tools_cache(self._expanded_tools_cache, self._openai_tools_cache)
+        self.tool_use_orchestrator.set_expanded_tools_cache(self._expanded_tools_cache, self._openai_tools_cache)
+        self.code_plan_orchestrator.set_expanded_tools_cache(self._expanded_tools_cache, self._openai_tools_cache)
+
+        # 将工具注册到执行引擎，以便在 Code-Plan 模式下使用
+        await self._register_tools_to_execution_engine()
 
         # 初始化调度器，跳过MCP预加载和工具缓存（因为QDAgent已经处理了）
-        await self.orchestrator.initialize(skip_mcp_preload=True, skip_tool_caching=True)
+        await self.tool_use_orchestrator.initialize(skip_mcp_preload=True, skip_tool_caching=True)
+        await self.code_plan_orchestrator.initialize(skip_mcp_preload=True, skip_tool_caching=True)
+
+        # 根据配置模式设置当前调度器
+        if self.config.llm.mode.value == "code-plan":
+            self._current_orchestrator = self.code_plan_orchestrator
+            logger.info("Using Code-Plan mode orchestrator")
+        else:
+            self._current_orchestrator = self.tool_use_orchestrator
+            logger.info("Using Tool-Use mode orchestrator")
 
         logger.info("QDAgent initialized. Models: %s", self.llm._model_names)
 
@@ -265,9 +296,14 @@ class QDAgent:
 
         # 关闭调度器，跳过MCP连接关闭（因为QDAgent已经关闭了）
         try:
-            await self.orchestrator.close(skip_mcp_close=True)
+            await self.tool_use_orchestrator.close(skip_mcp_close=True)
         except Exception as e:
-            logger.warning(f"Error closing orchestrator: {e}")
+            logger.warning(f"Error closing tool-use orchestrator: {e}")
+
+        try:
+            await self.code_plan_orchestrator.close(skip_mcp_close=True)
+        except Exception as e:
+            logger.warning(f"Error closing code-plan orchestrator: {e}")
 
         # 清空缓存
         self._mcp_tools_cache.clear()
@@ -289,6 +325,46 @@ class QDAgent:
         self.executor_registry.register_function("tavily_search", tavily_search)
 
         logger.info("Registered builtin tool executors")
+
+    async def _register_tools_to_execution_engine(self) -> None:
+        """将工具注册到执行引擎（用于 Code-Plan 模式）"""
+        logger.info("Registering tools to execution engine...")
+
+        # 获取所有注册的工具
+        # 这里简化处理：只注册我们知道的内置工具
+        # 实际应该从 executor_registry 获取所有工具
+
+        # 注册 echo 工具
+        from .builtins import echo
+        self.execution.register_tool_func("echo", echo)
+
+        # 注册搜索工具
+        from .builtin_tools import serper_search, tavily_search
+        self.execution.register_tool_func("serper_search", serper_search)
+        self.execution.register_tool_func("tavily_search", tavily_search)
+
+        # 还可以从工具注册表中获取更多工具
+        all_tools = self.registry.list_all()
+        for tool in all_tools:
+            # 跳过已注册的工具
+            if tool.name in ["echo", "serper_search", "tavily_search"]:
+                continue
+
+            # 尝试从执行器注册表获取执行器
+            try:
+                executor = self.executor_registry.get_executor(tool)
+                if executor:
+                    # 创建一个包装函数
+                    async def tool_wrapper(**kwargs):
+                        return await executor.execute(**kwargs)
+
+                    # 注册工具函数
+                    self.execution.register_tool_func(tool.name, tool_wrapper)
+                    logger.debug(f"Registered tool {tool.name} to execution engine")
+            except Exception as e:
+                logger.warning(f"Failed to register tool {tool.name} to execution engine: {e}")
+
+        logger.info(f"Registered tools to execution engine")
 
     def add_to_history(self, role: str, content: str) -> None:
         """
@@ -333,49 +409,96 @@ class QDAgent:
         self.add_to_history("user", user_input)
 
         try:
-            # 使用 OpenAI Tool Calling 规范直接处理
-            # 获取历史消息（不包含当前这条用户输入，因为会在循环中添加）
-            history = self.context.get_history()
-            conversation_history = []
-            if history:
-                # 转换历史消息格式
-                for msg in history[:-1]:  # 排除最后一条用户输入
-                    conversation_history.append({
-                        "role": msg["role"],
-                        "content": msg["content"]
-                    })
+            # 确保当前调度器已设置
+            if self._current_orchestrator is None:
+                # 根据配置模式设置当前调度器
+                if self.config.llm.mode.value == "code-plan":
+                    self._current_orchestrator = self.code_plan_orchestrator
+                    logger.info("Using Code-Plan mode orchestrator")
+                else:
+                    self._current_orchestrator = self.tool_use_orchestrator
+                    logger.info("Using Tool-Use mode orchestrator")
 
-            # 执行 OpenAI Tool Calling 循环
-            final_output, full_messages = await self._openai_tool_calling_loop(
-                user_input=user_input,
-                session_id=session_id,
-                trace_id=trace_id,
-                history=conversation_history,
-            )
+            # 根据当前调度器类型选择处理方式
+            if self._current_orchestrator is self.code_plan_orchestrator:
+                # 使用 Code-Plan 模式
+                code_plan_result = await self.code_plan_orchestrator.orchestrate(
+                    user_input=user_input,
+                    session_id=session_id,
+                )
 
-            # 添加到历史
-            self.add_to_history("assistant", final_output)
+                final_output = code_plan_result.final_output
+                # 如果需要，可以创建适配器将 CodePlanResult 转换为现有格式
+                # 这里简化处理，直接使用结果
 
-            total_duration = int((time.perf_counter() - start_time) * 1000)
+                # 添加到历史
+                self.add_to_history("assistant", final_output)
 
-            # 创建简化的调度结果（保持向后兼容）
-            from ..orchestrator import OrchestrationResult
-            orch_result = OrchestrationResult(
-                trace_id=trace_id,
-                session_id=session_id,
-                user_input=user_input,
-                final_output=final_output,
-                final_status="completed",
-                total_latency_ms=total_duration,
-                messages=full_messages,
-            )
+                total_duration = int((time.perf_counter() - start_time) * 1000)
 
-            return AgentResult(
-                trace_id=trace_id,
-                final_output=final_output,
-                orchestration_result=orch_result,
-                total_duration_ms=total_duration,
-            )
+                # 创建适配器结果（保持向后兼容）
+                from ..orchestrator import OrchestrationResult
+                orch_result = OrchestrationResult(
+                    trace_id=trace_id,
+                    session_id=session_id,
+                    user_input=user_input,
+                    final_output=final_output,
+                    final_status=code_plan_result.final_status,
+                    total_latency_ms=total_duration,
+                    messages=[],  # Code-Plan 模式的消息流不同
+                )
+
+                return AgentResult(
+                    trace_id=trace_id,
+                    final_output=final_output,
+                    orchestration_result=orch_result,
+                    total_duration_ms=total_duration,
+                )
+
+            else:
+                # 使用现有的 Tool-Use 模式
+                # 获取历史消息（不包含当前这条用户输入，因为会在循环中添加）
+                history = self.context.get_history()
+                conversation_history = []
+                if history:
+                    # 转换历史消息格式
+                    for msg in history[:-1]:  # 排除最后一条用户输入
+                        conversation_history.append({
+                            "role": msg["role"],
+                            "content": msg["content"]
+                        })
+
+                # 执行 OpenAI Tool Calling 循环
+                final_output, full_messages = await self._openai_tool_calling_loop(
+                    user_input=user_input,
+                    session_id=session_id,
+                    trace_id=trace_id,
+                    history=conversation_history,
+                )
+
+                # 添加到历史
+                self.add_to_history("assistant", final_output)
+
+                total_duration = int((time.perf_counter() - start_time) * 1000)
+
+                # 创建简化的调度结果（保持向后兼容）
+                from ..orchestrator import OrchestrationResult
+                orch_result = OrchestrationResult(
+                    trace_id=trace_id,
+                    session_id=session_id,
+                    user_input=user_input,
+                    final_output=final_output,
+                    final_status="completed",
+                    total_latency_ms=total_duration,
+                    messages=full_messages,
+                )
+
+                return AgentResult(
+                    trace_id=trace_id,
+                    final_output=final_output,
+                    orchestration_result=orch_result,
+                    total_duration_ms=total_duration,
+                )
 
         except Exception as e:
             logger.exception("Processing failed")
