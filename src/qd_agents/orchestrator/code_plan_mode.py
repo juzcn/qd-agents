@@ -105,8 +105,17 @@ class CodePlanModeOrchestrator:
         """
         self.llm = llm_client
         self.registry = tool_registry
-        self.prompts = prompt_loader
-        self.context = context_manager or ContextManager(prompt_loader=prompt_loader)
+
+        # 初始化提示词加载器
+        if prompt_loader is None:
+            # 默认模板目录：../prompts/templates
+            from pathlib import Path
+            template_dir = Path(__file__).parent.parent / "prompts" / "templates"
+            self.prompts = PromptLoader(template_dir=template_dir)
+        else:
+            self.prompts = prompt_loader
+
+        self.context = context_manager or ContextManager(prompt_loader=self.prompts)
         self.execution = execution_engine or ExecutionEngine()
         self.tool_threshold = tool_threshold
 
@@ -730,25 +739,12 @@ class CodePlanModeOrchestrator:
 
             l0_tools = self._tool_l0_cache or []
 
-            # 构建提示词
-            prompt = f"""你是一个智能助手，需要判断用户的问题是否需要使用工具来回答。
-
-用户输入: {user_input}
-
-可用工具列表（仅名称和描述）:
-{json.dumps(l0_tools, ensure_ascii=False, indent=2)}
-
-请判断：
-1. 如果你可以用自己的知识直接回答这个问题，请直接给出回答。
-2. 如果需要使用工具，请列出需要的工具名称列表（去重）。
-
-请用以下JSON格式回复：
-{{
-    "needs_tools": true/false,
-    "direct_answer": "如果不需要工具，这里是你直接的回答",
-    "tool_list": ["tool_name1", "tool_name2", ...]  # 如果需要工具
-}}
-"""
+            # 使用模板渲染提示词
+            prompt = self.prompts.render(
+                "code_plan_judge",
+                user_input=user_input,
+                tools_l0=l0_tools,
+            )
 
             # 调用 LLM
             response = await self.llm.chat(
@@ -836,33 +832,12 @@ class CodePlanModeOrchestrator:
                         "security": tool.security,
                     })
 
-            # 构建提示词
-            prompt = f"""你是一个智能规划器，需要根据用户的问题和可用工具来制定执行计划。
-
-用户输入: {user_input}
-
-需要使用的工具（L1详情）:
-{json.dumps(l1_tools_info, ensure_ascii=False, indent=2)}
-
-请评估任务复杂度：
-1. 如果只需要顺序调用1-3个工具且无分支/循环/并行，则选择直接调用（direct_call），生成结构化调用计划（JSON序列，指定工具和参数）。
-2. 否则，选择自然语言方案（natural_language），描述步骤、依赖、条件、循环、异常处理。
-
-请用以下JSON格式回复：
-{{
-    "plan_type": "direct_call" 或 "natural_language",
-    "execution_plan": {{
-        "steps": [
-            {{
-                "tool": "tool_name",
-                "parameters": {{...}},
-                "description": "步骤描述"
-            }}
-        ]
-    }},
-    "natural_language_plan": "如果选择自然语言方案，这里是详细的方案文本"
-}}
-"""
+            # 使用模板渲染提示词
+            prompt = self.prompts.render(
+                "code_plan_plan",
+                user_input=user_input,
+                tools_l1_info=l1_tools_info,
+            )
 
             # 调用 LLM
             response = await self.llm.chat(
@@ -947,29 +922,13 @@ class CodePlanModeOrchestrator:
                         "description": l1_info.get("description", ""),
                     })
 
-            # 构建提示词
-            prompt = f"""你是一个代码生成器，需要将自然语言方案转换为可执行的 Python 代码。
-
-用户输入: {user_input}
-
-自然语言方案: {natural_language_plan}
-
-相关工具信息:
-{json.dumps(l1_tools_info, ensure_ascii=False, indent=2)}
-
-要求：
-1. 生成的代码将在安全的沙盒环境中执行，所有已注册工具都作为同名函数可用
-2. 实现方案中的顺序、并行（使用 asyncio 或 concurrent.futures）、条件、循环
-3. 包含错误处理（try-except），捕获异常并记录错误信息
-4. 不包含危险操作（禁止 os.system, eval, exec, __import__, open 等）
-5. 输出结果以打印方式提供（如 print(json.dumps(result, ensure_ascii=False, indent=2))）
-6. 工具调用格式：直接调用工具函数，如 result = tool_name(**parameters)
-7. 如果是异步工具，请使用 await，如 result = await tool_name(**parameters)
-8. 代码应包含必要的导入（如 json, asyncio, concurrent.futures 等）
-9. 最终结果应存储在变量 result 中，或通过 print 输出
-
-请只输出 Python 代码，不要包含其他解释或注释。
-"""
+            # 使用模板渲染提示词
+            prompt = self.prompts.render(
+                "code_plan_code_generation",
+                user_input=user_input,
+                natural_language_plan=natural_language_plan,
+                tools_l1_info=l1_tools_info,
+            )
 
             # 调用 LLM
             response = await self.llm.chat(
@@ -1074,21 +1033,12 @@ class CodePlanModeOrchestrator:
         }
 
         try:
-            # 构建提示词
-            prompt = f"""你是一个智能助手，需要根据执行结果生成友好、简洁的自然语言回答。
-
-用户原始问题: {user_input}
-
-执行结果: {execution_output}
-
-要求：
-1. 将结构化结果转换为友好、简洁的自然语言回答
-2. 如果执行失败，解释原因并提供可操作建议
-3. 不编造信息
-4. 回答要直接、有用
-
-请直接给出回答，不要包含其他内容。
-"""
+            # 使用模板渲染提示词
+            prompt = self.prompts.render(
+                "code_plan_answer",
+                user_input=user_input,
+                execution_output=execution_output,
+            )
 
             # 调用 LLM
             response = await self.llm.chat(
