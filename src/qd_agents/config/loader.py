@@ -115,6 +115,7 @@ class ObservabilityConfig(BaseModel):
     log_session_dir: Path = Path(".")
     log_rotation: str = "daily"
     log_retention_days: int = 30
+    log_external_api: bool = False
     tracing_enabled: bool = True
     tracing_exporter: str = "otlp"
     tracing_endpoint: str = ""

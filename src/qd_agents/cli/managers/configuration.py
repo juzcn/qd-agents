@@ -39,11 +39,13 @@ def setup_configuration(
     log_level = config.observability.log_level if config.observability else "INFO"
     log_format = config.observability.log_format if config.observability else "json"
     log_dir = config.observability.log_session_dir if (config.observability and config.observability.log_session_dir) else Path(".")
+    log_external_api = config.observability.log_external_api if config.observability else False
 
     log_file, trace_id = setup_session_logging(
         log_dir=log_dir,
         level=log_level,
         log_format=log_format,
+        log_external_api=log_external_api,
     )
 
     console.print(f"[dim]日志文件: {log_file}[/]\n", style="dim")
