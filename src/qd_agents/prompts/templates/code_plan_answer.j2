@@ -2,6 +2,13 @@
 
 用户原始问题: {{ user_input }}
 
+{% if recent_history %}
+最近对话历史:
+{% for item in recent_history %}
+{{ item.role }}: {{ item.content }}
+{% endfor %}
+{% endif %}
+
 执行结果: {{ execution_output }}
 
 要求：

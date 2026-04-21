@@ -2,6 +2,17 @@
 
 用户输入: {{ user_input }}
 
+{% if recent_history %}
+最近对话历史:
+{% for item in recent_history %}
+{{ item.role }}: {{ item.content }}
+{% endfor %}
+{% endif %}
+
+{% if earlier_history_summary %}
+{{ earlier_history_summary }}
+{% endif %}
+
 可用工具列表（仅名称和描述）:
 {{ tools_l0 | tojson(indent=2) }}
 
