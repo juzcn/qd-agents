@@ -617,6 +617,9 @@ class CodePlanModeOrchestrator:
 
         logger.info(f"Starting Code-Plan orchestration (trace_id: {trace_id}): {user_input[:100]}...")
 
+        # 添加用户输入到历史中
+        self._add_to_user_visible_history("user", user_input)
+
         try:
             # 第一步：判断是否需要工具
             step1_result = await self._step_judge(user_input, trace_id)
@@ -625,6 +628,8 @@ class CodePlanModeOrchestrator:
             if step1_result.get("status") == StepStatus.FAILED:
                 result.final_status = "failed"
                 result.final_output = "第一步判断失败"
+                # 添加助手回答到历史中
+                self._add_to_user_visible_history("assistant", str(result.final_output))
                 return result
 
             # 检查是否需要工具
@@ -635,6 +640,8 @@ class CodePlanModeOrchestrator:
                 result.final_output = direct_answer
                 result.final_status = "completed"
                 result.total_latency_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                # 添加助手回答到历史中
+                self._add_to_user_visible_history("assistant", str(result.final_output))
                 return result
 
             # 获取工具列表
@@ -643,6 +650,8 @@ class CodePlanModeOrchestrator:
                 result.final_output = "无法确定需要哪些工具，请提供更多信息。"
                 result.final_status = "completed"
                 result.total_latency_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                # 添加助手回答到历史中
+                self._add_to_user_visible_history("assistant", str(result.final_output))
                 return result
 
             # 第二步：规划（直接调用或生成方案）
@@ -652,6 +661,8 @@ class CodePlanModeOrchestrator:
             if step2_result.get("status") == StepStatus.FAILED:
                 result.final_status = "failed"
                 result.final_output = "第二步规划失败"
+                # 添加助手回答到历史中
+                self._add_to_user_visible_history("assistant", str(result.final_output))
                 return result
 
             plan_type = step2_result.get("plan_type")  # "direct_call" or "natural_language"
@@ -678,6 +689,8 @@ class CodePlanModeOrchestrator:
                 if step3_result.get("status") == StepStatus.FAILED:
                     result.final_status = "failed"
                     result.final_output = "第三步代码生成失败"
+                    # 添加助手回答到历史中
+                    self._add_to_user_visible_history("assistant", str(result.final_output))
                     return result
 
                 generated_code = step3_result.get("generated_code", "")
@@ -690,6 +703,8 @@ class CodePlanModeOrchestrator:
                 if step4_result.get("status") == StepStatus.FAILED:
                     result.final_status = "failed"
                     result.final_output = "第四步执行失败"
+                    # 添加助手回答到历史中
+                    self._add_to_user_visible_history("assistant", str(result.final_output))
                     return result
 
                 execution_output = step4_result.get("execution_output", "")
@@ -701,6 +716,8 @@ class CodePlanModeOrchestrator:
                 if step5_result.get("status") == StepStatus.FAILED:
                     result.final_status = "failed"
                     result.final_output = "第五步生成回答失败"
+                    # 添加助手回答到历史中
+                    self._add_to_user_visible_history("assistant", str(result.final_output))
                     return result
 
                 result.final_output = step5_result.get("final_answer", "")
@@ -713,6 +730,10 @@ class CodePlanModeOrchestrator:
             result.final_output = f"Code-Plan 调度失败: {e}"
 
         result.total_latency_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+        # 添加助手回答到历史中
+        if result.final_output is not None:
+            self._add_to_user_visible_history("assistant", str(result.final_output))
 
         # 保存工作记忆快照
         result.working_memory_snapshot = list(self.working_memory.values())
@@ -739,10 +760,16 @@ class CodePlanModeOrchestrator:
 
             l0_tools = self._tool_l0_cache or []
 
+            # 获取历史信息
+            recent_history = self._get_recent_user_visible_history(2)
+            earlier_history_summary = self._get_earlier_history_summary()
+
             # 使用模板渲染提示词
             prompt = self.prompts.render(
                 "code_plan_judge",
                 user_input=user_input,
+                recent_history=recent_history,
+                earlier_history_summary=earlier_history_summary,
                 tools_l0=l0_tools,
             )
 
@@ -836,6 +863,7 @@ class CodePlanModeOrchestrator:
             prompt = self.prompts.render(
                 "code_plan_plan",
                 user_input=user_input,
+                full_user_history=self._user_visible_history,
                 tools_l1_info=l1_tools_info,
             )
 
@@ -1033,10 +1061,14 @@ class CodePlanModeOrchestrator:
         }
 
         try:
+            # 获取最近历史
+            recent_history = self._get_recent_user_visible_history(1)
+
             # 使用模板渲染提示词
             prompt = self.prompts.render(
                 "code_plan_answer",
                 user_input=user_input,
+                recent_history=recent_history,
                 execution_output=execution_output,
             )
 

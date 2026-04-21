@@ -2,6 +2,13 @@
 
 用户输入: {{ user_input }}
 
+{% if full_user_history %}
+会话历史:
+{% for item in full_user_history %}
+{{ item.role }}: {{ item.content }}
+{% endfor %}
+{% endif %}
+
 需要使用的工具（L1详情）:
 {{ tools_l1_info | tojson(indent=2) }}
 
