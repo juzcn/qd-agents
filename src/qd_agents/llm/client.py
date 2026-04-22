@@ -163,6 +163,77 @@ class LLMClient:
             return True
         return False
 
+    def _clean_escape_sequences(self, text: str) -> str:
+        """
+        清理常见的转义字符序列，提高可读性
+
+        Args:
+            text: 包含转义字符的文本
+
+        Returns:
+            清理后的文本
+        """
+        if not isinstance(text, str):
+            return str(text)
+
+        # 先解码 Unicode 转义序列
+        import re
+
+        def decode_unicode_escape(match):
+            hex_str = match.group(1)
+            try:
+                # 将十六进制转换为整数，然后转换为字符
+                return chr(int(hex_str, 16))
+            except (ValueError, OverflowError):
+                # 如果转换失败，返回原始字符串
+                return match.group(0)
+
+        # 处理 \uXXXX 格式的 Unicode 转义序列
+        cleaned = re.sub(r'\\u([0-9a-fA-F]{4})', decode_unicode_escape, text)
+
+        # 处理其他常见转义序列
+        replacements = [
+            ('\\n', '\n'),        # 换行
+            ('\\r', '\r'),        # 回车
+            ('\\t', '\t'),        # 制表符
+            ('\\\\', '\\'),       # 反斜杠
+            ('\\"', '"'),         # 双引号
+            ("\\'", "'"),         # 单引号
+        ]
+
+        for old, new in replacements:
+            cleaned = cleaned.replace(old, new)
+
+        return cleaned
+
+    def _format_messages_for_logging(self, messages: list[dict[str, str]]) -> str:
+        """
+        格式化消息用于日志记录，只显示content部分
+
+        Args:
+            messages: 消息列表
+
+        Returns:
+            格式化的字符串
+        """
+        if not messages:
+            return "[empty messages]"
+
+        # 通常只有一个消息
+        msg = messages[0]
+        content = msg.get("content", "")
+        tool_calls = msg.get("tool_calls")
+
+        if content:
+            # 清理转义字符
+            cleaned_content = self._clean_escape_sequences(content)
+            return cleaned_content
+        elif tool_calls:
+            # 如果有工具调用，显示简要信息
+            return f"[{len(tool_calls)} tool calls]"
+        else:
+            return "[no content]"
+
     async def chat(
         self,
         messages: list[dict[str, str]],
@@ -200,6 +271,9 @@ class LLMClient:
 
             try:
                 logger.info("Calling model: %s", use_model)
+                # 记录输入 messages (INFO level)
+                formatted_messages = self._format_messages_for_logging(messages)
+                logger.info("LLM Prompt:\n%s", formatted_messages)
 
                 response = await self._client.chat.completions.create(
                     model=use_model,
@@ -213,6 +287,19 @@ class LLMClient:
 
                 if not stream:
                     logger.debug("Response: %s", response.model_dump_json() if hasattr(response, 'model_dump_json') else str(response))  # type: ignore
+                    # 记录输出 content (INFO level)
+                    if response.choices and len(response.choices) > 0:
+                        message = response.choices[0].message
+                        if message.content:
+                            content = message.content
+                            # 所有内容按文本渲染
+                            cleaned_content = self._clean_escape_sequences(content)
+                            logger.info("LLM Completion:\n%s", cleaned_content)
+                        elif hasattr(message, 'tool_calls') and message.tool_calls:
+                            logger.info("LLM Completion:\n%s", json.dumps([tc.model_dump() for tc in message.tool_calls], indent=2, ensure_ascii=False))
+                        else:
+                            logger.info("LLM Completion: no content or tool calls")
+
                     # 记录 token 使用情况
                     if hasattr(response, 'usage') and response.usage:
                         logger.info(
@@ -272,6 +359,10 @@ class LLMClient:
         """
         # 流式响应不自动重试（太复杂）
         use_model = model or self.current_model
+        # 记录输入 messages (INFO level)
+        logger.info("Calling model (stream): %s", use_model)
+        formatted_messages = self._format_messages_for_logging(messages)
+        logger.info("LLM Prompt (stream):\n%s", formatted_messages)
 
         stream = await self._client.chat.completions.create(
             model=use_model,
