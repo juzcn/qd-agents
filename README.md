@@ -113,7 +113,6 @@ cp config.json.template config.json
 {
   "observability": {
     "log_level": "DEBUG",
-    "log_format": "json",
     "log_output": ["file"],
     "log_session_dir": "."
   }
@@ -121,7 +120,6 @@ cp config.json.template config.json
 ```
 
 - `log_level`: 日志级别 (DEBUG/INFO/WARNING/ERROR) - 开发环境建议使用 `DEBUG`
-- `log_format`: 日志格式 (console/json)
 - `log_output`: 输出位置 (file/console) - 默认仅文件输出
 - `log_session_dir`: 会话日志存放目录 - 默认当前目录 (`.`)
 

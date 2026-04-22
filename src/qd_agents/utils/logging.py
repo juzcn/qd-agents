@@ -8,8 +8,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import structlog
-
 
 class ImmediateFlushFileHandler(logging.FileHandler):
     """立即刷新的文件处理器，方便在 VS Code 中实时查看日志"""
@@ -79,32 +77,38 @@ def generate_session_log_path(log_dir: Path, trace_id: Optional[str] = None) -> 
 
 def setup_logging(
     level: str = "INFO",
-    log_format: str = "console",
     log_file: Optional[Path] = None,
     log_external_api: bool = False,
 ) -> None:
     """
-    配置结构化日志
+    配置标准库日志
 
     Args:
         level: 日志级别
-        log_format: 日志格式 (console/json)
         log_file: 日志文件路径
         log_external_api: 是否记录外部API调用日志
     """
     # 配置标准库 logging
     handlers = []
 
+    # 定义日志格式
+    formatter = logging.Formatter(
+        fmt='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
     if log_file:
         # 确保目录存在
         log_file.parent.mkdir(parents=True, exist_ok=True)
         file_handler = ImmediateFlushFileHandler(log_file, encoding='utf-8')
+        file_handler.setFormatter(formatter)
         handlers.append(file_handler)
     else:
-        handlers.append(logging.StreamHandler(sys.stdout))
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(formatter)
+        handlers.append(console_handler)
 
     logging.basicConfig(
-        format="%(message)s",
         handlers=handlers,
         level=getattr(logging, level.upper()),
     )
@@ -117,32 +121,10 @@ def setup_logging(
         httpcore_logger = logging.getLogger("httpcore")
         httpcore_logger.setLevel(logging.WARNING)
 
-    # 配置 structlog
-    processors = [
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.TimeStamper(fmt="iso"),
-    ]
-
-    if log_format == "json":
-        processors.append(structlog.processors.JSONRenderer())
-    else:
-        processors.append(
-            structlog.dev.ConsoleRenderer(colors=True)
-        )
-
-    structlog.configure(
-        processors=processors,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
-
 
 def setup_session_logging(
     log_dir: Path,
     level: str = "INFO",
-    log_format: str = "json",
     trace_id: Optional[str] = None,
     log_external_api: bool = False,
 ) -> tuple[Path, str]:
@@ -152,7 +134,6 @@ def setup_session_logging(
     Args:
         log_dir: 日志目录
         level: 日志级别
-        log_format: 日志格式 (console/json)
         trace_id: 可选的追踪 ID
         log_external_api: 是否记录外部API调用日志
 
@@ -165,13 +146,11 @@ def setup_session_logging(
     log_file = generate_session_log_path(log_dir, trace_id)
     setup_logging(
         level=level,
-        log_format=log_format,
         log_file=log_file,
         log_external_api=log_external_api
     )
 
-    # 设置 trace_id 上下文
-    structlog.contextvars.bind_contextvars(trace_id=trace_id)
+    # trace_id 已包含在日志文件名中，无需额外上下文
 
     return log_file, trace_id
 

@@ -71,7 +71,6 @@
   },
   "observability": {
     "log_level": "INFO",
-    "log_format": "json",
     "log_output": ["file"],
     "log_session_dir": ".",
     "log_external_api": false,
