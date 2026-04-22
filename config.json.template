@@ -5,8 +5,8 @@
     "environment": "development"
   },
   "llm": {
-    "default_provider": "nvidia",
-    "default_model": null,
+    "default_provider": "xunfei",
+    "default_model": "astron-code-latest",
     "providers": {
       "nvidia": {
         "api_key": "your_nvidia_api_key_here",
@@ -25,7 +25,8 @@
         "max_retries": 3
       }
     },
-    "tool_threshold": 50
+    "tool_threshold": 50,
+    "mode": "code-plan"
   },
   "search": {
     "serper": {
@@ -70,7 +71,7 @@
     "cache_ttl": 3600
   },
   "observability": {
-    "log_level": "INFO",
+    "log_level": "DEBUG",
     "log_output": ["file"],
     "log_session_dir": ".",
     "log_external_api": false,
@@ -82,7 +83,8 @@
     "tracing_sample_rate": 1.0,
     "metrics_enabled": true,
     "metrics_exporter": "prometheus",
-    "metrics_port": 9090
+    "metrics_port": 9090,
+    "log_immediate_flush": true
   },
   "storage": {
     "data_dir": "data",
