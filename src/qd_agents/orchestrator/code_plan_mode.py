@@ -297,8 +297,21 @@ class CodePlanModeOrchestrator:
             return []
 
         tools_l1 = []
+        # 构建工具名称到L0条目的映射（名称可能重复，但L0缓存已去重）
+        l0_name_to_id = {}
+        if self._tool_l0_cache:
+            for l0_tool in self._tool_l0_cache:
+                l0_name_to_id[l0_tool["name"]] = l0_tool["id"]
+
         for tool_name in tool_list:
-            # 查找工具
+            # 首先尝试从缓存中获取工具信息
+            if tool_name in l0_name_to_id:
+                tool_id = l0_name_to_id[tool_name]
+                if tool_id in self._tool_l1_cache:
+                    tools_l1.append(self._tool_l1_cache[tool_id])
+                    continue
+
+            # 回退到注册表查找
             tool = self.registry.get_by_name(tool_name)
             if tool and tool.id in self._tool_l1_cache:
                 tools_l1.append(self._tool_l1_cache[tool.id])
@@ -916,8 +929,21 @@ class CodePlanModeOrchestrator:
                 await self._cache_tool_disclosure_levels()
 
             l1_tools_info = []
+            # 构建工具名称到L0条目的映射（名称可能重复，但L0缓存已去重）
+            l0_name_to_id = {}
+            if self._tool_l0_cache:
+                for l0_tool in self._tool_l0_cache:
+                    l0_name_to_id[l0_tool["name"]] = l0_tool["id"]
+
             for tool_name in tool_list:
-                # 查找工具
+                # 首先尝试从缓存中获取工具信息
+                if tool_name in l0_name_to_id:
+                    tool_id = l0_name_to_id[tool_name]
+                    if tool_id in self._tool_l1_cache:
+                        l1_tools_info.append(self._tool_l1_cache[tool_id])
+                        continue
+
+                # 回退到注册表查找
                 tool = self.registry.get_by_name(tool_name)
                 if tool and tool.id in self._tool_l1_cache:
                     l1_tools_info.append(self._tool_l1_cache[tool.id])
