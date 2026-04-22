@@ -206,12 +206,12 @@ class LLMClient:
 
         return cleaned
 
-    def _format_messages_for_logging(self, messages: list[dict[str, str]]) -> str:
+    def _format_messages_for_logging(self, messages: list[dict[str, Any]]) -> str:
         """
-        格式化消息用于日志记录，只显示content部分
+        格式化消息用于日志记录，显示完整的对话历史
 
         Args:
-            messages: 消息列表
+            messages: 消息列表，可能包含多种类型（user, assistant, tool）
 
         Returns:
             格式化的字符串
@@ -219,20 +219,62 @@ class LLMClient:
         if not messages:
             return "[empty messages]"
 
-        # 通常只有一个消息
-        msg = messages[0]
-        content = msg.get("content", "")
-        tool_calls = msg.get("tool_calls")
+        import json
+        formatted_parts = []
 
-        if content:
-            # 清理转义字符
-            cleaned_content = self._clean_escape_sequences(content)
-            return cleaned_content
-        elif tool_calls:
-            # 如果有工具调用，显示简要信息
-            return f"[{len(tool_calls)} tool calls]"
-        else:
-            return "[no content]"
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            tool_calls = msg.get("tool_calls")
+
+            if role == "user":
+                if content:
+                    cleaned_content = self._clean_escape_sequences(str(content))
+                    formatted_parts.append(f"user[{i}]: {cleaned_content}")
+                else:
+                    formatted_parts.append(f"user[{i}]: [no content]")
+            elif role == "assistant":
+                if content:
+                    cleaned_content = self._clean_escape_sequences(str(content))
+                    formatted_parts.append(f"assistant[{i}]: {cleaned_content}")
+                elif tool_calls:
+                    # 处理tool_calls，可能是Pydantic模型或字典
+                    tool_calls_list = []
+                    for tc in tool_calls:
+                        if hasattr(tc, 'model_dump'):
+                            # Pydantic模型
+                            tool_calls_list.append(tc.model_dump())
+                        elif isinstance(tc, dict):
+                            # 字典
+                            tool_calls_list.append(tc)
+                        else:
+                            # 其他类型
+                            tool_calls_list.append(str(tc))
+
+                    try:
+                        # 尝试格式化为JSON
+                        tool_calls_json = json.dumps(tool_calls_list, indent=2, ensure_ascii=False)
+                        formatted_parts.append(f"assistant[{i}] tool_calls:\n{tool_calls_json}")
+                    except (TypeError, ValueError):
+                        # 如果无法序列化，显示简要信息
+                        formatted_parts.append(f"assistant[{i}]: [{len(tool_calls)} tool calls]")
+                else:
+                    formatted_parts.append(f"assistant[{i}]: [no content or tool calls]")
+            elif role == "tool":
+                tool_id = msg.get("tool_call_id", "unknown")
+                # 缩短工具结果，避免日志过大
+                if content:
+                    cleaned_content = self._clean_escape_sequences(str(content))
+                    if len(cleaned_content) > 200:
+                        formatted_parts.append(f"tool[{tool_id}]: {cleaned_content[:200]}...")
+                    else:
+                        formatted_parts.append(f"tool[{tool_id}]: {cleaned_content}")
+                else:
+                    formatted_parts.append(f"tool[{tool_id}]: [no content]")
+            else:
+                formatted_parts.append(f"{role}[{i}]: {str(msg)[:100]}{'...' if len(str(msg)) > 100 else ''}")
+
+        return "\n".join(formatted_parts)
 
     async def chat(
         self,

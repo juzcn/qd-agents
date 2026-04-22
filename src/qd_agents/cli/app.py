@@ -127,7 +127,7 @@ def main(
     ctx: typer.Context,
     list_models: bool = typer.Option(False, "--list-models", help="列出可用模型"),
     version: bool = typer.Option(False, "--version", help="显示版本信息"),
-    mode: AgentMode = typer.Option(AgentMode.CODE_PLAN, "--mode", help="智能体工作模式: tool-use, code-plan"),
+    mode: Optional[AgentMode] = typer.Option(None, "--mode", help="智能体工作模式: tool-use, code-plan"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
 ):

@@ -434,18 +434,10 @@ class QDAgent:
         self.add_to_history("user", user_input)
 
         try:
-            # 确保当前调度器已设置
-            if self._current_orchestrator is None:
-                # 根据配置模式设置当前调度器
-                if self.config.llm.mode.value == "code-plan":
-                    self._current_orchestrator = self.code_plan_orchestrator
-                    logger.info("Using Code-Plan mode orchestrator")
-                else:
-                    self._current_orchestrator = self.tool_use_orchestrator
-                    logger.info("Using Tool-Use mode orchestrator")
-
-            # 根据当前调度器类型选择处理方式
-            if self._current_orchestrator is self.code_plan_orchestrator:
+            # 根据当前配置模式选择处理方式
+            if self.config.llm.mode.value == "code-plan":
+                # 使用 Code-Plan 模式
+                logger.info("Using Code-Plan mode orchestrator")
                 # 使用 Code-Plan 模式
                 code_plan_result = await self.code_plan_orchestrator.orchestrate(
                     user_input=user_input,
