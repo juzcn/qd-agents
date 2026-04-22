@@ -110,7 +110,6 @@ class StorageConfig(BaseModel):
 class ObservabilityConfig(BaseModel):
     """可观测性配置"""
     log_level: str = "INFO"
-    log_format: str = "json"
     log_output: list[str] = Field(default_factory=lambda: ["file"])
     log_session_dir: Path = Path(".")
     log_rotation: str = "daily"
