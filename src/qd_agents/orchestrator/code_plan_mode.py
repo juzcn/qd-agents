@@ -304,7 +304,12 @@ class CodePlanModeOrchestrator:
                 l0_name_to_id[l0_tool["name"]] = l0_tool["id"]
 
         for tool_name in tool_list:
-            # 首先尝试从缓存中获取工具信息
+            # 首先尝试直接使用 tool_name 作为工具ID从 _tool_l1_cache 获取
+            if tool_name in self._tool_l1_cache:
+                tools_l1.append(self._tool_l1_cache[tool_name])
+                continue
+
+            # 其次尝试将 tool_name 作为工具名称查找
             if tool_name in l0_name_to_id:
                 tool_id = l0_name_to_id[tool_name]
                 if tool_id in self._tool_l1_cache:
@@ -936,7 +941,12 @@ class CodePlanModeOrchestrator:
                     l0_name_to_id[l0_tool["name"]] = l0_tool["id"]
 
             for tool_name in tool_list:
-                # 首先尝试从缓存中获取工具信息
+                # 首先尝试直接使用 tool_name 作为工具ID从 _tool_l1_cache 获取
+                if tool_name in self._tool_l1_cache:
+                    l1_tools_info.append(self._tool_l1_cache[tool_name])
+                    continue
+
+                # 其次尝试将 tool_name 作为工具名称查找
                 if tool_name in l0_name_to_id:
                     tool_id = l0_name_to_id[tool_name]
                     if tool_id in self._tool_l1_cache:
