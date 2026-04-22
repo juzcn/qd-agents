@@ -323,6 +323,57 @@ class CodePlanModeOrchestrator:
 
         return tools_l1
 
+    def _parse_llm_json_response(self, content: str) -> Dict[str, Any]:
+        """
+        解析LLM的JSON响应，处理多种格式：
+        1. 纯JSON
+        2. JSON代码块（```json 或 ```）
+        3. JSON后跟额外文本（提取第一个JSON对象）
+
+        Args:
+            content: LLM响应内容
+
+        Returns:
+            解析后的JSON字典
+
+        Raises:
+            json.JSONDecodeError: 如果无法解析为JSON
+        """
+        import json
+        import re
+
+        # 清理响应内容
+        cleaned = content.strip()
+
+        # 尝试1: 如果是JSON代码块，提取JSON部分
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', cleaned, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+            return json.loads(json_str)
+
+        # 尝试2: 查找第一个JSON对象（可能后面有额外文本）
+        # 查找第一个 { 和对应的 }
+        brace_count = 0
+        start_idx = -1
+        for i, char in enumerate(cleaned):
+            if char == '{':
+                if start_idx == -1:
+                    start_idx = i
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0 and start_idx != -1:
+                    # 找到完整的JSON对象
+                    json_str = cleaned[start_idx:i+1]
+                    try:
+                        return json.loads(json_str)
+                    except json.JSONDecodeError:
+                        # 继续尝试其他方法
+                        pass
+
+        # 尝试3: 直接解析整个内容
+        return json.loads(cleaned)
+
     def _get_relevant_working_memory(
         self,
         working_memory_items: Optional[List[WorkingMemoryItem]],
@@ -755,17 +806,79 @@ class CodePlanModeOrchestrator:
                 self._add_to_user_visible_history("assistant", str(result.final_output))
                 return result
 
-            plan_type = step2_result.get("plan_type")  # "direct_call" or "natural_language"
+            response_type = step2_result.get("response_type")  # "tool_calling" or "natural_language"
 
-            if plan_type == "direct_call":
-                # 直接调用工具
-                # 这里简化处理，实际应该执行工具调用
-                # 为了兼容性，暂时跳转到第四步风格执行
-                execution_plan = step2_result.get("execution_plan", {})
-                # 执行直接调用
-                # 这里需要执行工具调用，然后生成回答
-                # 暂时简化处理
-                result.final_output = "直接工具调用功能开发中，请使用自然语言方案模式。"
+            if response_type == "tool_calling":
+                # 执行OpenAI Tool Calling格式的工具调用
+                tool_calls = step2_result.get("tool_calls", [])
+
+                # 执行工具调用
+                execution_results = []
+                for tool_call in tool_calls:
+                    try:
+                        function_info = tool_call.get("function", {})
+                        tool_name = function_info.get("name")
+                        arguments_str = function_info.get("arguments", "{}")
+
+                        # 解析参数（arguments可能是JSON字符串或已经是字典）
+                        if isinstance(arguments_str, str):
+                            arguments = json.loads(arguments_str)
+                        elif isinstance(arguments_str, dict):
+                            arguments = arguments_str
+                        else:
+                            arguments = {}
+
+                        # 执行工具
+                        if self.execution:
+                            tool_result = await self.execution.execute_tool(
+                                tool_name=tool_name,
+                                tool_input=arguments,
+                                trace_id=trace_id
+                            )
+                            execution_results.append({
+                                "tool_call_id": tool_call.get("id"),
+                                "tool_name": tool_name,
+                                "result": tool_result.result,
+                                "success": tool_result.success,
+                                "error": tool_result.error
+                            })
+                        else:
+                            # 如果没有执行引擎，模拟执行
+                            execution_results.append({
+                                "tool_call_id": tool_call.get("id"),
+                                "tool_name": tool_name,
+                                "result": f"Tool '{tool_name}' called with arguments: {arguments}",
+                                "success": True,
+                                "error": None
+                            })
+                    except Exception as e:
+                        logger.exception(f"Failed to execute tool call {tool_call}: {e}")
+                        # 尝试从tool_call获取工具名称，如果获取失败则使用未知
+                        error_tool_name = "unknown"
+                        if isinstance(tool_call, dict):
+                            function_info = tool_call.get("function", {})
+                            if isinstance(function_info, dict):
+                                error_tool_name = function_info.get("name", "unknown")
+
+                        execution_results.append({
+                            "tool_call_id": tool_call.get("id") if isinstance(tool_call, dict) else None,
+                            "tool_name": error_tool_name,
+                            "result": None,
+                            "success": False,
+                            "error": str(e)
+                        })
+
+                # 基于工具调用结果生成最终回答
+                # 这里简化处理，直接组合结果
+                if execution_results and all(r.get("success") for r in execution_results):
+                    result_text = "工具调用执行完成：\n"
+                    for r in execution_results:
+                        result_text += f"- {r['tool_name']}: {r['result']}\n"
+                    result.final_output = result_text
+                else:
+                    errors = [r.get('error') for r in execution_results if not r.get('success')]
+                    result.final_output = f"工具调用执行失败：{errors}"
+
                 result.final_status = "completed"
 
             else:  # natural_language
@@ -873,7 +986,7 @@ class CodePlanModeOrchestrator:
 
             # 解析 JSON 响应
             try:
-                judgment = json.loads(content)
+                judgment = self._parse_llm_json_response(content)
                 needs_tools = judgment.get("needs_tools", False)
                 direct_answer = judgment.get("direct_answer", "")
                 tool_list = judgment.get("tool_list", [])
@@ -895,11 +1008,11 @@ class CodePlanModeOrchestrator:
                     "llm_response": content,
                 })
 
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, ValueError) as e:
                 logger.error(f"Failed to parse LLM response as JSON: {content}")
                 step_result.update({
                     "status": StepStatus.FAILED,
-                    "error": "Failed to parse LLM response as JSON",
+                    "error": f"Failed to parse LLM response as JSON: {e}",
                     "llm_response": content,
                 })
 
@@ -983,36 +1096,72 @@ class CodePlanModeOrchestrator:
 
             content = response.choices[0].message.content
 
-            # 解析 JSON 响应
+            # 检测响应类型：OpenAI Tool Calling格式 或 自然语言方案
             try:
-                plan = json.loads(content)
-                plan_type = plan.get("plan_type", "natural_language")
-                execution_plan = plan.get("execution_plan", {})
-                natural_language_plan = plan.get("natural_language_plan", "")
+                # 首先尝试解析为JSON
+                parsed_response = self._parse_llm_json_response(content)
+
+                # 检查是否是OpenAI Tool Calling格式（包含tool_calls字段）
+                if isinstance(parsed_response, dict) and "tool_calls" in parsed_response:
+                    # OpenAI Tool Calling格式
+                    tool_calls = parsed_response.get("tool_calls", [])
+
+                    # 存储到工作记忆
+                    item_id = f"plan_{step_id}"
+                    self.working_memory[item_id] = WorkingMemoryItem(
+                        id=item_id,
+                        type="tool_calling_plan",
+                        content=parsed_response,
+                        step=StepType.PLAN,
+                        dependencies=[f"judgment_*"],  # 依赖第一步的结果
+                    )
+
+                    step_result.update({
+                        "status": StepStatus.COMPLETED,
+                        "response_type": "tool_calling",
+                        "tool_calls": tool_calls,
+                        "llm_response": content,
+                    })
+                else:
+                    # 虽然解析为JSON，但不是OpenAI Tool Calling格式
+                    # 将其视为自然语言方案（可能LLM返回了其他JSON结构）
+                    natural_language_plan = content  # 使用原始内容
+
+                    # 存储到工作记忆
+                    item_id = f"plan_{step_id}"
+                    self.working_memory[item_id] = WorkingMemoryItem(
+                        id=item_id,
+                        type="natural_language_plan",
+                        content={"plan": natural_language_plan},
+                        step=StepType.PLAN,
+                        dependencies=[f"judgment_*"],  # 依赖第一步的结果
+                    )
+
+                    step_result.update({
+                        "status": StepStatus.COMPLETED,
+                        "response_type": "natural_language",
+                        "natural_language_plan": natural_language_plan,
+                        "llm_response": content,
+                    })
+
+            except (json.JSONDecodeError, ValueError):
+                # 无法解析为JSON，视为自然语言方案
+                natural_language_plan = content
 
                 # 存储到工作记忆
                 item_id = f"plan_{step_id}"
                 self.working_memory[item_id] = WorkingMemoryItem(
                     id=item_id,
-                    type="plan",
-                    content=plan,
+                    type="natural_language_plan",
+                    content={"plan": natural_language_plan},
                     step=StepType.PLAN,
                     dependencies=[f"judgment_*"],  # 依赖第一步的结果
                 )
 
                 step_result.update({
                     "status": StepStatus.COMPLETED,
-                    "plan_type": plan_type,
-                    "execution_plan": execution_plan,
+                    "response_type": "natural_language",
                     "natural_language_plan": natural_language_plan,
-                    "llm_response": content,
-                })
-
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse LLM response as JSON: {content}")
-                step_result.update({
-                    "status": StepStatus.FAILED,
-                    "error": "Failed to parse LLM response as JSON",
                     "llm_response": content,
                 })
 

@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 from typing_extensions import Self
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 from enum import Enum
@@ -218,6 +221,15 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
                 provider_data.setdefault('auto_discover', True)
             else:
                 provider_data.setdefault('auto_discover', False)
+
+    # 确保mode字段（如果存在）转换为 AgentMode 枚举
+    if 'llm' in data and data['llm'].get('mode'):
+        try:
+            # 将字符串转换为AgentMode枚举
+            data['llm']['mode'] = AgentMode(data['llm']['mode'])
+        except ValueError as e:
+            logger.warning(f"Invalid mode value '{data['llm']['mode']}' in config: {e}")
+            # 保留原值，让Pydantic验证失败
 
     return Config(**data)
 
