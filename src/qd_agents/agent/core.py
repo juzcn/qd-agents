@@ -197,12 +197,22 @@ class QDAgent:
             logger.info("No MCP tools found to preload")
             return
 
-        # 为每个 MCP 服务器连接并缓存工具
+        # 收集唯一的服务器配置（按 server 键去重）
+        server_configs = {}
         for tool in mcp_tools:
             exec_config = tool.execution
-            server_config = {
+            server_key = exec_config.server or ""
+            if not server_key:
+                logger.warning(f"MCP tool {tool.id} has no server configuration, skipping")
+                continue
+
+            if server_key in server_configs:
+                # 服务器已存在，跳过重复配置
+                continue
+
+            server_configs[server_key] = {
                 'type': ToolExecutionType.MCP,
-                'server': exec_config.server or "",
+                'server': server_key,
                 'transport': exec_config.transport or "stdio",
                 'command': exec_config.command,
                 'args': exec_config.args,
@@ -213,15 +223,30 @@ class QDAgent:
                 'tool': None,
             }
 
-            # 连接 MCP 服务器并缓存工具
+        if not server_configs:
+            logger.warning("No valid MCP server configurations found")
+            return
+
+        # 并行连接所有 MCP 服务器
+        async def connect_server(server_key: str, config: dict):
+            """连接单个 MCP 服务器并缓存工具"""
             try:
-                subtools, executor = await self._get_mcp_server_tools(server_config)
+                subtools, executor = await self._get_mcp_server_tools(config)
                 if subtools:
-                    logger.info(f"Preloaded MCP server '{exec_config.server}' with {len(subtools)} tools")
+                    logger.info(f"Preloaded MCP server '{server_key}' with {len(subtools)} tools")
                 else:
-                    logger.warning(f"Failed to preload MCP server '{exec_config.server}'")
+                    logger.warning(f"Failed to preload MCP server '{server_key}'")
             except Exception as e:
-                logger.error(f"Error preloading MCP server '{exec_config.server}': {e}")
+                logger.error(f"Error preloading MCP server '{server_key}': {e}")
+
+        # 使用 asyncio.gather 并行连接所有服务器
+        tasks = [
+            connect_server(server_key, config)
+            for server_key, config in server_configs.items()
+        ]
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         # 注意：不在这里缓存展开工具，由initialize方法统一处理
 

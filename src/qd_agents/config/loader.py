@@ -115,6 +115,7 @@ class ObservabilityConfig(BaseModel):
     log_rotation: str = "daily"
     log_retention_days: int = 30
     log_external_api: bool = False
+    log_immediate_flush: bool = True
     tracing_enabled: bool = True
     tracing_exporter: str = "otlp"
     tracing_endpoint: str = ""

@@ -181,10 +181,10 @@ class MCPToolExecutor(ToolExecutor):
             # 给服务器一些时间完成初始化（特别是对于启动较慢的服务器）
             if "fetch" in self.server.lower() or self.command == "uvx":
                 logger.debug(f"Waiting for MCP server '{self.server}' to initialize...")
-                await asyncio.sleep(2.0)  # 给Python服务器时间
+                await asyncio.sleep(1.5)  # 给Python服务器时间（从2.0秒减少）
             elif "filesystem" in self.server.lower() or self.command == "cmd" or self.command == "npx":
                 logger.debug(f"Waiting for Node.js MCP server '{self.server}' to initialize...")
-                await asyncio.sleep(3.0)  # 给Node.js服务器更多时间，特别是Windows上
+                await asyncio.sleep(2.5)  # 给Node.js服务器更多时间（从3.0秒减少），特别是Windows上
             else:
                 await asyncio.sleep(0.5)  # 其他服务器较短等待
 
