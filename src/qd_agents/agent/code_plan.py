@@ -17,8 +17,9 @@ from ..context import ContextManager
 from ..prompts import PromptLoader
 from ..tools import ToolExecutorRegistry
 from .base import Agent, AgentResult, MetaAgentInput
-from .judge_meta import JudgeMetaAgent, JudgeResult
-from .tool_use_meta import ToolCallingMetaAgent
+from .judge_meta import JudgeMetaAgent
+from ..models import JudgeResult
+from .tool_calling_meta import ToolCallingMetaAgent
 from .coding_meta import CodingMetaAgent
 
 logger = logging.getLogger(__name__)

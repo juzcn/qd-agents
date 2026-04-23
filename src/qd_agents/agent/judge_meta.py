@@ -12,33 +12,13 @@ import json
 import logging
 import re
 import time
-from typing import Literal
-
-from pydantic import BaseModel, Field
 
 from ..llm import LLMClient
 from ..context import ContextManager
+from ..models import JudgeResult
 from .base import MetaAgent, MetaAgentInput, MetaAgentOutput
 
 logger = logging.getLogger(__name__)
-
-
-class JudgeResult(BaseModel):
-    """判断结果"""
-    route: Literal["direct", "tool_use", "coding"] = Field(
-        description="路由路径: direct(直接回答), tool_use(简单工具调用), coding(复杂工具编排)"
-    )
-    reasoning: str = Field(
-        description="判断理由"
-    )
-    direct_answer: str | None = Field(
-        default=None,
-        description="如果route=direct，这里给出直接回答"
-    )
-    tool_list: list[str] = Field(
-        default_factory=list,
-        description="如果route=tool_use或coding，这里列出需要的工具名称"
-    )
 
 
 class JudgeMetaAgent(MetaAgent):

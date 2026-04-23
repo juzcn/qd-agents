@@ -11,9 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 import uuid
-from datetime import datetime
 from typing import Any
 
 from ..config import Config
@@ -21,8 +19,8 @@ from ..llm import LLMClient
 from ..registry import ToolRegistry, Tool, ToolExecutionType, ToolMetadata
 from ..prompts import PromptLoader
 from ..execution import ExecutionEngine
-from ..orchestrator import CodePlanModeOrchestrator, CodePlanResult
 from ..tools import ToolExecutorRegistry
+from ..tools.executors.mcp import MCPToolExecutor
 from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig
 from ..context import ContextManager
 from .base import Agent, AgentResult
@@ -185,15 +183,7 @@ class QDAgent:
         return self._current_agent.name if self._current_agent else ""
 
     def switch_agent(self, agent_name: str) -> bool:
-        """
-        切换当前 Agent
-
-        Args:
-            agent_name: Agent 名称
-
-        Returns:
-            是否切换成功
-        """
+        """切换当前 Agent"""
         if agent_name not in self._agents:
             logger.warning("Agent '%s' not found", agent_name)
             return False
@@ -207,16 +197,7 @@ class QDAgent:
         user_input: str,
         session_id: str | None = None,
     ) -> AgentResult:
-        """
-        处理用户输入，委托给当前 Agent 执行。
-
-        Args:
-            user_input: 用户输入
-            session_id: 会话 ID
-
-        Returns:
-            处理结果
-        """
+        """处理用户输入，委托给当前 Agent 执行。"""
         trace_id = str(uuid.uuid4())
         logger.info("Processing user input (trace_id: %s): %s", trace_id, user_input[:100])
 
@@ -231,7 +212,7 @@ class QDAgent:
             history = self.context.get_history()
             conversation_history = []
             if history:
-                for msg in history[:-1]:  # 排除最后一条用户输入
+                for msg in history[:-1]:
                     conversation_history.append({
                         "role": msg["role"],
                         "content": msg["content"],
@@ -260,6 +241,8 @@ class QDAgent:
                 trace_id=trace_id,
                 total_duration_ms=0,
             )
+
+    # --- MCP 管理（委托给 MCPToolManager）---
 
     async def _preload_mcp_tools(self) -> None:
         """预加载 MCP 工具（会话开始时连接 MCP 服务器）"""
@@ -375,10 +358,10 @@ class QDAgent:
 
     async def _register_builtin_tools(self) -> None:
         """注册内置工具执行器"""
-        from .builtins import echo
+        from ..tools.builtins import echo
         self.executor_registry.register_function("echo", echo)
 
-        from .builtin_tools import (
+        from ..tools.builtin_search import (
             serper_search,
             tavily_search,
         )
@@ -391,10 +374,10 @@ class QDAgent:
         """将工具注册到执行引擎（用于 Code-Plan 模式）"""
         logger.info("Registering tools to execution engine...")
 
-        from .builtins import echo
+        from ..tools.builtins import echo
         self.execution.register_tool_func("echo", echo)
 
-        from .builtin_tools import serper_search, tavily_search
+        from ..tools.builtin_search import serper_search, tavily_search
         self.execution.register_tool_func("serper_search", serper_search)
         self.execution.register_tool_func("tavily_search", tavily_search)
 
@@ -430,8 +413,6 @@ class QDAgent:
 
     async def _get_mcp_server_tools(self, server_config: dict) -> tuple[list[Tool], Any]:
         """获取 MCP 服务器的工具列表和执行器"""
-        from ..tools.executors.mcp import MCPToolExecutor
-
         server_key = server_config.get('server', '')
         if not server_key:
             return [], None
@@ -494,7 +475,7 @@ class QDAgent:
             subtools = []
             for mcp_tool_name, mcp_tool in mcp_tools.items():
                 subtool_id = f"mcp.{server_key}.{mcp_tool_name}"
-                parameters = self._extract_mcp_tool_parameters(mcp_tool)
+                parameters = _extract_mcp_tool_parameters(mcp_tool)
                 exec_config = server_config.copy()
                 exec_config['tool'] = mcp_tool_name
 
@@ -524,21 +505,22 @@ class QDAgent:
             logger.error(f"Failed to connect to MCP server {server_key}: {e}")
             return [], None
 
-    def _extract_mcp_tool_parameters(self, mcp_tool: Any) -> dict[str, Any]:
-        """从 mcp.Tool 对象提取参数 schema"""
-        if hasattr(mcp_tool, 'input_schema'):
-            input_schema = mcp_tool.input_schema
-            if isinstance(input_schema, dict):
-                return input_schema
 
-        return {
-            "type": "object",
-            "properties": {
-                "arguments": {
-                    "type": "object",
-                    "description": "工具参数",
-                    "additionalProperties": True,
-                }
-            },
-            "required": ["arguments"],
-        }
+def _extract_mcp_tool_parameters(mcp_tool: Any) -> dict[str, Any]:
+    """从 mcp.Tool 对象提取参数 schema"""
+    if hasattr(mcp_tool, 'input_schema'):
+        input_schema = mcp_tool.input_schema
+        if isinstance(input_schema, dict):
+            return input_schema
+
+    return {
+        "type": "object",
+        "properties": {
+            "arguments": {
+                "type": "object",
+                "description": "工具参数",
+                "additionalProperties": True,
+            }
+        },
+        "required": ["arguments"],
+    }

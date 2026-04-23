@@ -4,13 +4,13 @@ LLM 客户端 - NVIDIA NIM API 兼容
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI, APIError, APIStatusError, APITimeoutError
 
 from .scoring import ModelInfo, get_top_models, calculate_model_score
+from .formatters import format_messages_for_logging, tool_calls_to_dicts
 
 
 logger = logging.getLogger(__name__)
@@ -41,16 +41,6 @@ class LLMClient:
         timeout: float = 120.0,
         max_retries: int = 3,
     ):
-        """
-        初始化 LLM 客户端
-
-        Args:
-            api_key: NVIDIA API Key
-            base_url: API 基础 URL
-            model_names: 预定义模型列表（如果不提供，会自动发现）
-            timeout: 请求超时（秒）
-            max_retries: 最大重试次数
-        """
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -61,8 +51,8 @@ class LLMClient:
         self._current_model_index = 0
         self._api_key = api_key
         self._base_url = base_url
-        self._meta_agent_name: str = ""  # 当前使用的元Agent 名称
-        self._meta_agent_message_counts: dict[str, int] = {}  # 每个元Agent 的消息计数器
+        self._meta_agent_name: str = ""
+        self._meta_agent_message_counts: dict[str, int] = {}
 
     @property
     def meta_agent_name(self) -> str:
@@ -73,7 +63,6 @@ class LLMClient:
     def meta_agent_name(self, name: str):
         """设置当前元Agent 名称"""
         self._meta_agent_name = name
-        # 初始化该元Agent 的计数器（如果不存在）
         if name not in self._meta_agent_message_counts:
             self._meta_agent_message_counts[name] = 0
 
@@ -98,15 +87,7 @@ class LLMClient:
         return self._model_names.copy()
 
     def switch_model(self, model_name: str) -> bool:
-        """
-        切换到指定模型
-
-        Args:
-            model_name: 模型名称
-
-        Returns:
-            是否切换成功
-        """
+        """切换到指定模型"""
         if model_name in self._model_names:
             self._current_model_index = self._model_names.index(model_name)
             logger.info("Switched to model: %s", model_name)
@@ -115,15 +96,7 @@ class LLMClient:
         return False
 
     async def discover_models(self, top_k: int = 5) -> list[str]:
-        """
-        发现并选择可用模型
-
-        Args:
-            top_k: 选择得分最高的 K 个模型
-
-        Returns:
-            模型名称列表
-        """
+        """发现并选择可用模型"""
         logger.info("Discovering available models from NVIDIA NIM API...")
 
         try:
@@ -143,11 +116,9 @@ class LLMClient:
                 logger.warning("No models found, using fallback model list")
                 return self._get_default_models()
 
-            # 选择 Top K 模型，如果 top_k=0 则返回所有模型
             if top_k > 0:
                 top_models = get_top_models(models, top_k=top_k)
             else:
-                # 返回所有 chat 模型
                 top_models = [m for m in models if calculate_model_score(m) > 0]
 
             self._model_names = [m.name for m in top_models]
@@ -171,181 +142,57 @@ class LLMClient:
         ]
 
     def _failover_to_next_model(self) -> bool:
-        """
-        切换到下一个模型
-
-        Returns:
-            如果还有更多模型可用返回 True
-        """
+        """切换到下一个模型"""
         if self._current_model_index + 1 < len(self._model_names):
             self._current_model_index += 1
-            logger.warning(
-                "Failing over to model: %s",
-                self.current_model
-            )
+            logger.warning("Failing over to model: %s", self.current_model)
             return True
         return False
 
-    def _clean_escape_sequences(self, text: str) -> str:
-        """
-        清理常见的转义字符序列，提高可读性
+    def _log_prompt(self, messages: list[dict[str, Any]], is_stream: bool = False) -> None:
+        """记录 LLM 输入消息（增量日志）"""
+        meta_name = self._meta_agent_name or "unknown"
+        logged_count = self._get_logged_message_count()
+        new_msg_count = len(messages) - logged_count
+        prefix = "stream, " if is_stream else ""
 
-        只处理控制字符的转义序列（\\n, \\r, \\t, \\\\, \\\", \\'），
-        保留Unicode转义序列和其他转义序列，避免破坏原始内容。
+        if new_msg_count > 0:
+            formatted = format_messages_for_logging(messages, logged_count)
+            logger.info(
+                "LLM Prompt (%sMetaAgent: %s) [%d new messages]:\n%s",
+                prefix, meta_name, new_msg_count, formatted,
+            )
+            self._update_logged_message_count(len(messages))
+        else:
+            logger.info("LLM Prompt (%sMetaAgent: %s): [no new messages]", prefix, meta_name)
 
-        注意：替换顺序很重要，\\\\ 必须最先处理，否则会破坏其他替换结果。
+    def _log_completion(self, response: Any, model: str) -> None:
+        """记录 LLM 输出（非流式）"""
+        if not response.choices:
+            return
 
-        Args:
-            text: 包含转义字符的文本
+        message = response.choices[0].message
+        completion_display: dict[str, Any] = {"role": "assistant"}
+        if message.content:
+            completion_display["content"] = message.content
+        if hasattr(message, 'tool_calls') and message.tool_calls:
+            completion_display["tool_calls"] = tool_calls_to_dicts(message.tool_calls)
+        if not completion_display.get("content") and "tool_calls" not in completion_display:
+            completion_display["content"] = "[no content or tool calls]"
 
-        Returns:
-            清理后的文本
-        """
-        if not isinstance(text, str):
-            return str(text)
+        logger.info(
+            "LLM Completion (MetaAgent: %s):\n%s",
+            self._meta_agent_name or "unknown",
+            format_messages_for_logging([completion_display]),
+        )
 
-        # 替换顺序：\\\\ 必须最先，否则 \\n 中的 \\\\ 会先被匹配破坏
-        replacements = [
-            ('\\\\', '\\'),       # 反斜杠（必须最先）
-            ('\\n', '\n'),        # 换行
-            ('\\r', '\r'),        # 回车
-            ('\\t', '\t'),        # 制表符
-            ('\\"', '"'),         # 双引号
-            ("\\'", "'"),         # 单引号
-        ]
-
-        cleaned = text
-        for old, new in replacements:
-            cleaned = cleaned.replace(old, new)
-
-        return cleaned
-
-    def _format_messages_for_logging(self, messages: list[dict[str, Any]], start_index: int = 0) -> str:
-        """格式化消息用于日志记录，纯文本渲染，还原 messages 数组结构
-
-        Args:
-            messages: 消息列表
-            start_index: 开始记录的消息索引（用于增量日志）
-        """
-        if not messages:
-            return "[]"
-
-        formatted_parts = []
-
-        for i, msg in enumerate(messages):
-            # 跳过已记录的消息
-            if i < start_index:
-                continue
-
-            lines: list[str] = []
-            role = msg.get("role", "unknown")
-            lines.append(f'  [{i}] {{"role": "{role}"')
-
-            # content — 纯文本渲染
-            content = msg.get("content")
-            if content is not None:
-                # tool 角色的 content 尝试 JSON 格式化输出
-                if role == "tool" and isinstance(content, str):
-                    try:
-                        parsed = json.loads(content)
-                        text = json.dumps(parsed, ensure_ascii=False, indent=2)
-                        # 缩进对齐
-                        indented_lines = text.split("\n")
-                        text = indented_lines[0] + "\n" + "\n".join(
-                            "          " + line for line in indented_lines[1:]
-                        )
-                    except (json.JSONDecodeError, ValueError):
-                        text = self._format_content(content)
-                else:
-                    text = self._format_content(content)
-                lines.append(f'      "content": {text}')
-
-            # tool_calls — 纯文本渲染
-            tool_calls = msg.get("tool_calls")
-            if tool_calls:
-                lines.append('      "tool_calls": [')
-                tc_list = self._tool_calls_to_dicts(tool_calls)
-                for j, tc in enumerate(tc_list):
-                    tc_text = self._format_tool_call_text(tc)
-                    comma = "," if j < len(tc_list) - 1 else ""
-                    lines.append(f"        {tc_text}{comma}")
-                lines.append("      ]")
-
-            # tool 角色额外字段
-            if role == "tool":
-                tool_call_id = msg.get("tool_call_id")
-                if tool_call_id:
-                    lines.append(f'      "tool_call_id": "{tool_call_id}"')
-                tool_name = msg.get("name")
-                if tool_name:
-                    lines.append(f'      "name": "{tool_name}"')
-
-            lines.append("    }")
-            formatted_parts.append("\n".join(lines))
-
-        return "[\n" + ",\n".join(formatted_parts) + "\n]"
-
-    def _format_content(self, content: Any) -> str:
-        """格式化消息 content 字段，纯文本渲染"""
-        if content is None:
-            return "[no content]"
-
-        if isinstance(content, str):
-            return self._clean_escape_sequences(content)
-
-        if isinstance(content, list):
-            parts = []
-            for item in content:
-                if isinstance(item, dict):
-                    item_type = item.get("type", "unknown")
-                    if item_type == "text":
-                        parts.append(self._clean_escape_sequences(item.get("text", "")))
-                    elif item_type == "image_url":
-                        url = item.get("image_url", {})
-                        parts.append(f"[image: {str(url)[:80]}]")
-                    else:
-                        parts.append(json.dumps(item, ensure_ascii=False, default=str))
-                else:
-                    parts.append(str(item))
-            return "\n".join(parts)
-
-        return str(content)
-
-    def _tool_calls_to_dicts(self, tool_calls: Any) -> list[dict[str, Any]]:
-        """将 tool_calls 转为 dict 列表"""
-        result = []
-        for tc in tool_calls:
-            if hasattr(tc, 'model_dump'):
-                result.append(tc.model_dump())
-            elif isinstance(tc, dict):
-                result.append(tc)
-            else:
-                result.append({"raw": str(tc)})
-        return result
-
-    def _format_tool_call_text(self, tc: dict[str, Any]) -> str:
-        """将单个 tool_call dict 格式化为纯文本行"""
-        tc_id = tc.get("id", "")
-        func = tc.get("function", {})
-        name = func.get("name", "") if isinstance(func, dict) else ""
-        arguments = func.get("arguments", "") if isinstance(func, dict) else ""
-
-        # arguments 解码：如果它是 JSON 字符串，解析后纯文本渲染
-        args_text = arguments
-        if isinstance(arguments, str) and arguments.strip():
-            try:
-                args_parsed = json.loads(arguments)
-                args_text = json.dumps(args_parsed, ensure_ascii=False, indent=2)
-                # 缩进对齐
-                args_lines = args_text.split("\n")
-                args_text = "\n".join(
-                    args_lines[0] if k == 0 else "          " + line
-                    for k, line in enumerate(args_lines)
-                )
-            except (json.JSONDecodeError, ValueError):
-                args_text = self._clean_escape_sequences(arguments)
-
-        return f'{{"id": "{tc_id}", "function": {{"name": "{name}", "arguments": {args_text}}}}}'
+    def _log_token_usage(self, usage: Any, model: str) -> None:
+        """记录 token 使用情况"""
+        if usage:
+            logger.info(
+                "Token usage - model: %s, prompt: %d, completion: %d, total: %d",
+                model, usage.prompt_tokens, usage.completion_tokens, usage.total_tokens,
+            )
 
     async def chat(
         self,
@@ -360,39 +207,18 @@ class LLMClient:
         """
         聊天补全（带自动 Fallback）
 
-        Args:
-            messages: 消息列表
-            model: 模型名称（不指定则使用当前模型）
-            temperature: 温度参数
-            max_tokens: 最大生成 token 数
-            tools: 工具定义
-            tool_choice: 工具选择策略
-            stream: 是否流式输出
-
-        Returns:
-            OpenAI 响应对象
-
         Raises:
             AllModelsFailedError: 所有模型都失败时
         """
         last_exception: Exception | None = None
         start_index = self._current_model_index
 
-        # 尝试所有模型，直到成功
         while True:
             use_model = model or self.current_model
 
             try:
                 logger.info("Calling model: %s (MetaAgent: %s)", use_model, self._meta_agent_name or "unknown")
-                # 记录输入 messages (INFO level) - 增量日志，只显示新增的消息
-                logged_count = self._get_logged_message_count()
-                new_msg_count = len(messages) - logged_count
-                if new_msg_count > 0:
-                    formatted_messages = self._format_messages_for_logging(messages, logged_count)
-                    logger.info("LLM Prompt (MetaAgent: %s) [%d new messages]:\n%s", self._meta_agent_name or "unknown", new_msg_count, formatted_messages)
-                    self._update_logged_message_count(len(messages))
-                else:
-                    logger.info("LLM Prompt (MetaAgent: %s): [no new messages]", self._meta_agent_name or "unknown")
+                self._log_prompt(messages)
 
                 response = await self._client.chat.completions.create(
                     model=use_model,
@@ -405,58 +231,29 @@ class LLMClient:
                 )
 
                 if not stream:
-                    logger.debug("Response: %s", response.model_dump_json(ensure_ascii=False) if hasattr(response, 'model_dump_json') else str(response))  # type: ignore
-                    # 记录输出 content (INFO level) — 与 Prompt 相同的纯文本格式
-                    if response.choices and len(response.choices) > 0:
-                        message = response.choices[0].message
-                        completion_display = {"role": "assistant"}
-                        if message.content:
-                            completion_display["content"] = message.content
-                        if hasattr(message, 'tool_calls') and message.tool_calls:
-                            completion_display["tool_calls"] = self._tool_calls_to_dicts(message.tool_calls)
-                        if not completion_display.get("content") and "tool_calls" not in completion_display:
-                            completion_display["content"] = "[no content or tool calls]"
-                        logger.info("LLM Completion (MetaAgent: %s):\n%s", self._meta_agent_name or "unknown", self._format_messages_for_logging([completion_display]))
-
-                    # 记录 token 使用情况
-                    if hasattr(response, 'usage') and response.usage:
-                        logger.info(
-                            "Token usage - model: %s, prompt: %d, completion: %d, total: %d",
-                            use_model,
-                            response.usage.prompt_tokens,
-                            response.usage.completion_tokens,
-                            response.usage.total_tokens
-                        )
+                    logger.debug(
+                        "Response: %s",
+                        response.model_dump_json(ensure_ascii=False) if hasattr(response, 'model_dump_json') else str(response),
+                    )
+                    self._log_completion(response, use_model)
+                    self._log_token_usage(getattr(response, 'usage', None), use_model)
 
                 return response
 
             except (APIError, APIStatusError, APITimeoutError) as e:
                 last_exception = e
-                logger.warning(
-                    "Model %s failed: %s",
-                    use_model,
-                    e
-                )
+                logger.warning("Model %s failed: %s", use_model, e)
 
-                # 尝试切换到下一个模型
                 if not self._failover_to_next_model():
-                    # 已试过所有模型
                     break
-
-                # 如果回到了起点，也退出
                 if self._current_model_index == start_index:
                     break
 
             except Exception as e:
                 last_exception = e
-                logger.error(
-                    "Unexpected error with model %s: %s",
-                    use_model,
-                    e
-                )
+                logger.error("Unexpected error with model %s: %s", use_model, e)
                 break
 
-        # 所有模型都失败了
         raise AllModelsFailedError(
             f"All models failed. Last error: {last_exception}"
         ) from last_exception
@@ -469,24 +266,10 @@ class LLMClient:
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[Any]:
-        """
-        流式聊天补全
-
-        Yields:
-            OpenAI 流式响应块
-        """
-        # 流式响应不自动重试（太复杂）
+        """流式聊天补全"""
         use_model = model or self.current_model
-        # 记录输入 messages (INFO level) - 增量日志
         logger.info("Calling model (stream): %s (MetaAgent: %s)", use_model, self._meta_agent_name or "unknown")
-        logged_count = self._get_logged_message_count()
-        new_msg_count = len(messages) - logged_count
-        if new_msg_count > 0:
-            formatted_messages = self._format_messages_for_logging(messages, logged_count)
-            logger.info("LLM Prompt (stream, MetaAgent: %s) [%d new messages]:\n%s", self._meta_agent_name or "unknown", new_msg_count, formatted_messages)
-            self._update_logged_message_count(len(messages))
-        else:
-            logger.info("LLM Prompt (stream, MetaAgent: %s): [no new messages]", self._meta_agent_name or "unknown")
+        self._log_prompt(messages, is_stream=True)
 
         stream = await self._client.chat.completions.create(
             model=use_model,
@@ -498,15 +281,8 @@ class LLMClient:
         )
 
         async for chunk in stream:
-            # 记录 token 使用情况（流式响应的最后一个 chunk 包含 usage）
             if hasattr(chunk, 'usage') and chunk.usage:
-                logger.info(
-                    "Token usage - model: %s, prompt: %d, completion: %d, total: %d",
-                    use_model,
-                    chunk.usage.prompt_tokens,
-                    chunk.usage.completion_tokens,
-                    chunk.usage.total_tokens
-                )
+                self._log_token_usage(chunk.usage, use_model)
             yield chunk
 
     async def close(self) -> None:
@@ -526,18 +302,7 @@ def create_client(
     auto_discover: bool = True,
     top_k: int = 5,
 ) -> LLMClient:
-    """
-    创建并初始化 LLM 客户端
-
-    Args:
-        api_key: NVIDIA API Key
-        base_url: API 基础 URL
-        auto_discover: 是否自动发现模型
-        top_k: 自动发现时选择的 Top K 模型
-
-    Returns:
-        初始化后的 LLMClient
-    """
+    """创建并初始化 LLM 客户端"""
     client = LLMClient(
         api_key=api_key,
         base_url=base_url,

@@ -16,7 +16,7 @@ from ..registry import ToolRegistry, Tool
 from ..context import ContextManager
 from ..tools import ToolExecutorRegistry
 from .base import Agent, AgentResult, MetaAgentInput
-from .tool_use_meta import ToolCallingMetaAgent
+from .tool_calling_meta import ToolCallingMetaAgent
 
 logger = logging.getLogger(__name__)
 
