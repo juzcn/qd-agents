@@ -7,7 +7,7 @@
 本项目旨在构建一个自适应智能体系统，能够根据用户需求智能选择工作模式，动态编排工具调用流程，并在执行过程中根据中间结果和用户介入动态调整计划。系统支持两种核心工作模式：
 
 1. **Tool Use Mode**（单阶段工具调用模式）：遵循OpenAI Tool Calling规范，直接调用已注册工具，适用于简单任务
-2. **Code-Plan Mode**（多阶段代码规划模式）：采用五步循环渐进式披露，支持复杂工作流编排，适用于多步骤、有条件分支、循环的复杂任务
+2. **Code-Plan Mode**（多阶段代码规划模式）：采用三阶段智能路由（Judge→ToolCalling/Coding），支持复杂工作流编排，适用于多步骤、有条件分支、循环的复杂任务
 
 系统通过统一的工具模型、动态上下文编排和用户协作机制，实现从简单查询到复杂自动化流程的全覆盖。
 
@@ -472,11 +472,35 @@ class AgentResult:
 | 元Agent / Agent | 现有代码 |
 |---|---|
 | JudgeMetaAgent | `agent/judge_meta.py` |
-| ToolCallingMetaAgent | `agent/tool_use_meta.py` |
+| ToolCallingMetaAgent | `agent/tool_calling_meta.py` |
 | CodingMetaAgent | `agent/coding_meta.py` |
 | ToolUseAgent | `agent/tool_use.py` |
 | CodePlanAgent | `agent/code_plan.py` |
 | QDAgent | `agent/core.py`（Agent 容器 + 资源管理器） |
+
+**共享数据模型**：
+
+| 数据模型 | 代码位置 |
+|---|---|
+| JudgeResult | `models/judge.py` |
+| ExecutionStatus / ExecutionStep / ExecutionResult | `models/execution.py` |
+
+**工具模块**：
+
+| 模块 | 代码位置 |
+|---|---|
+| echo 等内置工具 | `tools/builtins.py` |
+| Serper/Tavily 搜索工具 | `tools/builtin_search.py` |
+| MCP 工具管理器 | `tools/mcp_manager.py` |
+| 工具执行器（6种类型） | `tools/executors/` |
+
+**LLM 模块**：
+
+| 模块 | 代码位置 |
+|---|---|
+| LLM 客户端 | `llm/client.py` |
+| 消息格式化 | `llm/formatters.py` |
+| 模型评分 | `llm/scoring.py` |
 
 #### 4.1.7 设计收益
 
@@ -532,23 +556,26 @@ class AgentResult:
 
 **Code-Plan Mode（多阶段代码规划模式）**：
 ```
-[用户输入] → [上下文管理器] → [Code-Plan调度器 (CodePlanModeOrchestrator)]
-                                   ├─ 渐进式工具披露管理器
-                                   │   ├─ L0工具列表
-                                   │   ├─ L1工具详情
-                                   │   └─ 动态上下文编排
-                                   └─ 五步循环引擎
-                                       ├─ 第一步：判断是否需要工具
-                                       ├─ 第二步：规划（直接调用或生成方案）
-                                       ├─ 第三步：代码生成
-                                       ├─ 第四步：沙盒执行
-                                       └─ 第五步：生成回答
+[用户输入] → [上下文管理器] → [CodePlanAgent]
+                                   ├─ JudgeMetaAgent（路由判断）
+                                   │   ├─ direct → 直接回答
+                                   │   ├─ tool_use → ToolCallingMetaAgent
+                                   │   └─ coding → CodingMetaAgent
+                                   │
+                                   ├─ ToolCallingMetaAgent（简单工具调用）
+                                   │   └─ OpenAI Tool Calling 循环
+                                   │
+                                   └─ CodingMetaAgent（复杂工具编排）
+                                       ├─ 代码生成
+                                       └─ 沙盒执行
 
-[工作记忆] ←→ [五步循环引擎]（存储中间产物）
-[执行沙盒] ←→ [第四步]（安全执行代码）
-[工具执行引擎] ←→ [第四步]（通过tool_gateway调用工具）
-
-[工具执行引擎] → [回复生成]（同Tool Use Mode）
+[工具执行引擎] ←─ 共享
+    ├─ function (Python函数)
+    ├─ cli (命令行程序)
+    ├─ http (HTTP服务)
+    ├─ skill (复杂工作流)
+    ├─ mcp (Model Context Protocol)
+    └─ bash (Bash命令)
 ```
 
 **共享组件**：
@@ -564,9 +591,9 @@ class AgentResult:
 - 维护会话历史，裁剪过长的历史。
 - 注入系统提示词（角色、安全边界等）。
 
-#### 4.3.2 单阶段调度器 (ToolUseModeOrchestrator)
+#### 4.3.2 Tool Use Agent (ToolUseAgent)
 
-**实现架构**：基于OpenAI Tool Calling规范的单阶段调度器，遵循工业标准，支持工具预加载、MCP工具自动展开和缓存机制。
+**实现架构**：基于OpenAI Tool Calling规范的Agent，遵循工业标准，支持工具预加载、MCP工具自动展开和缓存机制。
 
 **核心组件**：
 - **工具预加载器**：启动时加载所有注册工具，对MCP工具自动连接服务器
@@ -1933,9 +1960,9 @@ llm:
       max_tokens: 8192
       timeout: 120000
 
-  # 调度器配置（向后兼容，当前为单阶段架构）
+  # Agent 配置（向后兼容）
   two_phase:
-    enabled: false  # 当前使用单阶段调度，此配置保留用于向后兼容
+    enabled: false  # 当前使用 Agent 架构，此配置保留用于向后兼容
     phase_one_tools:
       - "search.web"  # 高频搜索工具（当前唯一保留的预置工具）
     tool_threshold: 50  # 配置保留，当前未使用
@@ -2092,7 +2119,7 @@ flowchart BT
 |------|----------|------|
 | Tool Registry | 注册、检索、版本管理 | pytest |
 | 上下文管理器 | 历史管理、提示词注入 | pytest |
-| 单阶段调度器 | 路由逻辑、工具加载 | pytest |
+| Tool Use Agent | 路由逻辑、工具加载 | pytest |
 | 执行引擎 | 工具调用、代码执行 | pytest |
 | 参数验证 | Schema 校验 | pytest + hypothesis |
 
