@@ -776,11 +776,14 @@ class QDAgent:
         openai_tools = self._openai_tools_cache or []
         tool_map = self._tool_map_cache or {}
 
-        # 构建初始消息
-        messages = []
-        if history:
-            messages.extend(history)
-        messages.append({"role": "user", "content": user_input})
+        # 构建初始消息（包含 system prompt）
+        search_web_available = any(t.id == "search.web" for t in expanded_tools)
+        messages = self.context.build_tool_use_messages(
+            user_input=user_input,
+            tools=expanded_tools,
+            search_web_available=search_web_available,
+            history=history,
+        )
 
         # 最大循环次数限制
         max_iterations = 10

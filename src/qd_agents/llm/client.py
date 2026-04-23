@@ -167,6 +167,11 @@ class LLMClient:
         """
         清理常见的转义字符序列，提高可读性
 
+        只处理控制字符的转义序列（\\n, \\r, \\t, \\\\, \\\", \\'），
+        保留Unicode转义序列和其他转义序列，避免破坏原始内容。
+
+        注意：替换顺序很重要，\\\\ 必须最先处理，否则会破坏其他替换结果。
+
         Args:
             text: 包含转义字符的文本
 
@@ -176,31 +181,17 @@ class LLMClient:
         if not isinstance(text, str):
             return str(text)
 
-        # 先解码 Unicode 转义序列
-        import re
-
-        def decode_unicode_escape(match):
-            hex_str = match.group(1)
-            try:
-                # 将十六进制转换为整数，然后转换为字符
-                return chr(int(hex_str, 16))
-            except (ValueError, OverflowError):
-                # 如果转换失败，返回原始字符串
-                return match.group(0)
-
-        # 处理 \uXXXX 格式的 Unicode 转义序列
-        cleaned = re.sub(r'\\u([0-9a-fA-F]{4})', decode_unicode_escape, text)
-
-        # 处理其他常见转义序列
+        # 替换顺序：\\\\ 必须最先，否则 \\n 中的 \\\\ 会先被匹配破坏
         replacements = [
+            ('\\\\', '\\'),       # 反斜杠（必须最先）
             ('\\n', '\n'),        # 换行
             ('\\r', '\r'),        # 回车
             ('\\t', '\t'),        # 制表符
-            ('\\\\', '\\'),       # 反斜杠
             ('\\"', '"'),         # 双引号
             ("\\'", "'"),         # 单引号
         ]
 
+        cleaned = text
         for old, new in replacements:
             cleaned = cleaned.replace(old, new)
 
@@ -208,73 +199,99 @@ class LLMClient:
 
     def _format_messages_for_logging(self, messages: list[dict[str, Any]]) -> str:
         """
-        格式化消息用于日志记录，显示完整的对话历史
+        格式化消息用于日志记录，还原 messages 数组结构
+
+        输出格式还原 OpenAI messages 数组，每个元素显示 role 和 content，
+        均按文本渲染，不截断。
 
         Args:
-            messages: 消息列表，可能包含多种类型（user, assistant, tool）
+            messages: 消息列表
 
         Returns:
             格式化的字符串
         """
         if not messages:
-            return "[empty messages]"
+            return "[]"
 
-        import json
         formatted_parts = []
 
         for i, msg in enumerate(messages):
             role = msg.get("role", "unknown")
-            content = msg.get("content", "")
+            content = msg.get("content")
             tool_calls = msg.get("tool_calls")
 
-            if role == "user":
-                if content:
-                    cleaned_content = self._clean_escape_sequences(str(content))
-                    formatted_parts.append(f"user[{i}]: {cleaned_content}")
-                else:
-                    formatted_parts.append(f"user[{i}]: [no content]")
-            elif role == "assistant":
-                if content:
-                    cleaned_content = self._clean_escape_sequences(str(content))
-                    formatted_parts.append(f"assistant[{i}]: {cleaned_content}")
-                elif tool_calls:
-                    # 处理tool_calls，可能是Pydantic模型或字典
-                    tool_calls_list = []
-                    for tc in tool_calls:
-                        if hasattr(tc, 'model_dump'):
-                            # Pydantic模型
-                            tool_calls_list.append(tc.model_dump())
-                        elif isinstance(tc, dict):
-                            # 字典
-                            tool_calls_list.append(tc)
-                        else:
-                            # 其他类型
-                            tool_calls_list.append(str(tc))
+            # 构建显示用的 dict，还原原始结构
+            display_msg = {"role": role}
 
-                    try:
-                        # 尝试格式化为JSON
-                        tool_calls_json = json.dumps(tool_calls_list, indent=2, ensure_ascii=False)
-                        formatted_parts.append(f"assistant[{i}] tool_calls:\n{tool_calls_json}")
-                    except (TypeError, ValueError):
-                        # 如果无法序列化，显示简要信息
-                        formatted_parts.append(f"assistant[{i}]: [{len(tool_calls)} tool calls]")
-                else:
-                    formatted_parts.append(f"assistant[{i}]: [no content or tool calls]")
-            elif role == "tool":
-                tool_id = msg.get("tool_call_id", "unknown")
-                # 缩短工具结果，避免日志过大
-                if content:
-                    cleaned_content = self._clean_escape_sequences(str(content))
-                    if len(cleaned_content) > 200:
-                        formatted_parts.append(f"tool[{tool_id}]: {cleaned_content[:200]}...")
+            if content is not None:
+                display_msg["content"] = self._format_content(content)
+
+            if tool_calls:
+                display_msg["tool_calls"] = self._format_tool_calls_obj(tool_calls)
+
+            # tool 角色额外字段
+            if role == "tool":
+                tool_call_id = msg.get("tool_call_id")
+                if tool_call_id:
+                    display_msg["tool_call_id"] = tool_call_id
+                tool_name = msg.get("name")
+                if tool_name:
+                    display_msg["name"] = tool_name
+
+            # 序列化为可读文本
+            try:
+                formatted = json.dumps(display_msg, ensure_ascii=False, indent=2, default=str)
+            except (TypeError, ValueError):
+                formatted = str(display_msg)
+
+            # 数组元素标记（带缩进）
+            prefix = f"  [{i}] "
+            indented = "\n".join(
+                (prefix if j == 0 else " " * len(prefix)) + line
+                for j, line in enumerate(formatted.split("\n"))
+            )
+            formatted_parts.append(indented)
+
+        return "[\n" + ",\n".join(formatted_parts) + "\n]"
+
+    def _format_content(self, content: Any) -> str:
+        """格式化消息 content 字段，统一按文本渲染，不截断"""
+        if content is None:
+            return "[no content]"
+
+        if isinstance(content, str):
+            return self._clean_escape_sequences(content)
+
+        if isinstance(content, list):
+            # 多模态内容：提取文本部分，图片用占位符
+            parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    item_type = item.get("type", "unknown")
+                    if item_type == "text":
+                        parts.append(self._clean_escape_sequences(item.get("text", "")))
+                    elif item_type == "image_url":
+                        url = item.get("image_url", {})
+                        parts.append(f"[image: {str(url)[:80]}]")
                     else:
-                        formatted_parts.append(f"tool[{tool_id}]: {cleaned_content}")
+                        parts.append(json.dumps(item, ensure_ascii=False, default=str))
                 else:
-                    formatted_parts.append(f"tool[{tool_id}]: [no content]")
-            else:
-                formatted_parts.append(f"{role}[{i}]: {str(msg)[:100]}{'...' if len(str(msg)) > 100 else ''}")
+                    parts.append(str(item))
+            return "\n".join(parts)
 
-        return "\n".join(formatted_parts)
+        return str(content)
+
+    def _format_tool_calls_obj(self, tool_calls: Any) -> list[Any]:
+        """将 tool_calls 转为可序列化的 list，用于嵌入 messages 数组"""
+        result = []
+        for tc in tool_calls:
+            if hasattr(tc, 'model_dump'):
+                result.append(tc.model_dump())
+            elif isinstance(tc, dict):
+                result.append(tc)
+            else:
+                result.append(str(tc))
+        return result
 
     async def chat(
         self,
@@ -329,18 +346,17 @@ class LLMClient:
 
                 if not stream:
                     logger.debug("Response: %s", response.model_dump_json() if hasattr(response, 'model_dump_json') else str(response))  # type: ignore
-                    # 记录输出 content (INFO level)
+                    # 记录输出 content (INFO level) — 与 Prompt 相同的数组格式
                     if response.choices and len(response.choices) > 0:
                         message = response.choices[0].message
+                        completion_msg: dict[str, Any] = {"role": "assistant"}
                         if message.content:
-                            content = message.content
-                            # 所有内容按文本渲染
-                            cleaned_content = self._clean_escape_sequences(content)
-                            logger.info("LLM Completion:\n%s", cleaned_content)
-                        elif hasattr(message, 'tool_calls') and message.tool_calls:
-                            logger.info("LLM Completion:\n%s", json.dumps([tc.model_dump() for tc in message.tool_calls], indent=2, ensure_ascii=False))
-                        else:
-                            logger.info("LLM Completion: no content or tool calls")
+                            completion_msg["content"] = self._clean_escape_sequences(message.content)
+                        if hasattr(message, 'tool_calls') and message.tool_calls:
+                            completion_msg["tool_calls"] = self._format_tool_calls_obj(message.tool_calls)
+                        if not completion_msg.get("content") and "tool_calls" not in completion_msg:
+                            completion_msg["content"] = "[no content or tool calls]"
+                        logger.info("LLM Completion:\n%s", json.dumps([completion_msg], indent=2, ensure_ascii=False, default=str))
 
                     # 记录 token 使用情况
                     if hasattr(response, 'usage') and response.usage:
