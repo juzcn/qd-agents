@@ -194,177 +194,127 @@
 
 ### 3.4 Code-Plan Mode详细设计
 
-Code-Plan Mode采用五步循环渐进式披露架构，支持复杂工作流编排。本部分详细描述该模式的设计细节。
+Code-Plan Mode采用三阶段路由架构，基于 Agent/元Agent 体系实现智能路由。本部分详细描述该模式的设计细节。
 
-#### 3.4.1 五步循环详细设计
+#### 3.4.1 三阶段路由架构
 
-Code-Plan Mode遵循五步循环流程：判断→规划→代码生成→执行→回答。
+Code-Plan Mode基于三个元Agent实现智能路由：
 
 **整体流程**：
 ```
 用户输入
    ↓
-[第一步] 判断是否需要工具
-   ├─ 直接回答 → 输出给用户（结束）
-   └─ 需要工具 → 输出工具列表
+[第一阶段] JudgeMetaAgent - 路由判断
+   ├─ direct → 直接回答（结束）
+   ├─ tool_use → 第二阶段（简单工具调用）
+   └─ coding → 第三阶段（复杂工具编排）
         ↓
-[第二步] 根据工具列表加载L1，决定直接调用 or 生成自然语言方案
-   ├─ 直接调用 → 生成结构化调用计划 → 执行（跳至第四步风格）
-   └─ 自然语言方案 → 输出方案文本
+[第二阶段] ToolCallingMetaAgent - 简单工具调用
+   └─ OpenAI Tool Calling 循环
         ↓
-[第三步] 根据方案生成 Python 代码
-   ↓
-[第四步] 在沙盒中执行代码，捕获结果/错误
-   ↓
-[第五步] 根据执行结果生成自然语言回答
-   ↓
+[第三阶段] CodingMetaAgent - 复杂工具编排
+   ├─ 代码生成
+   └─ 沙盒执行
+        ↓
 返回用户
 ```
 
-**第一步：判断是否需要工具**
-- **输入**：用户最新消息 + 最近2-3轮用户可见历史 + 所有工具的 L0（名称+描述）
-- **大模型任务**：判断自身知识能否回答。若能，直接输出最终回答；若不能，输出工具名称列表（去重）。
-- **交互点**：若问题模糊无法确定工具，可主动询问用户澄清。
-- **输出**：直接回答 或 工具列表（存入工作记忆）。
+**第一阶段：路由判断（JudgeMetaAgent）**
+- **输入**：用户最新消息 + 会话历史 + 所有工具的 L0（名称+描述）
+- **大模型任务**：判断任务复杂度，选择合适的处理路径：
+  - `direct`：基于知识直接回答，无需工具
+  - `tool_use`：简单工具调用，1-3个工具，无复杂逻辑
+  - `coding`：复杂工具编排，需要条件判断、循环、数据处理
+- **输出**：路由结果（route）+ 判断理由（reasoning）+ 工具列表（tool_list）
 
-**第二步：直接调用或生成自然语言方案**
-- **输入**：第一步输出的工具列表 + 这些工具的 L1 详情 + 用户可见历史（完整但可压缩） + 工作记忆中的相关中间结果
-- **大模型任务**：
-  - 评估任务复杂度：若只需顺序调用1-3个工具且无分支/循环/并行，则选择直接调用，生成结构化调用计划（JSON 序列，指定工具和参数）。
-  - 否则，生成自然语言编排方案，描述步骤、依赖、条件、循环、异常处理。
-- **交互点**：若缺少必要参数或参数有歧义，主动询问用户；若涉及高风险操作（如删除文件），请求用户确认。
-- **输出**：调用计划 或 自然语言方案（存入工作记忆）。
+**第二阶段：简单工具调用（ToolCallingMetaAgent）**
+- **输入**：用户消息 + 会话历史 + 过滤后的工具列表
+- **工作方式**：标准的 OpenAI Tool Calling 循环
+  - LLM 决定调用哪些工具
+  - 执行工具并返回结果
+  - 循环直到 LLM 返回最终回复
+- **适用场景**：顺序调用1-3个工具，无需复杂逻辑编排
 
-**第三步：生成 Python 代码**
-- **输入**：第二步生成的方案 + 涉及工具的 L1（参数类型、返回值格式） + 用户可见历史中的格式约束
-- **大模型任务**：将方案转换为可执行的 Python 代码。代码必须：
-  - 导入工具适配器（tool_gateway）
-  - 实现方案中的顺序、并行（使用 concurrent.futures）、条件、循环
-  - 包含错误处理（try-except）
-  - 不包含危险操作（禁止 os.system, eval 等）
-  - 输出结果以打印或返回方式提供（如 print(json.dumps(result))）
-- **输出**：Python 代码文本（存入工作记忆）。
+**第三阶段：复杂工具编排（CodingMetaAgent）**
+- **输入**：用户消息 + 会话历史 + 工具列表 + 工具函数映射
+- **工作方式**：
+  1. 生成 Python 代码编排工具调用
+  2. 在沙盒环境中执行代码
+- **代码执行环境**：
+  - 允许导入的模块：math, datetime, json, re, collections, itertools, asyncio
+  - 工具函数已预定义为异步函数，可直接使用 `await` 调用
+  - 代码顶层支持 `await` 语法（无需包装在 async 函数中）
+  - 禁止使用：eval, exec, open, subprocess, os, sys 等危险操作
+- **适用场景**：多步骤任务、条件分支、循环、并行执行、复杂数据处理
 
-**第四步：执行 Python 代码**
-- **输入**：第三步生成的代码 + 工具网关 + 沙盒配置
-- **执行器**：
-  - 将代码写入临时文件，在沙盒子进程中运行（限制 CPU、内存、超时、网络白名单）。
-  - 捕获 stdout/stderr、返回值、退出码。
-  - 若执行中需要用户输入（如 input()），通过交互管理器暂停并请求用户输入。
-  - 若执行超时或触发安全策略，终止进程并记录错误。
-- **输出**：执行结果（状态、数据、错误日志）存入工作记忆。
+#### 3.4.2 路由判断逻辑
 
-**第五步：生成自然语言回答**
-- **输入**：第四步的执行结果 + 用户原始问题 + 最近几轮用户可见历史
-- **大模型任务**：将结构化结果转换为友好、简洁的自然语言回答。若执行失败，解释原因并提供可操作建议。不编造信息。
-- **输出**：最终回答，追加到用户可见历史。
+JudgeMetaAgent 的路由判断遵循以下规则：
 
-#### 3.4.2 动态上下文编排机制
+| 路由 | 条件 | 示例 |
+|------|------|------|
+| `direct` | LLM 知识可直接回答，无需工具 | "什么是Python？"、"你好" |
+| `tool_use` | 需要1-3个工具，逻辑简单直接 | "北京今天天气怎么样？" |
+| `coding` | 需要多个工具协同、条件判断、数据处理 | "查北京和上海天气，哪个好就查哪里的新闻" |
 
-Code-Plan Mode采用动态上下文编排，为每个步骤按需构建上下文视图，区分用户可见历史与过程历史。
+**判断结果数据模型**：
+```python
+class JudgeResult(BaseModel):
+    route: Literal["direct", "tool_use", "coding"]  # 路由路径
+    reasoning: str                                   # 判断理由
+    direct_answer: str | None                        # direct 时的直接回答
+    tool_list: list[str]                             # 需要的工具名称列表
+```
 
-**上下文视图结构（每步骤前构建）**：
-| 层级 | 内容 | 来源 | 管理策略 |
-|------|------|------|----------|
-| 核心层 | 当前步骤绝对必需的信息（如第一步的用户问题+L0） | 用户可见历史、工作记忆、工具注册表 | 不可淘汰，步骤结束后可降级 |
-| 支撑层 | 有帮助但非必需的信息（如旧对话摘要、工具L2特征） | 用户可见历史（压缩）、过程历史 | 效用评分低于阈值则丢弃或压缩 |
-| 压缩层 | 摘要或指针（如远距离会话摘要、工具L3文档ID） | 用户可见历史压缩、过程历史指针 | 需要时通过指针展开 |
+#### 3.4.3 工具过滤机制
 
-**各步骤的上下文需求**：
-| 步骤 | 核心层 | 支撑层 | 压缩层 |
-|------|--------|--------|--------|
-| 第一步 | 用户最新消息+最近2轮用户可见历史 + 所有工具L0 | 更早会话摘要 | 无 |
-| 第二步 | 第一步工具列表 + 那些工具的L1 + 用户可见历史（全） | 工作记忆中相关中间结果 | 旧对话摘要 |
-| 第三步 | 第二步方案 + 涉及工具的L1 | 代码生成模板（若有） | 工具L3指针 |
-| 第四步 | 代码本身 + 工具网关接口 | 工作记忆变量绑定 | 无（执行器不需大模型） |
-| 第五步 | 执行结果 + 用户原始问题 + 最近一轮用户可见历史 | 执行日志（可选） | 之前步骤中间产物指针 |
+JudgeMetaAgent 输出的 `tool_list` 用于过滤后续阶段可用的工具：
+
+- **减少上下文**：只传递相关工具，减少 LLM 上下文压力
+- **提高准确性**：限制工具范围，降低错误调用概率
+- **支持并行**：Judge 可以指定多个工具，后续阶段并行调用
+
+#### 3.4.4 动态上下文编排机制
+
+Code-Plan Mode采用动态上下文编排，为每个阶段按需构建上下文视图。
+
+**各阶段的上下文需求**：
+| 阶段 | 核心输入 | 工具信息 |
+|------|----------|----------|
+| Judge | 用户消息 + 会话历史 | 所有工具 L0（名称+描述） |
+| ToolCalling | 用户消息 + 会话历史 | 过滤后的工具 L1（完整参数） |
+| Coding | 用户消息 + 会话历史 | 过滤后的工具 + 工具函数 |
 
 **上下文编排器工作流程**：
-1. **需求解析**：根据步骤标识和分支，确定需要哪些信息类别及最大 token 预算。
-2. **检索**：从用户可见历史（按相关性/时效性截取）、过程历史（按步骤依赖）、工具注册表（按层级）中提取原始信息。
-3. **压缩**：对超过阈值的文本（如过长会话）调用轻量 LLM 生成摘要，保留关键实体和决策点；原始内容存入长期存储并返回指针。
-4. **组装**：生成包含核心层、支撑层、压缩层的结构化上下文对象，注入特殊标记（如 `<core>`、`<support>`) 以辅助大模型区分重要性。
-5. **缓存**：将上下文视图暂存，供下一步骤参考（但下一步会重新构建，可能部分复用）。
+1. **需求解析**：根据阶段标识，确定需要哪些信息
+2. **检索**：从会话历史、工具注册表中提取信息
+3. **过滤**：根据 Judge 结果过滤工具列表
+4. **组装**：生成包含系统提示词、历史、工具信息的消息列表
 
-**用户主动介入时的上下文更新**：
-- 用户新消息追加到用户可见历史。
-- 清空当前步骤的上下文视图。
-- 上下文编排器重新为第一步构建视图，但会保留工作记忆中尚未失效的中间产物（如已生成的代码，前提是用户未否定）。
-- 工作记忆中的每个产物记录依赖条件（如“基于工具列表X和方案Y”）。当用户介入导致依赖条件变化（如用户说“不要用工具A”），相关产物自动标记为无效。
-- 重新进入第一步，但可跳过部分步骤（例如用户只要求修改参数，可复用已有方案直接到第二步修改）。
+#### 3.4.5 执行沙盒设计
 
-#### 3.4.3 工作记忆与状态管理
-
-工作记忆存储当前循环的中间产物，支持版本和依赖追踪。
-
-**存储结构**：
-工作记忆是一个键值存储，每个条目包含：
-- `id`: 唯一标识
-- `type`: 工具列表 | 自然语言方案 | 代码 | 执行结果 | 用户偏好
-- `content`: 实际数据
-- `step`: 产生步骤
-- `dependencies`: 依赖的其它条目 id 列表（如代码依赖方案）
-- `timestamp`: 创建时间
-- `valid`: 是否仍有效（被用户介入标记无效时设为 False）
-
-**状态恢复与回溯**：
-- 每次检查点保存当前工作记忆的快照（轻量级，仅存储 id 和 valid 状态）。
-- 用户介入后，重新执行第一步时，遍历工作记忆，将 valid=false 的条目及所有依赖它的条目递归标记为无效。
-- 后续步骤只读取 valid=true 的条目，避免使用过时产物。
-
-#### 3.4.4 执行沙盒设计
+CodingMetaAgent 使用沙盒环境执行生成的代码：
 
 **安全执行环境**：
-- **语言**：Python 3.10+。
-- **隔离**：使用 subprocess 运行临时脚本，设置 timeout、ulimit 限制 CPU 和内存。
+- **语言**：Python 3.13+
+- **异步支持**：自动检测代码中的 `await`，包装为异步函数执行
+- **工具函数注入**：通过 `extra_globals` 参数注入工具函数到执行环境
 - **危险操作拦截**：
-  - 代码生成时提示词禁止 import os、subprocess、socket、eval、exec 等，并后过滤。
-  - 沙盒环境中，所有工具调用必须通过 tool_gateway，网关内校验参数、权限、频率。
-  - CLI 工具白名单：仅允许执行预注册的命令路径，禁用 shell=True。
-- **网络**：沙盒进程默认无网络，需要网络访问的工具（如 HTTP 请求）通过网关代理，可记录审计日志。
-- **输出捕获**：捕获 stdout/stderr，限制最大输出大小（如 1MB），超出则截断并警告。
-
-#### 3.4.5 与Skill工具的集成
-
-SKILL.md被视为一种特殊工具，元数据如下：
-- **L0**：技能名称 + 一句话描述（如“撰写周报技能”）
-- **L1**：
-  - 输入上下文：技能需要哪些信息（如“本周工作项列表”、“上周周报”）
-  - 输出：技能生成的内容（如“周报文本”）
-  - 内部是否调用其他工具：是/否（若否，则视为纯上下文注入）
-- **L2**：预估 token 消耗、是否需用户交互
-- **L3**：完整的 SKILL.md 内容（提示词模板、子步骤描述）
-
-**调用模式**：
-- **模式A（上下文注入）**：在第四步执行时，run_skill 函数读取 SKILL.md 作为系统提示词，将输入上下文作为用户消息，调用 LLM 并返回结果。这是默认模式。
-- **模式B（子工作流展开）**：若 SKILL.md 包含结构化步骤，可在第三步生成代码时递归展开为对基础工具的调用序列。
-- **渐进式披露**：第二步只加载 L1，第三步生成代码时若需详细内容才加载 L3。
+  - 代码生成时提示词禁止 import os、subprocess、socket、eval、exec 等
+  - 允许导入的模块：math, datetime, json, re, collections, itertools, asyncio
+- **输出捕获**：捕获 stdout/stderr 和返回值
 
 #### 3.4.6 完整示例流程
 
 **用户输入**：
-> "帮我查一下北京和上海的天气，然后告诉我哪个更暖和，最后把结果发到我的邮箱。"
+> “帮我查一下北京和上海的天气，然后告诉我哪个更暖和，最后把结果发到我的邮箱。”
 
 **执行流程**：
-1. **第一步**：加载所有工具 L0，大模型判断需要工具，输出 ["get_weather", "compare_temperature", "send_email"]。
-2. **第二步**：加载这三个工具的 L1（参数、输出）。大模型判断为复杂编排（多步、数据依赖），生成自然语言方案：
-   ```
-   步骤1：调用 get_weather 获取北京天气。
-   步骤2：调用 get_weather 获取上海天气。
-   步骤3：调用 compare_temperature 比较两者，得到更暖的城市。
-   步骤4：调用 send_email 将比较结果发送给用户（收件人从会话历史提取，若无则询问）。
-   ```
-3. **第三步**：根据方案和工具 L1，生成 Python 代码（使用 tool_gateway.call），包含错误处理。
-4. **第四步**：沙盒执行代码。假设获取天气成功，比较成功，发送邮件成功。
-5. **第五步**：执行结果（成功，邮件已发送） → 大模型生成回答：“已为您比较北京和上海的天气，上海更暖和（25℃ vs 18℃），结果已发送至您的邮箱。”
-
-**用户主动介入示例**：
-若在第二步后用户发送“等一下，不要发邮件，直接显示结果”，则：
-- 新消息追加到用户可见历史。
-- 工作记忆中第二步的方案被标记无效。
-- 重新从第一步开始（但可快速复用工具列表）。
-- 第二步重新生成新方案（去掉 send_email），后续代码不含邮件发送。
-- 最终回答直接显示比较结果。
+1. **第一阶段（Judge）**：判断为复杂编排，输出 `route=coding`，工具列表 `[“get_weather”, “send_email”]`
+2. **第三阶段（Coding）**：
+   - 生成 Python 代码编排工具调用
+   - 沙盒执行代码，获取天气、比较、发送邮件
+3. **返回结果**：”已为您比较北京和上海的天气，上海更暖和（25℃ vs 18℃），结果已发送至您的邮箱。”
 
 ---
 
@@ -397,13 +347,21 @@ SKILL.md被视为一种特殊工具，元数据如下：
 
 - 终止条件：永远在第一次 LLM 回复后终止
 - 典型温度：0.1（追求确定性）
-- 适用：判断、规划、代码生成、回答生成、Skill 调用
+- 适用：判断、代码生成
 
 **多轮 Tool Calling 元Agent（ToolCallingMetaAgent）**：LLM ↔ 工具循环，直到 LLM 不返回 tool_calls。
 
 - 终止条件：LLM 响应中不包含 tool_calls，或达到最大迭代次数
 - 典型温度：0.7（需要灵活性）
 - 适用：Tool Use 模式的完整工具调用循环
+
+**当前实现的元Agent**：
+
+| 元Agent | 类型 | 功能 | 提示词模板 |
+|---------|------|------|------------|
+| JudgeMetaAgent | 单轮 | 路由判断 | judge.j2 |
+| ToolCallingMetaAgent | 多轮 | 简单工具调用 | tool_use.j2 |
+| CodingMetaAgent | 单轮 | 复杂工具编排（代码生成） | coding.j2 |
 
 #### 4.1.3 Agent 类型
 
@@ -420,55 +378,45 @@ class ToolUseAgent(Agent):
         return AgentResult(final_answer=result.output, ...)
 ```
 
-**编排型 Agent**：协调多个元Agent + 确定性引擎的协作，包含控制流、状态管理和用户交互逻辑。
+**编排型 Agent**：协调多个元Agent的协作，包含控制流和状态管理。
 
 ```python
 class CodePlanAgent(Agent):
-    """Code-Plan 模式 = 4 个元Agent + 执行引擎的编排"""
-    def __init__(self, llm, prompt_loader, execution_engine):
-        self.judge   = JudgeMetaAgent(llm, prompt_loader, "code_plan_judge.j2")
-        self.planner = PlanMetaAgent(llm, prompt_loader, "code_plan_plan.j2")
-        self.codegen = CodeGenMetaAgent(llm, prompt_loader, "code_plan_code_generation.j2")
-        self.answer  = AnswerMetaAgent(llm, prompt_loader, "code_plan_answer.j2")
-        self.engine  = execution_engine  # 确定性执行引擎，不是元Agent
+    """Code-Plan 模式 = 3 个元Agent的编排"""
+    def __init__(self, llm, context_manager, executor_registry):
+        self.judge = JudgeMetaAgent(llm, context_manager)
+        self.tool_calling = ToolCallingMetaAgent(llm, context_manager, executor_registry)
+        self.coding = CodingMetaAgent(llm, context_manager, executor_registry)
 
     async def execute(self, user_input, history):
-        # Step 1: 判断 — 控制流分支
-        r = await self.judge.run(MetaAgentInput(...))
-        if r.output_type == "text":  # 直接回答，无需工具
-            return self._to_result(r)
+        # 第一阶段：路由判断
+        judge_result = await self.judge.run(MetaAgentInput(...))
 
-        # Step 2: 规划
-        r = await self.planner.run(MetaAgentInput(...))
+        if judge_result.route == "direct":
+            return AgentResult(final_answer=judge_result.direct_answer)
 
-        # Step 3-4: 有条件跳过（结构化调用计划不需要代码生成）
-        if r.output_type == "plan":
-            code = await self.codegen.run(MetaAgentInput(...))
-            exec_result = await self.engine.execute_code(code.output)
-        else:
-            exec_result = await self.engine.execute_plan(r.output)
+        elif judge_result.route == "tool_use":
+            # 第二阶段：简单工具调用
+            result = await self.tool_calling.run(MetaAgentInput(...))
+            return AgentResult(final_answer=result.output)
 
-        # Step 5: 回答
-        r = await self.answer.run(MetaAgentInput(...))
-        return self._to_result(r)
+        else:  # coding
+            # 第三阶段：复杂工具编排
+            result = await self.coding.run(MetaAgentInput(...))
+            return AgentResult(final_answer=result.output)
 ```
 
 #### 4.1.4 体系结构图
 
 ```
 元Agent（MetaAgent）                  Agent
-├── ToolCallingMetaAgent              ├── ToolUseAgent          # 简单 Agent：包装单个元Agent
-│   └── prompt: tool_use.j2           │
-├── JudgeMetaAgent                    └── CodePlanAgent         # 编排型 Agent：多元Agent + 引擎协作
-│   └── prompt: code_plan_judge.j2        ├── JudgeMetaAgent
-├── PlanMetaAgent                         ├── PlanMetaAgent
-│   └── prompt: code_plan_plan.j2         ├── CodeGenMetaAgent
-├── CodeGenMetaAgent                      ├── ExecutionEngine（确定性执行，非元Agent）
-│   └── prompt: code_plan_code_gen.j2     └── AnswerMetaAgent
-├── AnswerMetaAgent
-│   └── prompt: code_plan_answer.j2
-└── SkillMetaAgent
-    └── prompt: SKILL.md 内容
+├── JudgeMetaAgent                    ├── ToolUseAgent          # 简单 Agent：包装单个元Agent
+│   └── prompt: judge.j2              │   └── ToolCallingMetaAgent
+├── ToolCallingMetaAgent              │
+│   └── prompt: tool_use.j2           └── CodePlanAgent         # 编排型 Agent：多元Agent协作
+└── CodingMetaAgent                       ├── JudgeMetaAgent
+    └── prompt: coding.j2                  ├── ToolCallingMetaAgent
+                                           └── CodingMetaAgent
 ```
 
 **外部调用入口**统一为 Agent：
@@ -523,14 +471,12 @@ class AgentResult:
 
 | 元Agent / Agent | 现有代码 |
 |---|---|
-| ToolCallingMetaAgent | `QDAgent._openai_tool_calling_loop()` |
-| JudgeMetaAgent | `CodePlanModeOrchestrator._step_judge()` |
-| PlanMetaAgent | `CodePlanModeOrchestrator._step_plan()` |
-| CodeGenMetaAgent | `CodePlanModeOrchestrator._step_code_generation()` |
-| AnswerMetaAgent | `CodePlanModeOrchestrator._step_answer()` |
-| SkillMetaAgent | `ExecutionEngine` 中的 skill 执行分支 |
-| ToolUseAgent | `ToolUseModeOrchestrator` + `_openai_tool_calling_loop()` |
-| CodePlanAgent | `CodePlanModeOrchestrator`（五步循环逻辑） |
+| JudgeMetaAgent | `agent/judge_meta.py` |
+| ToolCallingMetaAgent | `agent/tool_use_meta.py` |
+| CodingMetaAgent | `agent/coding_meta.py` |
+| ToolUseAgent | `agent/tool_use.py` |
+| CodePlanAgent | `agent/code_plan.py` |
+| QDAgent | `agent/core.py`（Agent 容器 + 资源管理器） |
 
 #### 4.1.7 设计收益
 
@@ -544,19 +490,38 @@ class AgentResult:
 
 系统支持两种工作模式，共享部分核心组件：
 
-**Tool Use Mode（单阶段工具调用模式）**：
+**Tool Use Mode（简单工具调用模式）**：
 ```
-[用户输入] → [上下文管理器] → [单阶段调度器 (ToolUseModeOrchestrator)]
-                                   ├─ 工具预加载与缓存
-                                   │   ├─ 加载所有注册工具
-                                   │   ├─ MCP工具自动展开
-                                   │   └─ 构建OpenAI格式工具列表
-                                   └─ OpenAI Tool Calling循环
-                                       ├─ LLM决策（直接回复或工具调用）
-                                       ├─ 工具执行
-                                       └─ 结果反馈循环
+[用户输入] → [ToolUseAgent]
+                └─ ToolCallingMetaAgent
+                    ├─ 工具预加载与缓存
+                    │   ├─ 加载所有注册工具
+                    │   ├─ MCP工具自动展开
+                    │   └─ 构建OpenAI格式工具列表
+                    └─ OpenAI Tool Calling循环
+                        ├─ LLM决策（直接回复或工具调用）
+                        ├─ 工具执行
+                        └─ 结果反馈循环
+```
 
-[工具执行引擎] → [回复生成]
+**Code-Plan Mode（智能路由模式）**：
+```
+[用户输入] → [CodePlanAgent]
+                ├─ JudgeMetaAgent（路由判断）
+                │   ├─ direct → 直接回答
+                │   ├─ tool_use → ToolCallingMetaAgent
+                │   └─ coding → CodingMetaAgent
+                │
+                ├─ ToolCallingMetaAgent（简单工具调用）
+                │   └─ OpenAI Tool Calling 循环
+                │
+                └─ CodingMetaAgent（复杂工具编排）
+                    ├─ 代码生成
+                    └─ 沙盒执行
+                        ├─ 异步代码支持（顶层 await）
+                        └─ 工具函数注入
+
+[工具执行引擎] ←─ 共享
     ├─ function (Python函数)
     ├─ cli (命令行程序)
     ├─ http (HTTP服务)
