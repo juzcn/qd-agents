@@ -3,15 +3,13 @@
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
 from datetime import datetime
-from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from ..models import ExecutionStatus, ExecutionStep, ExecutionResult
 
 
 logger = logging.getLogger(__name__)
@@ -20,42 +18,6 @@ logger = logging.getLogger(__name__)
 class SecurityError(Exception):
     """安全异常"""
     pass
-
-
-class ExecutionStatus(str, Enum):
-    """执行状态"""
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class ExecutionStep(BaseModel):
-    """执行步骤"""
-    step: int
-    tool_id: str | None = None
-    tool_name: str | None = None
-    input: dict[str, Any] = Field(default_factory=dict)
-    output: Any = None
-    error: str | None = None
-    start_time: datetime | None = None
-    end_time: datetime | None = None
-    duration_ms: int = 0
-    status: ExecutionStatus = ExecutionStatus.PENDING
-
-
-class ExecutionResult(BaseModel):
-    """执行结果"""
-    trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    session_id: str | None = None
-    user_input: str | None = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-    status: ExecutionStatus = ExecutionStatus.PENDING
-    steps: list[ExecutionStep] = Field(default_factory=list)
-    final_output: Any = None
-    error: str | None = None
-    total_duration_ms: int = 0
 
 
 class ExecutionEngine:
@@ -244,17 +206,6 @@ async def __async_main__():
 
             logger.info("Code executed successfully")
 
-        except Exception as e:
-            logger.exception("Code execution failed")
-            result.error = str(e)
-            result.status = ExecutionStatus.FAILED
-            raise
-
-        except ImportError as e:
-            logger.exception("Import security violation: %s", e)
-            result.error = f"Import security violation: {e}"
-            result.status = ExecutionStatus.FAILED
-            raise SecurityError(f"Security violation: {e}") from e
         except SecurityError as e:
             logger.exception("Security violation: %s", e)
             result.error = str(e)

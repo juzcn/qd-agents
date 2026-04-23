@@ -1,7 +1,7 @@
 """
-工具执行器模块
+工具模块
 
-保持向后兼容性，从新的executors模块重新导出所有公共API。
+包含工具执行器、内置工具函数和工具注册表。
 """
 from .executors import (
     ToolExecutor,
@@ -16,6 +16,9 @@ from .executors import (
     BashToolExecutor,
     FunctionToolExecutor,
 )
+from .builtins import echo
+from .builtin_search import serper_search, tavily_search
+from .mcp_manager import MCPToolManager
 
 __all__ = [
     "ToolExecutor",
@@ -29,4 +32,10 @@ __all__ = [
     "CLIToolExecutor",
     "BashToolExecutor",
     "FunctionToolExecutor",
+    # 内置搜索工具
+    "echo",
+    "serper_search",
+    "tavily_search",
+    # MCP 管理
+    "MCPToolManager",
 ]

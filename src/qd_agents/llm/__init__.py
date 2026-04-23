@@ -1,7 +1,24 @@
 """
-LLM 模块 - NVIDIA NIM API 集成与模型管理
+LLM 模块
 """
-from .client import LLMClient, ModelInfo, create_client
-from .scoring import calculate_model_score, is_chat_model, get_top_models
+from .client import LLMClient, LLMError, AllModelsFailedError, create_client
+from .formatters import (
+    clean_escape_sequences,
+    format_content,
+    format_messages_for_logging,
+    tool_calls_to_dicts,
+    format_tool_call_text,
+)
 
-__all__ = ["LLMClient", "ModelInfo", "create_client", "calculate_model_score", "is_chat_model", "get_top_models"]
+__all__ = [
+    "LLMClient",
+    "LLMError",
+    "AllModelsFailedError",
+    "create_client",
+    "formatters",
+    "clean_escape_sequences",
+    "format_content",
+    "format_messages_for_logging",
+    "tool_calls_to_dicts",
+    "format_tool_call_text",
+]

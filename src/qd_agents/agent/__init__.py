@@ -17,12 +17,15 @@ from .base import (
     Agent,
     AgentResult,
 )
-from .judge_meta import JudgeMetaAgent, JudgeResult
-from .tool_use_meta import ToolCallingMetaAgent
+from .judge_meta import JudgeMetaAgent
+from .tool_calling_meta import ToolCallingMetaAgent
 from .coding_meta import CodingMetaAgent
 from .tool_use import ToolUseAgent
 from .code_plan import CodePlanAgent
 from .core import QDAgent
+
+# JudgeResult 现在从 models 模块导出，这里保留向后兼容的重新导出
+from ..models import JudgeResult
 
 __all__ = [
     # 基类

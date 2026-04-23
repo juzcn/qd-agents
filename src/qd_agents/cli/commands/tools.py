@@ -12,7 +12,7 @@ from rich.console import Console
 
 from qd_agents.config import load_config
 from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
-from qd_agents.agent.builtins import echo
+from qd_agents.tools.builtins import echo
 
 
 def list_tools(
@@ -95,7 +95,7 @@ def init_tools(
         },
         execution=ToolExecutionConfig(
             type=ToolExecutionType.FUNCTION,
-            module="qd_agents.agent.builtin_tools",
+            module="qd_agents.tools.builtin_search",
             function="serper_search",
         ),
         metadata=ToolMetadata(
@@ -136,7 +136,7 @@ def init_tools(
         },
         execution=ToolExecutionConfig(
             type=ToolExecutionType.FUNCTION,
-            module="qd_agents.agent.builtin_tools",
+            module="qd_agents.tools.builtin_search",
             function="tavily_search",
         ),
         metadata=ToolMetadata(
@@ -165,7 +165,7 @@ def init_tools(
         },
         execution=ToolExecutionConfig(
             type=ToolExecutionType.FUNCTION,
-            module="qd_agents.agent.builtins",
+            module="qd_agents.tools.builtins",
             function="echo",
         ),
         metadata=ToolMetadata(
