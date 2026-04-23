@@ -61,6 +61,29 @@ class LLMClient:
         self._current_model_index = 0
         self._api_key = api_key
         self._base_url = base_url
+        self._meta_agent_name: str = ""  # 当前使用的元Agent 名称
+        self._meta_agent_message_counts: dict[str, int] = {}  # 每个元Agent 的消息计数器
+
+    @property
+    def meta_agent_name(self) -> str:
+        """获取当前元Agent 名称"""
+        return self._meta_agent_name
+
+    @meta_agent_name.setter
+    def meta_agent_name(self, name: str):
+        """设置当前元Agent 名称"""
+        self._meta_agent_name = name
+        # 初始化该元Agent 的计数器（如果不存在）
+        if name not in self._meta_agent_message_counts:
+            self._meta_agent_message_counts[name] = 0
+
+    def _get_logged_message_count(self) -> int:
+        """获取当前元Agent 的已记录消息数量"""
+        return self._meta_agent_message_counts.get(self._meta_agent_name, 0)
+
+    def _update_logged_message_count(self, count: int):
+        """更新当前元Agent 的已记录消息数量"""
+        self._meta_agent_message_counts[self._meta_agent_name] = count
 
     @property
     def current_model(self) -> str:
@@ -197,14 +220,23 @@ class LLMClient:
 
         return cleaned
 
-    def _format_messages_for_logging(self, messages: list[dict[str, Any]]) -> str:
-        """格式化消息用于日志记录，纯文本渲染，还原 messages 数组结构"""
+    def _format_messages_for_logging(self, messages: list[dict[str, Any]], start_index: int = 0) -> str:
+        """格式化消息用于日志记录，纯文本渲染，还原 messages 数组结构
+
+        Args:
+            messages: 消息列表
+            start_index: 开始记录的消息索引（用于增量日志）
+        """
         if not messages:
             return "[]"
 
         formatted_parts = []
 
         for i, msg in enumerate(messages):
+            # 跳过已记录的消息
+            if i < start_index:
+                continue
+
             lines: list[str] = []
             role = msg.get("role", "unknown")
             lines.append(f'  [{i}] {{"role": "{role}"')
@@ -351,10 +383,16 @@ class LLMClient:
             use_model = model or self.current_model
 
             try:
-                logger.info("Calling model: %s", use_model)
-                # 记录输入 messages (INFO level)
-                formatted_messages = self._format_messages_for_logging(messages)
-                logger.info("LLM Prompt:\n%s", formatted_messages)
+                logger.info("Calling model: %s (MetaAgent: %s)", use_model, self._meta_agent_name or "unknown")
+                # 记录输入 messages (INFO level) - 增量日志，只显示新增的消息
+                logged_count = self._get_logged_message_count()
+                new_msg_count = len(messages) - logged_count
+                if new_msg_count > 0:
+                    formatted_messages = self._format_messages_for_logging(messages, logged_count)
+                    logger.info("LLM Prompt (MetaAgent: %s) [%d new messages]:\n%s", self._meta_agent_name or "unknown", new_msg_count, formatted_messages)
+                    self._update_logged_message_count(len(messages))
+                else:
+                    logger.info("LLM Prompt (MetaAgent: %s): [no new messages]", self._meta_agent_name or "unknown")
 
                 response = await self._client.chat.completions.create(
                     model=use_model,
@@ -378,7 +416,7 @@ class LLMClient:
                             completion_display["tool_calls"] = self._tool_calls_to_dicts(message.tool_calls)
                         if not completion_display.get("content") and "tool_calls" not in completion_display:
                             completion_display["content"] = "[no content or tool calls]"
-                        logger.info("LLM Completion:\n%s", self._format_messages_for_logging([completion_display]))
+                        logger.info("LLM Completion (MetaAgent: %s):\n%s", self._meta_agent_name or "unknown", self._format_messages_for_logging([completion_display]))
 
                     # 记录 token 使用情况
                     if hasattr(response, 'usage') and response.usage:
@@ -439,10 +477,16 @@ class LLMClient:
         """
         # 流式响应不自动重试（太复杂）
         use_model = model or self.current_model
-        # 记录输入 messages (INFO level)
-        logger.info("Calling model (stream): %s", use_model)
-        formatted_messages = self._format_messages_for_logging(messages)
-        logger.info("LLM Prompt (stream):\n%s", formatted_messages)
+        # 记录输入 messages (INFO level) - 增量日志
+        logger.info("Calling model (stream): %s (MetaAgent: %s)", use_model, self._meta_agent_name or "unknown")
+        logged_count = self._get_logged_message_count()
+        new_msg_count = len(messages) - logged_count
+        if new_msg_count > 0:
+            formatted_messages = self._format_messages_for_logging(messages, logged_count)
+            logger.info("LLM Prompt (stream, MetaAgent: %s) [%d new messages]:\n%s", self._meta_agent_name or "unknown", new_msg_count, formatted_messages)
+            self._update_logged_message_count(len(messages))
+        else:
+            logger.info("LLM Prompt (stream, MetaAgent: %s): [no new messages]", self._meta_agent_name or "unknown")
 
         stream = await self._client.chat.completions.create(
             model=use_model,
