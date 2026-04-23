@@ -54,6 +54,9 @@ class ToolUseAgent(Agent):
             context_manager=context_manager,
             executor_registry=executor_registry,
             tool_registry=tool_registry,
+            openai_tools=openai_tools_cache,
+            tool_map=tool_map_cache,
+            expanded_tools=expanded_tools_cache,
         )
 
     def set_tools_cache(
@@ -66,14 +69,16 @@ class ToolUseAgent(Agent):
         self._expanded_tools_cache = expanded_tools
         self._openai_tools_cache = openai_tools
         self._tool_map_cache = tool_map
+        # 同步到 ToolCallingMetaAgent
+        self.meta._expanded_tools = expanded_tools
+        self.meta._openai_tools = openai_tools
+        self.meta._tool_map = tool_map
 
     async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
         """
         执行 Tool Use Agent。
 
-        1. 构建 MetaAgentInput（包含工具缓存等上下文）
-        2. 委托给 ToolCallingMetaAgent 执行
-        3. 将 MetaAgentOutput 转换为 AgentResult
+        工具列表已在构造时注入 ToolCallingMetaAgent，无需再通过 context 传递。
         """
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
@@ -86,16 +91,11 @@ class ToolUseAgent(Agent):
                 trace_id=trace_id,
             )
 
-        search_web_available = any(t.id == "search.web" for t in self._expanded_tools_cache)
-
         meta_input = MetaAgentInput(
             user_message=user_input,
             history=history,
             context={
-                "expanded_tools": self._expanded_tools_cache,
-                "openai_tools": self._openai_tools_cache,
-                "tool_map": self._tool_map_cache,
-                "search_web_available": search_web_available,
+                "search_web_available": any(t.id == "search.web" for t in self._expanded_tools_cache),
             },
         )
 
