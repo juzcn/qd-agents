@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Literal
 
@@ -17,7 +18,6 @@ from pydantic import BaseModel, Field
 
 from ..llm import LLMClient
 from ..context import ContextManager
-from ..prompts import PromptLoader
 from .base import MetaAgent, MetaAgentInput, MetaAgentOutput
 
 logger = logging.getLogger(__name__)
@@ -46,12 +46,10 @@ class JudgeMetaAgent(MetaAgent):
         self,
         llm_client: LLMClient,
         context_manager: ContextManager,
-        prompt_loader: PromptLoader | None = None,
         temperature: float = 0.1,
     ):
         self.llm = llm_client
         self.context = context_manager
-        self.prompts = prompt_loader
         self.temperature = temperature
 
     async def run(self, input: MetaAgentInput) -> MetaAgentOutput:
@@ -65,18 +63,12 @@ class JudgeMetaAgent(MetaAgent):
 
         tools = input.context.get("tools", [])
 
-        # 渲染系统提示词
-        if self.prompts:
-            system_prompt = self.prompts.render(
-                "judge",
-                tools=tools,
-                user_input=input.user_message,
-                history=input.history,
-            )
-        else:
-            system_prompt = self._build_prompt(tools, input.user_message, input.history)
-
-        messages = [{"role": "user", "content": system_prompt}]
+        # 构建消息（system prompt + history + user input）
+        messages = self.context.build_judge_messages(
+            user_input=input.user_message,
+            tools=tools,
+            history=input.history,
+        )
 
         # 设置当前元Agent 名称
         self.llm.meta_agent_name = self.name
@@ -93,6 +85,7 @@ class JudgeMetaAgent(MetaAgent):
         # 解析结果
         judge_result = self._parse_result(content)
 
+        # 追加 assistant 消息
         messages.append({"role": "assistant", "content": content})
 
         return MetaAgentOutput(
@@ -104,28 +97,6 @@ class JudgeMetaAgent(MetaAgent):
             total_tokens=total_tokens,
             latency_ms=latency_ms,
         )
-
-    def _build_prompt(self, tools: list, user_input: str, history: list) -> str:
-        """构建提示词（无模板时的回退）"""
-        tools_info = "\n".join(
-            f"- {getattr(t, 'name', str(t))}: {getattr(t, 'description', '')[:100]}"
-            for t in tools[:20]
-        )
-        history_text = "\n".join(
-            f"{m.get('role')}: {m.get('content', '')[:200]}"
-            for m in (history[-6:] if history else [])
-        )
-        return f"""分析用户问题，决定路由路径：
-
-可用工具:
-{tools_info or '暂无'}
-
-用户问题: {user_input}
-
-历史对话:
-{history_text or '无'}
-
-返回JSON: {{"route": "direct|tool_use|coding", "reasoning": "...", "direct_answer": "..."}}"""
 
     def _parse_result(self, content: str) -> JudgeResult:
         """解析判断结果"""
@@ -142,7 +113,6 @@ class JudgeMetaAgent(MetaAgent):
 
     def _extract_json(self, content: str) -> str:
         """从内容中提取 JSON"""
-        import re
         # 匹配 ```json ... ``` 或 ``` ... ```
         json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
         if json_match:
