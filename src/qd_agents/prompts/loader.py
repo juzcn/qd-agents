@@ -28,6 +28,7 @@ class PromptLoader:
             trim_blocks=True,
             lstrip_blocks=True,
         )
+        self.env.policies["json.dumps_kwargs"] = {"ensure_ascii": False}
 
     def get_template(self, template_name: str) -> Template:
         """

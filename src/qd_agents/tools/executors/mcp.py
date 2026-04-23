@@ -112,7 +112,7 @@ class MCPToolExecutor(ToolExecutor):
         if self.env and "__mcp_config__" in self.env:
             try:
                 config = json.loads(self.env["__mcp_config__"])
-                logger.debug(f"  - __mcp_config__: {json.dumps(config, indent=2)}")
+                logger.debug(f"  - __mcp_config__: {json.dumps(config, indent=2, ensure_ascii=False)}")
             except:
                 logger.debug(f"  - __mcp_config__: (parse error)")
 
