@@ -4,16 +4,18 @@
 
 ## 特性
 
+- **Agent/元Agent 架构** - 双层架构，元Agent是原子LLM调用单元，Agent是任务处理单元
+- **三阶段智能路由** - Code-Plan模式采用Judge→ToolCalling/Coding三阶段路由
 - **多 LLM 提供商支持** - NVIDIA、讯飞星辰等
 - **可配置模型列表** - 为每个提供商配置多个模型
 - **自动模型发现** - NVIDIA 等提供商支持动态发现模型
 - **模型评分选择** - 基于系列优先级和参数大小智能选择模型
 - **Fallback 机制** - 模型失败时自动切换到下一个
-- **单阶段调度** - 简化架构下的智能工具路由与执行
 - **上下文管理** - 统一管理会话历史和提示词构建
 - **Tool Registry** - SQLite 存储的工具注册中心
 - **多种工具执行** - 支持 HTTP/CLI/Function/MCP 工具
 - **MCP 服务器管理** - 通过命令行注册、列出和移除 MCP 服务器
+- **异步代码执行** - 支持顶层 await 语法，自动包装为异步函数执行
 - **重试与熔断** - 4 种退避策略 + 熔断器模式
 - **CLI 界面** - 简洁的命令行交互
 - **内置搜索工具** - 支持 Tavily、Serper 搜索引擎
@@ -277,6 +279,35 @@ qd-agents/
 
 ## 核心模块
 
+### Agent 体系架构
+
+系统采用双层 Agent 架构：
+
+**元Agent（MetaAgent）**：原子 LLM 调用单元
+- 一个系统提示词 + 一种上下文构建 + 一种处理逻辑
+- 类型：单轮（Judge、Coding）或多轮 Tool Calling（ToolCalling）
+
+**Agent**：任务处理单元
+- 简单 Agent：包装单个元Agent（ToolUseAgent）
+- 编排型 Agent：协调多个元Agent（CodePlanAgent）
+
+**当前实现的元Agent**：
+| 元Agent | 功能 | 提示词模板 |
+|---------|------|------------|
+| JudgeMetaAgent | 路由判断（direct/tool_use/coding） | judge.j2 |
+| ToolCallingMetaAgent | 简单工具调用 | tool_use.j2 |
+| CodingMetaAgent | 复杂工具编排（代码生成+执行） | coding.j2 |
+
+### Code-Plan 模式
+
+三阶段智能路由：
+```
+用户输入 → JudgeMetaAgent（路由判断）
+           ├─ direct → 直接回答
+           ├─ tool_use → ToolCallingMetaAgent
+           └─ coding → CodingMetaAgent（代码生成+沙盒执行）
+```
+
 ### 配置管理 (config/)
 
 - 多层配置支持（默认 → 全局 → 环境 → 实例）
@@ -303,7 +334,14 @@ qd-agents/
 
 - 统一管理会话历史
 - 分阶段消息构建（system_prompt + 历史 + 当前用户输入）
-- 支持单阶段工具调用模式，简化架构提高性能
+- 支持三阶段路由模式的上下文构建
+
+### 执行引擎 (execution/)
+
+- Python 代码沙盒执行
+- 异步代码支持（顶层 await）
+- 工具函数注入（extra_globals）
+- 安全限制：禁止危险模块和函数
 
 ### Tool Registry (registry/)
 
