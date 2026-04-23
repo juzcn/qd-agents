@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -79,7 +80,7 @@ class ExecutionEngine:
             timeout: 执行超时时间（毫秒）
         """
         self._tools: dict[str, Any] = {}
-        self.allowed_modules = allowed_modules or ["math", "datetime", "json", "re", "collections", "itertools"]
+        self.allowed_modules = allowed_modules or ["math", "datetime", "json", "re", "collections", "itertools", "asyncio"]
         self.blocked_builtins = blocked_builtins or ["eval", "exec", "__import__", "open"]
         self.timeout = timeout
 
@@ -159,6 +160,7 @@ class ExecutionEngine:
         code: str,
         session_id: str | None = None,
         trace_id: str | None = None,
+        extra_globals: dict[str, Any] | None = None,
     ) -> ExecutionResult:
         """
         执行生成的 Python 代码
@@ -167,6 +169,7 @@ class ExecutionEngine:
             code: Python 代码字符串
             session_id: 会话 ID
             trace_id: 追踪 ID
+            extra_globals: 额外的全局变量（如工具函数）
 
         Returns:
             执行结果
@@ -208,12 +211,35 @@ class ExecutionEngine:
             # 注入已注册工具
             exec_globals.update(self._tools)
 
+            # 注入额外的全局变量（如工具函数）
+            if extra_globals:
+                exec_globals.update(extra_globals)
+
             # 执行代码
             exec_locals: dict[str, Any] = {}
-            exec(code, exec_globals, exec_locals)
 
-            # 获取返回值
-            result.final_output = exec_locals.get("return") or exec_locals.get("result")
+            # 检测是否包含 await，自动包装为异步函数
+            if "await" in code:
+                # 将代码包装为异步主函数，使用 globals() 参数传入全局变量
+                indented_code = chr(10).join("    " + line for line in code.split(chr(10)) if line.strip())
+                wrapped_code = f"""
+async def __async_main__():
+{indented_code}
+    return result
+"""
+                # 编译并定义异步函数
+                exec(wrapped_code, exec_globals, exec_locals)
+
+                # 获取异步函数
+                async_main = exec_locals.get("__async_main__")
+                if async_main:
+                    # 将 exec_globals 作为异步函数的全局作用域
+                    async_main.__globals__.update(exec_globals)
+                    result.final_output = await async_main()
+            else:
+                exec(code, exec_globals, exec_locals)
+                result.final_output = exec_locals.get("return") or exec_locals.get("result")
+
             result.status = ExecutionStatus.COMPLETED
 
             logger.info("Code executed successfully")
