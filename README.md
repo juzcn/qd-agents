@@ -256,17 +256,16 @@ uv run qd-agents --version
 qd-agents/
 ├── src/qd_agents/
 │   ├── config/          # 配置管理
-│   ├── llm/             # LLM 客户端
+│   ├── llm/             # LLM 客户端 + 消息格式化
+│   ├── models/          # 共享数据模型（JudgeResult, ExecutionResult 等）
 │   ├── registry/        # Tool Registry
 │   ├── prompts/         # 提示词模板
 │   │   └── templates/
 │   ├── context/         # 上下文管理器
-│   ├── orchestrator/    # 调度器（工具调用模式，支持MCP工具展开）
-│   ├── tools/           # 工具执行器
+│   ├── tools/           # 工具执行器 + 内置工具 + MCP 管理器
 │   ├── execution/       # 执行引擎
-│   ├── agent/           # Agent 核心
-│   ├── utils/           # 工具函数
-│   ├── models/          # 数据模型
+│   ├── agent/           # Agent 核心（MetaAgent + Agent）
+│   ├── utils/           # 工具函数（重试、熔断、日志）
 │   └── cli/             # CLI 界面
 ├── data/                # 数据目录（自动创建）
 │   ├── tools.db         # Tool Registry 数据库
@@ -320,6 +319,7 @@ qd-agents/
 - 自动模型发现（`/v1/models`）
 - Top 5 模型评分选择
 - 自动 Fallback 机制
+- 消息格式化与日志（`llm/formatters.py`）
 
 **模型评分规则**：
 
@@ -335,6 +335,12 @@ qd-agents/
 - 统一管理会话历史
 - 分阶段消息构建（system_prompt + 历史 + 当前用户输入）
 - 支持三阶段路由模式的上下文构建
+
+### 数据模型 (models/)
+
+共享 Pydantic 数据模型，供多个模块引用：
+- `JudgeResult` — 路由判断结果（route, reasoning, tool_list）
+- `ExecutionStatus` / `ExecutionStep` / `ExecutionResult` — 执行轨迹模型
 
 ### 执行引擎 (execution/)
 
@@ -363,7 +369,13 @@ qd-agents/
 | `mcp` | Model Context Protocol |
 | `bash` | Bash 命令执行 |
 
-**MCP 工具展开**：在上下文管理中，MCP 工具会自动连接到 MCP 服务器并展开所有可用工具，将 MCP 服务器提供的每个工具作为独立工具加载到可用工具列表中，使得大模型在使用 tool calling 时可以获得完整的工具信息。
+**内置工具**：
+- `tools/builtins.py` — echo 等基础工具
+- `tools/builtin_search.py` — Serper、Tavily 搜索工具
+
+**MCP 管理**：
+- `tools/mcp_manager.py` — MCP 服务器连接、工具发现和注册
+- MCP 工具自动展开：连接 MCP 服务器后，将每个子工具作为独立工具加载到可用工具列表
 
 ### 重试与熔断 (utils/retry.py)
 
