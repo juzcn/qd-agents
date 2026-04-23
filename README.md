@@ -221,6 +221,42 @@ uv run qd-agents tools mcp add open-meteo "Open Meteo Weather" \
 
 **注意**：MCP工具执行器具有自动发现功能，在上下文管理中会自动连接到MCP服务器并展开所有可用工具，将MCP服务器提供的每个工具作为独立工具加载到可用工具列表中，无需手动注册每个工具。这使得大模型在使用tool calling时可以获得完整的工具信息。
 
+### 管理 Skill 工具
+
+Skill 工具可以通过以下命令管理：
+
+```bash
+# 添加 Skill 工具
+uv run qd-agents tools skill add <skill_name>
+
+# 列出已注册的 Skill 工具
+uv run qd-agents tools skill list
+```
+
+**参数说明**：
+- `skill_name`：Skill 目录名（tools/skills/ 下的文件夹名）
+
+**Skill 目录结构**：
+```
+tools/skills/<skill_name>/
+├── SKILL.md          # Skill 元数据（YAML frontmatter）
+└── scripts/          # 脚本目录
+    └── *.py          # Python 脚本
+```
+
+**SKILL.md 格式**：
+```yaml
+---
+name: skill-name
+description: Skill 描述
+metadata:
+  openclaw:
+    requires:
+      env: [ENV_VAR1, ENV_VAR2]  # 所需环境变量
+      bins: [command1, command2]  # 所需命令
+---
+```
+
 ### 启动交互式聊天
 
 ```bash
@@ -376,6 +412,11 @@ qd-agents/
 **MCP 管理**：
 - `tools/mcp_manager.py` — MCP 服务器连接、工具发现和注册
 - MCP 工具自动展开：连接 MCP 服务器后，将每个子工具作为独立工具加载到可用工具列表
+
+**Skill 管理**：
+- `tools/skills/` — Skill 工具目录
+- 通过 `qd-agents tools skill add` 命令注册 Skill
+- Skill 支持环境变量和命令依赖声明
 
 ### 重试与熔断 (utils/retry.py)
 
