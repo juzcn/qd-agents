@@ -75,6 +75,9 @@ class ToolCallingMetaAgent(MetaAgent):
             history=input.history,
         )
 
+        # 设置当前元Agent 名称到 LLM 客户端（用于日志）
+        self.llm.meta_agent_name = self.name
+
         iteration = 0
         total_tokens = 0
 
