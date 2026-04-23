@@ -212,7 +212,20 @@ class LLMClient:
             # content — 纯文本渲染
             content = msg.get("content")
             if content is not None:
-                text = self._format_content(content)
+                # tool 角色的 content 尝试 JSON 格式化输出
+                if role == "tool" and isinstance(content, str):
+                    try:
+                        parsed = json.loads(content)
+                        text = json.dumps(parsed, ensure_ascii=False, indent=2)
+                        # 缩进对齐
+                        indented_lines = text.split("\n")
+                        text = indented_lines[0] + "\n" + "\n".join(
+                            "          " + line for line in indented_lines[1:]
+                        )
+                    except (json.JSONDecodeError, ValueError):
+                        text = self._format_content(content)
+                else:
+                    text = self._format_content(content)
                 lines.append(f'      "content": {text}')
 
             # tool_calls — 纯文本渲染
