@@ -118,7 +118,7 @@ async def mcp_add_async(
 
     # 如果 args 是列表（来自 JSON），将其转换为 JSON 字符串以便后续解析
     if final_args and isinstance(final_args, list):
-        final_args = json.dumps(final_args)
+        final_args = json.dumps(final_args, ensure_ascii=False)
 
     config = load_config(base_dir=base_dir, config_file=config_file)
 

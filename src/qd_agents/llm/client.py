@@ -354,7 +354,7 @@ class LLMClient:
                 )
 
                 if not stream:
-                    logger.debug("Response: %s", response.model_dump_json() if hasattr(response, 'model_dump_json') else str(response))  # type: ignore
+                    logger.debug("Response: %s", response.model_dump_json(ensure_ascii=False) if hasattr(response, 'model_dump_json') else str(response))  # type: ignore
                     # 记录输出 content (INFO level) — 与 Prompt 相同的纯文本格式
                     if response.choices and len(response.choices) > 0:
                         message = response.choices[0].message
