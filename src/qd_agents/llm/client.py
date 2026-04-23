@@ -220,15 +220,22 @@ class LLMClient:
                 logger.info("Calling model: %s (MetaAgent: %s)", use_model, self._meta_agent_name or "unknown")
                 self._log_prompt(messages)
 
-                response = await self._client.chat.completions.create(
-                    model=use_model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_completion_tokens=max_tokens,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    stream=stream,
-                )
+                # Use max_tokens for broader API compatibility (xunfei etc.)
+                # max_completion_tokens is OpenAI-only and causes 500 on other providers
+                kwargs: dict[str, Any] = {
+                    "model": use_model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "stream": stream,
+                }
+                if max_tokens is not None:
+                    kwargs["max_tokens"] = max_tokens
+                if tools is not None:
+                    kwargs["tools"] = tools
+                if tool_choice is not None:
+                    kwargs["tool_choice"] = tool_choice
+
+                response = await self._client.chat.completions.create(**kwargs)
 
                 if not stream:
                     logger.debug(
@@ -271,14 +278,18 @@ class LLMClient:
         logger.info("Calling model (stream): %s (MetaAgent: %s)", use_model, self._meta_agent_name or "unknown")
         self._log_prompt(messages, is_stream=True)
 
-        stream = await self._client.chat.completions.create(
-            model=use_model,
-            messages=messages,
-            temperature=temperature,
-            max_completion_tokens=max_tokens,
-            tools=tools,
-            stream=True,
-        )
+        kwargs: dict[str, Any] = {
+            "model": use_model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if tools is not None:
+            kwargs["tools"] = tools
+
+        stream = await self._client.chat.completions.create(**kwargs)
 
         async for chunk in stream:
             if hasattr(chunk, 'usage') and chunk.usage:
