@@ -12,7 +12,6 @@ import typer
 from rich.console import Console
 
 from .commands import chat_async, list_models_async, list_tools, init_tools, show_version, mcp_add, mcp_list, mcp_remove
-from qd_agents.config import AgentMode
 
 
 # 创建 Typer 应用实例
@@ -127,7 +126,7 @@ def main(
     ctx: typer.Context,
     list_models: bool = typer.Option(False, "--list-models", help="列出可用模型"),
     version: bool = typer.Option(False, "--version", help="显示版本信息"),
-    mode: Optional[AgentMode] = typer.Option(None, "--mode", help="智能体工作模式: tool-use, code-plan"),
+    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="指定 Agent: tool-use"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
 ):
@@ -159,4 +158,4 @@ def main(
 
     # 如果没有任何选项被指定，执行默认操作（聊天）
     if not options_executed:
-        asyncio.run(chat_async(console, base_dir, config_file, None, None, mode))
+        asyncio.run(chat_async(console, base_dir, config_file, None, None, agent))

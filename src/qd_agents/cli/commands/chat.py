@@ -21,7 +21,7 @@ from ..managers import (
 from qd_agents.registry import ToolRegistry
 from qd_agents.prompts import PromptLoader
 from qd_agents.context import ContextManager
-from qd_agents.config import Config, AgentMode
+from qd_agents.config import Config
 from qd_agents.llm import LLMClient
 
 
@@ -85,8 +85,8 @@ class ChatCommandHandler:
             self._show_tools()
             return True
 
-        if user_input.lower() == "/mode":
-            await self._handle_mode_command()
+        if user_input.lower() == "/agent":
+            await self._handle_agent_command()
             return True
 
         if user_input.strip().startswith("/"):
@@ -107,14 +107,15 @@ class ChatCommandHandler:
         self.console.print("  /model - 显示当前模型")
         self.console.print("  /models - 列出并切换可用模型")
         self.console.print("  /tools - 列出可用工具")
-        self.console.print("  /mode - 显示/切换工作模式")
+        self.console.print("  /agent - 显示/切换 Agent")
         self.console.print("  /help - 显示此帮助\n")
 
     def _show_current_model(self):
-        """显示当前模型和模式"""
+        """显示当前模型和 Agent"""
         if self.llm_manager.llm_client and self.llm_manager.provider_name:
+            agent_name = self.llm_manager.agent.current_agent_name if self.llm_manager.agent else "未知"
             self.console.print(
-                f"\n[bold]当前模型:[/] {self.llm_manager.provider_name}/{self.llm_manager.llm_client.current_model}  [bold]模式:[/] {self.config.llm.mode.value}\n"
+                f"\n[bold]当前模型:[/] {self.llm_manager.provider_name}/{self.llm_manager.llm_client.current_model}  [bold]Agent:[/] {agent_name}\n"
             )
         else:
             self.console.print("\n[red]错误: 模型未初始化[/]\n")
@@ -240,12 +241,9 @@ class ChatCommandHandler:
             self.console.print("\n[red]错误: Agent 未初始化[/]\n")
             return True
 
-        # 根据模式处理
-        current_mode = self.config.llm.mode
-        if current_mode == AgentMode.CODE_PLAN:
-            self.console.print(f"\n[green]使用 Code-Plan 模式[/]")
-        else:
-            self.console.print(f"\n[green]使用 Tool-Use 模式[/]")
+        # 显示当前 Agent
+        agent_name = self.llm_manager.agent.current_agent_name
+        self.console.print(f"\n[green]使用 Agent: {agent_name}[/]")
 
         with self.console.status("[bold]思考中...[/]"):
             result = await self.llm_manager.agent.process(user_input=user_input)
@@ -254,21 +252,30 @@ class ChatCommandHandler:
         self.console.print(f"[dim]耗时: {result.total_duration_ms}ms[/]", style="dim")
         return True
 
-    async def _handle_mode_command(self):
-        """处理 /mode 命令：显示/切换工作模式"""
-        current_mode = self.config.llm.mode
-        self.console.print(f"\n[bold]当前模式:[/] {current_mode.value}")
-        self.console.print("[bold]可用模式:[/]")
-        for mode in AgentMode:
-            self.console.print(f"  - {mode.value}: {mode.name}")
+    async def _handle_agent_command(self):
+        """处理 /agent 命令：显示/切换 Agent"""
+        if self.llm_manager.agent is None:
+            self.console.print("\n[red]错误: Agent 未初始化[/]\n")
+            return
 
-        # 询问是否切换模式
+        current_agent_name = self.llm_manager.agent.current_agent_name
+        registered_agents = self.llm_manager.agent.registered_agents
+
+        self.console.print(f"\n[bold]当前 Agent:[/] {current_agent_name}")
+        self.console.print("[bold]可用 Agent:[/]")
+        for name, agent in registered_agents.items():
+            marker = " (当前)" if name == current_agent_name else ""
+            self.console.print(f"  - {name}: {agent.description}{marker}")
+
+        # 询问是否切换 Agent
         try:
             choices = [
-                questionary.Choice("保持当前模式", value=current_mode),
-                questionary.Choice("切换到 tool-use", value=AgentMode.TOOL_USE),
-                questionary.Choice("切换到 code-plan", value=AgentMode.CODE_PLAN),
+                questionary.Choice("保持当前 Agent", value=current_agent_name),
             ]
+            for name in registered_agents:
+                if name != current_agent_name:
+                    choices.append(questionary.Choice(f"切换到 {name}", value=name))
+
             selected = await questionary.select(
                 "选择操作:",
                 choices=choices,
@@ -276,20 +283,20 @@ class ChatCommandHandler:
                 instruction="(↑↓ 选择, Enter 确认)",
             ).ask_async()
 
-            if selected and selected != current_mode:
-                self.config.llm.mode = selected
-                self.console.print(f"\n[green]已切换到模式:[/] {selected.value}")
-                # 更新配置文件
-                if self.current_config_file.exists():
-                    with open(self.current_config_file, 'r', encoding='utf-8') as f:
-                        config_data = json.load(f)
-                    config_data['llm']['mode'] = selected.value
-                    with open(self.current_config_file, 'w', encoding='utf-8') as f:
-                        json.dump(config_data, f, ensure_ascii=False, indent=2)
-                    self.console.print(f"[dim]已更新 config.json[/]")
-                self.console.print()
-            elif selected == current_mode:
-                self.console.print("\n[dim]保持当前模式[/]\n")
+            if selected and selected != current_agent_name:
+                if self.llm_manager.agent.switch_agent(selected):
+                    self.console.print(f"\n[green]已切换到 Agent:[/] {selected}")
+                    # 更新配置文件
+                    if self.current_config_file.exists():
+                        with open(self.current_config_file, 'r', encoding='utf-8') as f:
+                            config_data = json.load(f)
+                        config_data['llm']['default_agent'] = selected
+                        with open(self.current_config_file, 'w', encoding='utf-8') as f:
+                            json.dump(config_data, f, ensure_ascii=False, indent=2)
+                        self.console.print(f"[dim]已更新 config.json[/]")
+                    self.console.print()
+            elif selected == current_agent_name:
+                self.console.print("\n[dim]保持当前 Agent[/]\n")
         except (KeyboardInterrupt, EOFError):
             self.console.print()
 
@@ -300,7 +307,7 @@ async def chat_async(
     config_file: Optional[Path] = None,
     provider: Optional[str] = None,
     model: Optional[str] = None,
-    mode: Optional[AgentMode] = None,
+    agent: Optional[str] = None,
 ) -> None:
     """
     异步聊天实现
@@ -311,7 +318,7 @@ async def chat_async(
         config_file: 配置文件路径
         provider: 提供商名称
         model: 模型名称
-        mode: 智能体工作模式
+        agent: Agent 名称
     """
     console.print("[bold blue]qd-agents[/] - 智能体系统", style="bold")
     console.print("输入 /quit 退出，输入 /help 查看帮助\n", style="dim")
@@ -319,12 +326,12 @@ async def chat_async(
     # 1. 配置初始化
     config = setup_configuration(console, base_dir, config_file)
 
-    # 1.1. 更新模式（如果通过命令行指定）
-    if mode is not None:
-        config.llm.mode = mode
+    # 1.1. 更新 Agent（如果通过命令行指定）
+    if agent is not None:
+        config.llm.default_agent = agent
 
-    # 显示当前模式
-    console.print(f"[dim]工作模式:[/] {config.llm.mode.value}")
+    # 显示当前 Agent
+    console.print(f"[dim]当前 Agent:[/] {config.llm.default_agent}")
 
 
     # 3. 初始化工具和上下文

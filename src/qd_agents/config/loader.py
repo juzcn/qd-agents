@@ -17,11 +17,6 @@ logger = logging.getLogger(__name__)
 from enum import Enum
 
 
-class AgentMode(str, Enum):
-    """智能体工作模式"""
-    TOOL_USE = "tool-use"
-    CODE_PLAN = "code-plan"
-
 
 class LLMProviderConfig(BaseModel):
     """LLM 提供商配置"""
@@ -56,7 +51,8 @@ class LLMConfig(BaseModel):
     default_provider: str = "nvidia"
     default_model: str | None = None
     providers: dict[str, LLMProviderConfig] = Field(default_factory=dict)
-    mode: AgentMode = AgentMode.CODE_PLAN
+    mode: str = "tool-use"  # 向后兼容，实际使用 default_agent
+    default_agent: str = "tool-use"
     tool_threshold: int = 50
 
 
@@ -222,14 +218,10 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
             else:
                 provider_data.setdefault('auto_discover', False)
 
-    # 确保mode字段（如果存在）转换为 AgentMode 枚举
-    if 'llm' in data and data['llm'].get('mode'):
-        try:
-            # 将字符串转换为AgentMode枚举
-            data['llm']['mode'] = AgentMode(data['llm']['mode'])
-        except ValueError as e:
-            logger.warning(f"Invalid mode value '{data['llm']['mode']}' in config: {e}")
-            # 保留原值，让Pydantic验证失败
+    # 确保default_agent字段存在（向后兼容：从mode字段迁移）
+    if 'llm' in data:
+        if 'default_agent' not in data['llm'] and data['llm'].get('mode'):
+            data['llm']['default_agent'] = data['llm']['mode']
 
     return Config(**data)
 
