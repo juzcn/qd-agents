@@ -248,7 +248,7 @@ class ChatCommandHandler:
         with self.console.status("[bold]思考中...[/]"):
             result = await self.llm_manager.agent.process(user_input=user_input)
 
-        self.console.print(f"\n[bold green]助手[/]: {result.final_output}\n")
+        self.console.print(f"\n[bold green]助手[/]: {result.final_answer}\n")
         self.console.print(f"[dim]耗时: {result.total_duration_ms}ms[/]", style="dim")
         return True
 
