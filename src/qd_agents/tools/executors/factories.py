@@ -79,6 +79,15 @@ def create_executor(tool: Tool) -> ToolExecutor:
             tool_name=exec_config.tool,  # 如果指定了具体工具名
         )
 
+    elif exec_config.type == ToolExecutionType.SKILL:
+        if not exec_config.shell_command:
+            raise ValueError("SKILL tool requires shell_command")
+        return BashToolExecutor(
+            shell_command=exec_config.shell_command,
+            shell=exec_config.shell or "bash",
+            timeout=exec_config.timeout,
+        )
+
     else:
         raise ValueError(f"Unknown tool type: {exec_config.type}")
 
