@@ -35,6 +35,10 @@ class JudgeResult(BaseModel):
         default=None,
         description="如果route=direct，这里给出直接回答"
     )
+    tool_list: list[str] = Field(
+        default_factory=list,
+        description="如果route=tool_use或coding，这里列出需要的工具名称"
+    )
 
 
 class JudgeMetaAgent(MetaAgent):
