@@ -370,7 +370,177 @@ SKILL.md被视为一种特殊工具，元数据如下：
 
 ## 4. 系统架构
 
-### 4.1 总体模块
+### 4.1 Agent 体系架构
+
+系统采用双层 Agent 架构，将 LLM 调用抽象为两类角色：
+
+#### 4.1.1 核心定义
+
+**元Agent（MetaAgent）**：原子 LLM 调用单元。一个系统提示词 + 一种上下文构建 + 一种处理逻辑（含终止条件）→ 从输入到输出。
+
+**Agent**：从用户输入到最终回答的完整任务处理单元。可以是单个元Agent的简单包装，也可以是多个元Agent + 引擎的编排协作。对外统一暴露 `execute(input) → answer` 接口。
+
+**关键区分**：
+
+| | 元Agent（MetaAgent） | Agent |
+|---|---|---|
+| LLM 调用 | 单一模式（单轮 / 多轮 Tool Calling） | 不直接调用，委托给子元Agent |
+| 系统提示词 | 一个 | 无（每个子元Agent各自持有） |
+| 处理逻辑 | 固定（含终止条件） | 控制流（顺序、分支、跳过、重试） |
+| 交互 | 无（只做输入→输出） | 可能有（用户介入、确认、澄清） |
+| 状态 | 无状态 | 有状态（working memory 跨元Agent传递） |
+| 终止条件 | LLM 行为决定 | 编排逻辑决定 |
+
+#### 4.1.2 元Agent 类型
+
+**单轮元Agent（SingleTurnMetaAgent）**：调一次 LLM，拿到结果即终止。
+
+- 终止条件：永远在第一次 LLM 回复后终止
+- 典型温度：0.1（追求确定性）
+- 适用：判断、规划、代码生成、回答生成、Skill 调用
+
+**多轮 Tool Calling 元Agent（ToolCallingMetaAgent）**：LLM ↔ 工具循环，直到 LLM 不返回 tool_calls。
+
+- 终止条件：LLM 响应中不包含 tool_calls，或达到最大迭代次数
+- 典型温度：0.7（需要灵活性）
+- 适用：Tool Use 模式的完整工具调用循环
+
+#### 4.1.3 Agent 类型
+
+**简单 Agent**：包装单个元Agent，保持接口统一。
+
+```python
+class ToolUseAgent(Agent):
+    """Tool Use 模式 = 单个 ToolCallingMetaAgent 的包装"""
+    def __init__(self, meta: ToolCallingMetaAgent):
+        self.meta = meta
+
+    async def execute(self, user_input, history):
+        result = await self.meta.run(MetaAgentInput(user_input, history, {...}))
+        return AgentResult(final_answer=result.output, ...)
+```
+
+**编排型 Agent**：协调多个元Agent + 确定性引擎的协作，包含控制流、状态管理和用户交互逻辑。
+
+```python
+class CodePlanAgent(Agent):
+    """Code-Plan 模式 = 4 个元Agent + 执行引擎的编排"""
+    def __init__(self, llm, prompt_loader, execution_engine):
+        self.judge   = JudgeMetaAgent(llm, prompt_loader, "code_plan_judge.j2")
+        self.planner = PlanMetaAgent(llm, prompt_loader, "code_plan_plan.j2")
+        self.codegen = CodeGenMetaAgent(llm, prompt_loader, "code_plan_code_generation.j2")
+        self.answer  = AnswerMetaAgent(llm, prompt_loader, "code_plan_answer.j2")
+        self.engine  = execution_engine  # 确定性执行引擎，不是元Agent
+
+    async def execute(self, user_input, history):
+        # Step 1: 判断 — 控制流分支
+        r = await self.judge.run(MetaAgentInput(...))
+        if r.output_type == "text":  # 直接回答，无需工具
+            return self._to_result(r)
+
+        # Step 2: 规划
+        r = await self.planner.run(MetaAgentInput(...))
+
+        # Step 3-4: 有条件跳过（结构化调用计划不需要代码生成）
+        if r.output_type == "plan":
+            code = await self.codegen.run(MetaAgentInput(...))
+            exec_result = await self.engine.execute_code(code.output)
+        else:
+            exec_result = await self.engine.execute_plan(r.output)
+
+        # Step 5: 回答
+        r = await self.answer.run(MetaAgentInput(...))
+        return self._to_result(r)
+```
+
+#### 4.1.4 体系结构图
+
+```
+元Agent（MetaAgent）                  Agent
+├── ToolCallingMetaAgent              ├── ToolUseAgent          # 简单 Agent：包装单个元Agent
+│   └── prompt: tool_use.j2           │
+├── JudgeMetaAgent                    └── CodePlanAgent         # 编排型 Agent：多元Agent + 引擎协作
+│   └── prompt: code_plan_judge.j2        ├── JudgeMetaAgent
+├── PlanMetaAgent                         ├── PlanMetaAgent
+│   └── prompt: code_plan_plan.j2         ├── CodeGenMetaAgent
+├── CodeGenMetaAgent                      ├── ExecutionEngine（确定性执行，非元Agent）
+│   └── prompt: code_plan_code_gen.j2     └── AnswerMetaAgent
+├── AnswerMetaAgent
+│   └── prompt: code_plan_answer.j2
+└── SkillMetaAgent
+    └── prompt: SKILL.md 内容
+```
+
+**外部调用入口**统一为 Agent：
+
+```
+QDAgent（入口）
+├── mode=tool-use  → ToolUseAgent.execute()
+└── mode=code-plan → CodePlanAgent.execute()
+```
+
+#### 4.1.5 数据模型
+
+**元Agent 输入输出**：
+
+```python
+@dataclass
+class MetaAgentInput:
+    user_message: str               # 用户消息
+    history: list[dict]             # 会话历史
+    context: dict                   # 元Agent专用上下文（tools_l0/l1、working memory 等）
+
+@dataclass
+class MetaAgentOutput:
+    output: Any                     # 输出内容（文本、JSON、代码等）
+    output_type: str                # "text" | "tool_list" | "plan" | "code" | "answer"
+    success: bool
+    messages: list[dict]            # 完整消息轨迹（可观测性）
+    metadata: MetaAgentMetadata
+
+@dataclass
+class MetaAgentMetadata:
+    model: str
+    total_tokens: int
+    latency_ms: int
+    iterations: int                 # 1=单轮, N=多轮 tool calling
+```
+
+**Agent 输出**：
+
+```python
+@dataclass
+class AgentResult:
+    final_answer: str               # 最终回答
+    success: bool
+    meta_traces: list[MetaAgentOutput]   # 内部元Agent执行轨迹
+    working_memory: dict                  # 跨元Agent的中间状态（仅编排型Agent有）
+    interaction_log: list[dict]           # 用户交互记录
+    metadata: dict
+```
+
+#### 4.1.6 与现有代码的映射
+
+| 元Agent / Agent | 现有代码 |
+|---|---|
+| ToolCallingMetaAgent | `QDAgent._openai_tool_calling_loop()` |
+| JudgeMetaAgent | `CodePlanModeOrchestrator._step_judge()` |
+| PlanMetaAgent | `CodePlanModeOrchestrator._step_plan()` |
+| CodeGenMetaAgent | `CodePlanModeOrchestrator._step_code_generation()` |
+| AnswerMetaAgent | `CodePlanModeOrchestrator._step_answer()` |
+| SkillMetaAgent | `ExecutionEngine` 中的 skill 执行分支 |
+| ToolUseAgent | `ToolUseModeOrchestrator` + `_openai_tool_calling_loop()` |
+| CodePlanAgent | `CodePlanModeOrchestrator`（五步循环逻辑） |
+
+#### 4.1.7 设计收益
+
+1. **独立可测**：每个元Agent可独立测试，mock LLM 即可验证，不再需要跑完整流程
+2. **Skill 天然是元Agent**：不再需要特殊的 skill 执行分支，统一为 SkillMetaAgent
+3. **编排可变**：Code-Plan 的步骤可以跳过、重试、替换，因为每步是独立元Agent
+4. **新增模式容易**：新 Agent = 新的元Agent组合，不需要编写新的 Orchestrator 类
+5. **接口统一**：外部只调用 Agent.execute()，不关心内部是简单包装还是编排协作
+
+### 4.2 总体模块
 
 系统支持两种工作模式，共享部分核心组件：
 
@@ -422,14 +592,14 @@ SKILL.md被视为一种特殊工具，元数据如下：
 - **工具注册中心**：存储和管理所有注册工具
 - **配置管理系统**：统一配置管理
 
-### 4.2 模块说明
+### 4.3 模块说明
 
-#### 4.2.1 上下文管理器
+#### 4.3.1 上下文管理器
 
 - 维护会话历史，裁剪过长的历史。
 - 注入系统提示词（角色、安全边界等）。
 
-#### 4.2.2 单阶段调度器 (ToolUseModeOrchestrator)
+#### 4.3.2 单阶段调度器 (ToolUseModeOrchestrator)
 
 **实现架构**：基于OpenAI Tool Calling规范的单阶段调度器，遵循工业标准，支持工具预加载、MCP工具自动展开和缓存机制。
 
@@ -483,7 +653,7 @@ SKILL.md被视为一种特殊工具，元数据如下：
 - **扩展性强**：模块化执行器支持新工具类型，易于功能扩展
 - **资源管理**：统一的连接生命周期管理，避免资源泄漏
 
-#### 4.2.3 Tool Registry
+#### 4.3.3 Tool Registry
 
 嵌入式数据库 SQLite，支持工具注册、检索、更新和管理。
 
