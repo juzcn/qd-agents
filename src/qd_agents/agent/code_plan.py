@@ -107,7 +107,7 @@ class CodePlanAgent(Agent):
         judge_output = await self._judge.run(judge_input)
         judge_result: JudgeResult = judge_output.output
 
-        logger.info(f"Judge result: route={judge_result.route}, reasoning={judge_result.reasoning}")
+        logger.info(f"Judge result: route={judge_result.route}, reasoning={judge_result.reasoning}, tools={judge_result.tool_list}")
 
         # 根据路由执行
         if judge_result.route == "direct":
@@ -116,15 +116,19 @@ class CodePlanAgent(Agent):
             meta_traces = [judge_output]
 
         elif judge_result.route == "tool_use":
-            # 简单工具调用
+            # 简单工具调用 - 使用 judge 指定的工具
+            filtered_tools = self._filter_tools(judge_result.tool_list)
+            filtered_openai_tools = self._filter_openai_tools(judge_result.tool_list)
+            filtered_tool_map = self._filter_tool_map(judge_result.tool_list)
+
             tool_input = MetaAgentInput(
                 user_message=user_input,
                 history=history,
                 context={
-                    "expanded_tools": self._expanded_tools,
-                    "openai_tools": self._openai_tools,
-                    "tool_map": self._tool_map,
-                    "search_web_available": any(t.name == "search.web" for t in self._expanded_tools),
+                    "expanded_tools": filtered_tools,
+                    "openai_tools": filtered_openai_tools,
+                    "tool_map": filtered_tool_map,
+                    "search_web_available": any(t.name == "search.web" for t in filtered_tools),
                 },
             )
 
@@ -133,13 +137,15 @@ class CodePlanAgent(Agent):
             meta_traces = [judge_output, tool_output]
 
         elif judge_result.route == "coding":
-            # 复杂工具编排
+            # 复杂工具编排 - 使用 judge 指定的工具
+            filtered_tools = self._filter_tools(judge_result.tool_list)
+
             coding_input = MetaAgentInput(
                 user_message=user_input,
                 history=history,
                 context={
-                    "tools": self._expanded_tools,
-                    "tool_functions": await self._build_tool_functions(),
+                    "tools": filtered_tools,
+                    "tool_functions": await self._build_tool_functions(filtered_tools),
                 },
             )
 
@@ -160,7 +166,25 @@ class CodePlanAgent(Agent):
             total_duration_ms=latency_ms,
         )
 
-    async def _build_tool_functions(self) -> dict[str, Any]:
+    def _filter_tools(self, tool_names: list[str]) -> list:
+        """根据工具名列表过滤工具"""
+        if not tool_names:
+            return self._expanded_tools
+        return [t for t in self._expanded_tools if t.name in tool_names]
+
+    def _filter_openai_tools(self, tool_names: list[str]) -> list[dict]:
+        """根据工具名列表过滤 OpenAI 格式工具"""
+        if not tool_names:
+            return self._openai_tools
+        return [t for t in self._openai_tools if t.get("function", {}).get("name") in tool_names]
+
+    def _filter_tool_map(self, tool_names: list[str]) -> dict:
+        """根据工具名列表过滤工具映射"""
+        if not tool_names:
+            return self._tool_map
+        return {k: v for k, v in self._tool_map.items() if k in tool_names}
+
+    async def _build_tool_functions(self, tools: list | None = None) -> dict[str, Any]:
         """构建工具函数映射（用于代码执行）"""
         # TODO: 实现工具函数的动态构建
         # 目前返回空字典，后续需要根据工具定义生成可调用的异步函数

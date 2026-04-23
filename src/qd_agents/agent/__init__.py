@@ -17,7 +17,7 @@ from .base import (
     Agent,
     AgentResult,
 )
-from .judge_meta import JudgeMetaAgent
+from .judge_meta import JudgeMetaAgent, JudgeResult
 from .tool_use_meta import ToolCallingMetaAgent
 from .coding_meta import CodingMetaAgent
 from .tool_use import ToolUseAgent
@@ -33,6 +33,7 @@ __all__ = [
     "AgentResult",
     # 元Agent
     "JudgeMetaAgent",
+    "JudgeResult",
     "ToolCallingMetaAgent",
     "CodingMetaAgent",
     # Agent
