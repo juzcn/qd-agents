@@ -154,6 +154,21 @@ class QDAgent:
         self._agents[tool_use_agent.name] = tool_use_agent
         logger.info("Registered agent: %s", tool_use_agent.name)
 
+        # Code Plan Agent
+        from .code_plan import CodePlanAgent
+        code_plan_agent = CodePlanAgent(
+            llm_client=self.llm,
+            tool_registry=self.registry,
+            context_manager=self.context,
+            executor_registry=self.executor_registry,
+            prompt_loader=self.prompts,
+            expanded_tools_cache=self._expanded_tools_cache,
+            openai_tools_cache=self._openai_tools_cache,
+            tool_map_cache=self._tool_map_cache,
+        )
+        self._agents[code_plan_agent.name] = code_plan_agent
+        logger.info("Registered agent: %s", code_plan_agent.name)
+
     @property
     def registered_agents(self) -> dict[str, Agent]:
         """获取所有已注册的 Agent"""
