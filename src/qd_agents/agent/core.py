@@ -508,19 +508,14 @@ class QDAgent:
 
 def _extract_mcp_tool_parameters(mcp_tool: Any) -> dict[str, Any]:
     """从 mcp.Tool 对象提取参数 schema"""
-    if hasattr(mcp_tool, 'input_schema'):
-        input_schema = mcp_tool.input_schema
-        if isinstance(input_schema, dict):
-            return input_schema
+    # MCP SDK uses camelCase "inputSchema", try both conventions
+    for attr in ("inputSchema", "input_schema"):
+        schema = getattr(mcp_tool, attr, None)
+        if isinstance(schema, dict) and schema.get("properties"):
+            return schema
 
     return {
         "type": "object",
-        "properties": {
-            "arguments": {
-                "type": "object",
-                "description": "工具参数",
-                "additionalProperties": True,
-            }
-        },
-        "required": ["arguments"],
+        "properties": {},
+        "required": [],
     }

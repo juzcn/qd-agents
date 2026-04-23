@@ -33,6 +33,9 @@ class ToolCallingMetaAgent(MetaAgent):
         context_manager: ContextManager,
         executor_registry: ToolExecutorRegistry,
         tool_registry: Any = None,
+        openai_tools: list[dict[str, Any]] | None = None,
+        tool_map: dict[str, Tool] | None = None,
+        expanded_tools: list[Tool] | None = None,
         temperature: float = 0.7,
         max_iterations: int = 10,
     ):
@@ -40,6 +43,9 @@ class ToolCallingMetaAgent(MetaAgent):
         self.context = context_manager
         self.executor_registry = executor_registry
         self.tool_registry = tool_registry
+        self._openai_tools = openai_tools
+        self._tool_map = tool_map or {}
+        self._expanded_tools = expanded_tools
         self.temperature = temperature
         self.max_iterations = max_iterations
 
@@ -47,17 +53,16 @@ class ToolCallingMetaAgent(MetaAgent):
         """
         执行多轮 Tool Calling 循环。
 
-        input.context 需包含：
-          - expanded_tools: list[Tool]  展开后的工具列表
-          - openai_tools: list[dict]    OpenAI 格式工具列表
-          - tool_map: dict[str, Tool]   工具名→Tool 映射
-          - search_web_available: bool  search.web 是否可用
+        工具来源优先级：
+        1. input.context 中传入的过滤后工具列表（CodePlanAgent 指定 tool_list 时）
+        2. 构造时注入的默认工具列表（ToolUseAgent 使用全部工具时）
         """
         start_time = time.perf_counter()
 
-        expanded_tools = input.context.get("expanded_tools", [])
-        openai_tools = input.context.get("openai_tools", [])
-        tool_map = input.context.get("tool_map", {})
+        # 优先使用 context 传入的工具（支持按 tool_list 过滤），否则使用构造时的默认工具
+        expanded_tools = input.context.get("expanded_tools") or self._expanded_tools or []
+        openai_tools = input.context.get("openai_tools") or self._openai_tools or []
+        tool_map = input.context.get("tool_map") or self._tool_map or {}
         search_web_available = input.context.get("search_web_available", False)
 
         if not openai_tools:

@@ -69,6 +69,9 @@ class CodePlanAgent(Agent):
             context_manager=context_manager,
             executor_registry=executor_registry,
             tool_registry=tool_registry,
+            openai_tools=openai_tools_cache,
+            tool_map=tool_map_cache,
+            expanded_tools=expanded_tools_cache,
         )
         self._coding = CodingMetaAgent(
             llm_client=llm_client,
