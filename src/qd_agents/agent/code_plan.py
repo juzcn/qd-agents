@@ -62,7 +62,6 @@ class CodePlanAgent(Agent):
         self._judge = JudgeMetaAgent(
             llm_client=llm_client,
             context_manager=context_manager,
-            prompt_loader=prompt_loader,
         )
         self._tool_calling = ToolCallingMetaAgent(
             llm_client=llm_client,
@@ -74,7 +73,6 @@ class CodePlanAgent(Agent):
             llm_client=llm_client,
             context_manager=context_manager,
             executor_registry=executor_registry,
-            prompt_loader=prompt_loader,
         )
 
     async def execute(
