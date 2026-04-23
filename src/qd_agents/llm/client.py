@@ -198,64 +198,50 @@ class LLMClient:
         return cleaned
 
     def _format_messages_for_logging(self, messages: list[dict[str, Any]]) -> str:
-        """
-        格式化消息用于日志记录，还原 messages 数组结构
-
-        输出格式还原 OpenAI messages 数组，每个元素显示 role 和 content，
-        均按文本渲染，不截断。
-
-        Args:
-            messages: 消息列表
-
-        Returns:
-            格式化的字符串
-        """
+        """格式化消息用于日志记录，纯文本渲染，还原 messages 数组结构"""
         if not messages:
             return "[]"
 
         formatted_parts = []
 
         for i, msg in enumerate(messages):
+            lines: list[str] = []
             role = msg.get("role", "unknown")
+            lines.append(f'  [{i}] {{"role": "{role}"')
+
+            # content — 纯文本渲染
             content = msg.get("content")
-            tool_calls = msg.get("tool_calls")
-
-            # 构建显示用的 dict，还原原始结构
-            display_msg = {"role": role}
-
             if content is not None:
-                display_msg["content"] = self._format_content(content)
+                text = self._format_content(content)
+                lines.append(f'      "content": {text}')
 
+            # tool_calls — 纯文本渲染
+            tool_calls = msg.get("tool_calls")
             if tool_calls:
-                display_msg["tool_calls"] = self._format_tool_calls_obj(tool_calls)
+                lines.append('      "tool_calls": [')
+                tc_list = self._tool_calls_to_dicts(tool_calls)
+                for j, tc in enumerate(tc_list):
+                    tc_text = self._format_tool_call_text(tc)
+                    comma = "," if j < len(tc_list) - 1 else ""
+                    lines.append(f"        {tc_text}{comma}")
+                lines.append("      ]")
 
             # tool 角色额外字段
             if role == "tool":
                 tool_call_id = msg.get("tool_call_id")
                 if tool_call_id:
-                    display_msg["tool_call_id"] = tool_call_id
+                    lines.append(f'      "tool_call_id": "{tool_call_id}"')
                 tool_name = msg.get("name")
                 if tool_name:
-                    display_msg["name"] = tool_name
+                    lines.append(f'      "name": "{tool_name}"')
 
-            # 序列化为可读文本
-            try:
-                formatted = json.dumps(display_msg, ensure_ascii=False, indent=2, default=str)
-            except (TypeError, ValueError):
-                formatted = str(display_msg)
-
-            # 数组元素标记（带缩进）
-            prefix = f"  [{i}] "
-            indented = "\n".join(
-                (prefix if j == 0 else " " * len(prefix)) + line
-                for j, line in enumerate(formatted.split("\n"))
-            )
-            formatted_parts.append(indented)
+            lines.append("    }")
+            formatted_parts.append("\n".join(lines))
 
         return "[\n" + ",\n".join(formatted_parts) + "\n]"
 
     def _format_content(self, content: Any) -> str:
-        """格式化消息 content 字段，统一按文本渲染，不截断"""
+        """格式化消息 content 字段，纯文本渲染"""
         if content is None:
             return "[no content]"
 
@@ -263,7 +249,6 @@ class LLMClient:
             return self._clean_escape_sequences(content)
 
         if isinstance(content, list):
-            # 多模态内容：提取文本部分，图片用占位符
             parts = []
             for item in content:
                 if isinstance(item, dict):
@@ -281,8 +266,8 @@ class LLMClient:
 
         return str(content)
 
-    def _format_tool_calls_obj(self, tool_calls: Any) -> list[Any]:
-        """将 tool_calls 转为可序列化的 list，用于嵌入 messages 数组"""
+    def _tool_calls_to_dicts(self, tool_calls: Any) -> list[dict[str, Any]]:
+        """将 tool_calls 转为 dict 列表"""
         result = []
         for tc in tool_calls:
             if hasattr(tc, 'model_dump'):
@@ -290,8 +275,32 @@ class LLMClient:
             elif isinstance(tc, dict):
                 result.append(tc)
             else:
-                result.append(str(tc))
+                result.append({"raw": str(tc)})
         return result
+
+    def _format_tool_call_text(self, tc: dict[str, Any]) -> str:
+        """将单个 tool_call dict 格式化为纯文本行"""
+        tc_id = tc.get("id", "")
+        func = tc.get("function", {})
+        name = func.get("name", "") if isinstance(func, dict) else ""
+        arguments = func.get("arguments", "") if isinstance(func, dict) else ""
+
+        # arguments 解码：如果它是 JSON 字符串，解析后纯文本渲染
+        args_text = arguments
+        if isinstance(arguments, str) and arguments.strip():
+            try:
+                args_parsed = json.loads(arguments)
+                args_text = json.dumps(args_parsed, ensure_ascii=False, indent=2)
+                # 缩进对齐
+                args_lines = args_text.split("\n")
+                args_text = "\n".join(
+                    args_lines[0] if k == 0 else "          " + line
+                    for k, line in enumerate(args_lines)
+                )
+            except (json.JSONDecodeError, ValueError):
+                args_text = self._clean_escape_sequences(arguments)
+
+        return f'{{"id": "{tc_id}", "function": {{"name": "{name}", "arguments": {args_text}}}}}'
 
     async def chat(
         self,
@@ -346,17 +355,17 @@ class LLMClient:
 
                 if not stream:
                     logger.debug("Response: %s", response.model_dump_json() if hasattr(response, 'model_dump_json') else str(response))  # type: ignore
-                    # 记录输出 content (INFO level) — 与 Prompt 相同的数组格式
+                    # 记录输出 content (INFO level) — 与 Prompt 相同的纯文本格式
                     if response.choices and len(response.choices) > 0:
                         message = response.choices[0].message
-                        completion_msg: dict[str, Any] = {"role": "assistant"}
+                        completion_display = {"role": "assistant"}
                         if message.content:
-                            completion_msg["content"] = self._clean_escape_sequences(message.content)
+                            completion_display["content"] = message.content
                         if hasattr(message, 'tool_calls') and message.tool_calls:
-                            completion_msg["tool_calls"] = self._format_tool_calls_obj(message.tool_calls)
-                        if not completion_msg.get("content") and "tool_calls" not in completion_msg:
-                            completion_msg["content"] = "[no content or tool calls]"
-                        logger.info("LLM Completion:\n%s", json.dumps([completion_msg], indent=2, ensure_ascii=False, default=str))
+                            completion_display["tool_calls"] = self._tool_calls_to_dicts(message.tool_calls)
+                        if not completion_display.get("content") and "tool_calls" not in completion_display:
+                            completion_display["content"] = "[no content or tool calls]"
+                        logger.info("LLM Completion:\n%s", self._format_messages_for_logging([completion_display]))
 
                     # 记录 token 使用情况
                     if hasattr(response, 'usage') and response.usage:
