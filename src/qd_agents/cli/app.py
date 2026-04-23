@@ -11,7 +11,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from .commands import chat_async, list_models_async, list_tools, init_tools, show_version, mcp_add, mcp_list, mcp_remove
+from .commands import chat_async, list_models_async, list_tools, init_tools, show_version, mcp_add, mcp_list, mcp_remove, skill_add, skill_list
 
 
 # 创建 Typer 应用实例
@@ -45,6 +45,17 @@ mcp_app = typer.Typer(
 
 # 将 mcp 子命令组添加到 tools 子命令组
 tools_app.add_typer(mcp_app)
+
+# 创建 skill 子命令组
+skill_app = typer.Typer(
+    name="skill",
+    help="Skill 工具管理命令",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
+# 将 skill 子命令组添加到 tools 子命令组
+tools_app.add_typer(skill_app)
 
 # tools list 命令
 @tools_app.command("list", help="列出已注册的工具")
@@ -119,6 +130,30 @@ def mcp_remove_command(
 ):
     """移除 MCP 服务器"""
     mcp_remove(console, name, config_file, base_dir)
+
+
+# skill add 命令
+@skill_app.command("add", help="添加 Skill 工具")
+def skill_add_command(
+    skill_name: str = typer.Argument(..., help="Skill 名称（tools/skills/ 下的文件夹名）"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """添加 Skill 工具"""
+    if not skill_name or not skill_name.strip():
+        console.print("[red][ERROR][/] Skill 名称不能为空")
+        return
+    skill_add(console, skill_name, base_dir, config_file)
+
+
+# skill list 命令
+@skill_app.command("list", help="列出已注册的 Skill 工具")
+def skill_list_command(
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """列出已注册的 Skill 工具"""
+    skill_list(console, base_dir, config_file)
 
 
 @app.callback(invoke_without_command=True)
