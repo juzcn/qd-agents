@@ -89,7 +89,7 @@ class CodingMetaAgent(MetaAgent):
         try:
             exec_result = await self.execution.execute_code(
                 code=code,
-                globals_env=tool_functions,
+                extra_globals=tool_functions,
             )
 
             if exec_result.success:
