@@ -5,14 +5,13 @@ Coding 元Agent — 复杂工具编排
 """
 from __future__ import annotations
 
-import json
 import logging
+import re
 import time
 from typing import Any
 
 from ..llm import LLMClient
 from ..context import ContextManager
-from ..prompts import PromptLoader
 from ..tools import ToolExecutorRegistry
 from ..execution import ExecutionEngine
 from .base import MetaAgent, MetaAgentInput, MetaAgentOutput
@@ -30,14 +29,12 @@ class CodingMetaAgent(MetaAgent):
         llm_client: LLMClient,
         context_manager: ContextManager,
         executor_registry: ToolExecutorRegistry,
-        prompt_loader: PromptLoader | None = None,
         execution_engine: ExecutionEngine | None = None,
         temperature: float = 0.3,
     ):
         self.llm = llm_client
         self.context = context_manager
         self.executor_registry = executor_registry
-        self.prompts = prompt_loader
         self.execution = execution_engine or ExecutionEngine()
         self.temperature = temperature
 
@@ -54,17 +51,12 @@ class CodingMetaAgent(MetaAgent):
         tools = input.context.get("tools", [])
         tool_functions = input.context.get("tool_functions", {})
 
-        # 渲染系统提示词
-        if self.prompts:
-            system_prompt = self.prompts.render(
-                "coding",
-                tools=tools,
-                user_input=input.user_message,
-            )
-        else:
-            system_prompt = self._build_prompt(tools, input.user_message)
-
-        messages = [{"role": "user", "content": system_prompt}]
+        # 构建消息（system prompt + history + user input）
+        messages = self.context.build_coding_messages(
+            user_input=input.user_message,
+            tools=tools,
+            history=input.history,
+        )
 
         # 设置当前元Agent 名称
         self.llm.meta_agent_name = self.name
@@ -110,6 +102,8 @@ class CodingMetaAgent(MetaAgent):
             output = f"代码执行异常: {e}"
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
+
+        # 追加 assistant 消息
         messages.append({"role": "assistant", "content": content})
 
         return MetaAgentOutput(
@@ -122,28 +116,8 @@ class CodingMetaAgent(MetaAgent):
             latency_ms=latency_ms,
         )
 
-    def _build_prompt(self, tools: list, user_input: str) -> str:
-        """构建提示词（无模板时的回退）"""
-        tools_info = "\n".join(
-            f"- {getattr(t, 'name', str(t))}: {getattr(t, 'description', '')}"
-            for t in tools
-        )
-        return f"""生成Python代码编排工具调用：
-
-可用工具:
-{tools_info or '暂无'}
-
-用户需求: {user_input}
-
-要求:
-1. 使用 await 调用异步工具
-2. 结果赋值给 result 变量
-3. 只使用列出的工具
-"""
-
     def _extract_code(self, content: str) -> str:
         """从内容中提取代码"""
-        import re
         # 匹配 ```python ... ``` 或 ``` ... ```
         code_match = re.search(r'```(?:python)?\s*([\s\S]*?)```', content)
         if code_match:

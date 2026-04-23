@@ -40,6 +40,8 @@ class ContextManager:
         self._cached_system_prompt: str | None = None  # 缓存的系统提示词
         self._cached_tools: list[Any] | None = None    # 缓存的工具列表
         self._tool_use_cache: dict[tuple, str] = {}    # 缓存工具调用提示词
+        self._judge_cache: dict[tuple, str] = {}       # 缓存判断提示词
+        self._coding_cache: dict[tuple, str] = {}      # 缓存代码生成提示词
 
     def add_to_history(self, role: str, content: str) -> None:
         """
@@ -109,6 +111,120 @@ class ContextManager:
             # 缓存结果
             self._tool_use_cache[cache_key] = system_prompt
             logger.debug(f"Cached system prompt for {len(tools)} tools, search_web_available={search_web_available}")
+
+        return self._build_messages(
+            system_prompt=system_prompt,
+            user_input=user_input,
+            history=history,
+        )
+
+    def build_judge_messages(
+        self,
+        user_input: str,
+        tools: list[Tool],
+        history: list[dict[str, str]] | None = None,
+    ) -> list[dict[str, str]]:
+        """
+        构建路由判断消息
+
+        Args:
+            user_input: 当前用户输入
+            tools: 可用工具列表
+            history: 会话历史
+
+        Returns:
+            完整的消息列表
+        """
+        # 构建缓存键
+        tool_ids = tuple(sorted(tool.id for tool in tools))
+        cache_key = tool_ids
+
+        # 检查缓存
+        if cache_key in self._judge_cache:
+            system_prompt = self._judge_cache[cache_key]
+            logger.debug("Using cached system prompt for judge")
+        else:
+            if self.prompts:
+                system_prompt = self.prompts.render(
+                    "judge",
+                    tools=tools,
+                )
+            else:
+                # 回退到硬编码
+                tools_info = "\n".join(
+                    f"- {getattr(t, 'name', str(t))}: {getattr(t, 'description', '')[:100]}"
+                    for t in tools[:20]
+                )
+                system_prompt = f"""你是一个路由判断助手。分析用户的问题，决定应该由哪个路径处理。
+
+可用工具:
+{tools_info or '暂无'}
+
+路由选项:
+1. direct - 直接回答（基于知识，不需要工具）
+2. tool_use - 简单工具调用（1-3个工具）
+3. coding - 复杂工具编排（需要条件判断、循环等）
+
+返回JSON: {{"route": "direct|tool_use|coding", "reasoning": "...", "direct_answer": "..."}}"""
+
+            self._judge_cache[cache_key] = system_prompt
+            logger.debug(f"Cached system prompt for judge with {len(tools)} tools")
+
+        return self._build_messages(
+            system_prompt=system_prompt,
+            user_input=user_input,
+            history=history,
+        )
+
+    def build_coding_messages(
+        self,
+        user_input: str,
+        tools: list[Tool],
+        history: list[dict[str, str]] | None = None,
+    ) -> list[dict[str, str]]:
+        """
+        构建代码生成消息
+
+        Args:
+            user_input: 当前用户输入
+            tools: 可用工具列表
+            history: 会话历史
+
+        Returns:
+            完整的消息列表
+        """
+        # 构建缓存键
+        tool_ids = tuple(sorted(tool.id for tool in tools))
+        cache_key = tool_ids
+
+        # 检查缓存
+        if cache_key in self._coding_cache:
+            system_prompt = self._coding_cache[cache_key]
+            logger.debug("Using cached system prompt for coding")
+        else:
+            if self.prompts:
+                system_prompt = self.prompts.render(
+                    "coding",
+                    tools=tools,
+                )
+            else:
+                # 回退到硬编码
+                tools_info = "\n".join(
+                    f"- {getattr(t, 'name', str(t))}: {getattr(t, 'description', '')}"
+                    for t in tools
+                )
+                system_prompt = f"""你是一个代码生成助手。根据用户的需求，生成Python代码来编排工具调用。
+
+可用工具函数:
+{tools_info or '暂无'}
+
+要求:
+1. 使用 await 调用异步工具
+2. 结果赋值给 result 变量
+3. 只使用列出的工具"""
+
+            self._coding_cache[cache_key] = system_prompt
+            logger.debug(f"Cached system prompt for coding with {len(tools)} tools")
 
         return self._build_messages(
             system_prompt=system_prompt,

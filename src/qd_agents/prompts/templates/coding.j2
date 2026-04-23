@@ -10,6 +10,8 @@
 - 描述: {{ tool.description }}
 - 参数: {{ tool.parameters | tojson }}
 {% endfor %}
+{% else %}
+暂无可用工具
 {% endif %}
 
 ## 使用说明
@@ -20,9 +22,7 @@
 4. 将最终结果赋值给变量 `result`
 5. 不要使用任何未列出的工具或模块
 
-## 用户需求
-
-{{ user_input }}
+## 输出格式
 
 请生成Python代码：
 ```python
