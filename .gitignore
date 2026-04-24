@@ -20,6 +20,7 @@ wheels/
 # Secrets and config
 .env
 .env.backup
+runtime.json
 config.json
 config.*.json
 
