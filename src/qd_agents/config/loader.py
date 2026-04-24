@@ -88,6 +88,31 @@ class ExecutionConfig(BaseModel):
     code_exec_timeout: int = 30000
 
 
+class ToolCredentialConfig(BaseModel):
+    """单个外部工具的凭证配置"""
+    api_key: str = ""
+
+
+class ToolsCredentialsConfig(BaseModel):
+    """外部工具凭证配置（CLI/MCP/Skill 等工具的 API key）"""
+    # 每个工具一个子配置，key 为工具名（如 baidu_search）
+    tools: dict[str, ToolCredentialConfig] = Field(default_factory=dict)
+
+    def get_api_key(self, tool_name: str) -> str | None:
+        """获取指定工具的 API key"""
+        cred = self.tools.get(tool_name)
+        if cred and cred.api_key:
+            return cred.api_key
+        return None
+
+    def set_api_key(self, tool_name: str, api_key: str) -> None:
+        """设置指定工具的 API key"""
+        if tool_name in self.tools:
+            self.tools[tool_name].api_key = api_key
+        else:
+            self.tools[tool_name] = ToolCredentialConfig(api_key=api_key)
+
+
 class PromptsConfig(BaseModel):
     """提示词配置"""
     template_dir: Path
@@ -146,6 +171,7 @@ class Config(BaseSettings):
     search: SearchConfig = Field(default_factory=SearchConfig)
     tool_registry: ToolRegistryConfig | None = None
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    tools_credentials: ToolsCredentialsConfig = Field(default_factory=ToolsCredentialsConfig)
     prompts: PromptsConfig | None = None
 
     storage: StorageConfig | None = None
@@ -226,34 +252,27 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
     return Config(**data)
 
 
+def _convert_paths(obj: Any, base_dir: Path) -> Any:
+    """递归转换字典中的 Path 对象为相对路径字符串"""
+    if isinstance(obj, Path):
+        try:
+            return str(obj.relative_to(base_dir))
+        except ValueError:
+            return str(obj)
+    if isinstance(obj, dict):
+        return {k: _convert_paths(v, base_dir) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_convert_paths(v, base_dir) for v in obj]
+    return obj
+
+
 def _config_to_dict(config: Config, base_dir: Path | None = None) -> dict[str, Any]:
-    """将 Config 对象转换为字典"""
+    """将 Config 对象转换为可 JSON 序列化的字典"""
     if base_dir is None:
         base_dir = Path.cwd()
 
     data = config.model_dump()
-
-    # 转换 Path 字段为相对路径
-    if data.get('tool_registry') and data['tool_registry'].get('db_path'):
-        data['tool_registry']['db_path'] = str(Path(data['tool_registry']['db_path']).relative_to(base_dir))
-    if data.get('tool_registry') and data['tool_registry'].get('model_path'):
-        data['tool_registry']['model_path'] = str(Path(data['tool_registry']['model_path']).relative_to(base_dir))
-
-    if data.get('prompts') and data['prompts'].get('template_dir'):
-        data['prompts']['template_dir'] = str(Path(data['prompts']['template_dir']).relative_to(base_dir))
-
-    if data.get('storage'):
-        if data['storage'].get('data_dir'):
-            data['storage']['data_dir'] = str(Path(data['storage']['data_dir']).relative_to(base_dir))
-        if data['storage'].get('traces_dir'):
-            data['storage']['traces_dir'] = str(Path(data['storage']['traces_dir']).relative_to(base_dir))
-        if data['storage'].get('audit_dir'):
-            data['storage']['audit_dir'] = str(Path(data['storage']['audit_dir']).relative_to(base_dir))
-
-    if data.get('observability') and data['observability'].get('log_session_dir'):
-        data['observability']['log_session_dir'] = str(Path(data['observability']['log_session_dir']).relative_to(base_dir))
-
-    return data
+    return _convert_paths(data, base_dir)
 
 
 def save_config(
