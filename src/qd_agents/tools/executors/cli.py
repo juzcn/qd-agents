@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import sys
 import locale
@@ -142,10 +143,12 @@ class BashToolExecutor(ToolExecutor):
         shell_command: str,
         shell: str = "bash",
         timeout: int = 30,
+        env: dict[str, str] | None = None,
     ):
         self.shell_command = shell_command
         self.shell = shell
         self.timeout = timeout
+        self.env = env
 
     async def execute(self, **kwargs: Any) -> Any:
         import shlex
@@ -159,14 +162,18 @@ class BashToolExecutor(ToolExecutor):
 
         logger.info("Executing bash tool: %s", formatted_command)
 
+        # 合并环境变量：当前进程环境 + 工具指定的额外环境变量
+        process_env = None
+        if self.env:
+            process_env = {**os.environ, **self.env}
+
         # 使用指定的shell执行命令
-        # 在Windows上，如果shell是"bash"，可能需要使用"wsl bash -c"或其他方式
-        # 这里简化处理，假设shell在PATH中
         proc = await asyncio.create_subprocess_shell(
             formatted_command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            shell=True,  # 使用shell执行
+            shell=True,
+            env=process_env,
         )
 
         try:

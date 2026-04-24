@@ -57,6 +57,7 @@ def create_executor(tool: Tool) -> ToolExecutor:
             shell_command=exec_config.shell_command,
             shell=exec_config.shell or "bash",
             timeout=exec_config.timeout,
+            env=exec_config.env,
         )
 
     elif exec_config.type == ToolExecutionType.FUNCTION:
@@ -86,6 +87,7 @@ def create_executor(tool: Tool) -> ToolExecutor:
             shell_command=exec_config.shell_command,
             shell=exec_config.shell or "bash",
             timeout=exec_config.timeout,
+            env=exec_config.env,
         )
 
     else:

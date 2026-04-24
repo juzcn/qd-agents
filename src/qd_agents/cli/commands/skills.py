@@ -13,7 +13,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from qd_agents.config import load_config
+from qd_agents.config import load_config, save_config
 from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 
 
@@ -51,6 +51,34 @@ def _get_skills_dir(base_dir: Optional[Path] = None) -> Path:
     if base_dir:
         return base_dir / "tools" / SKILLS_DIR_NAME
     return Path("tools") / SKILLS_DIR_NAME
+
+
+# 环境变量名到 tools_credentials 中工具名的映射
+# 规则：{PROVIDER}_API_KEY → tools_credentials.tools.{provider_snake_case}.api_key
+_ENV_TO_TOOL_NAME_MAP: dict[str, str] = {
+    "BAIDU_API_KEY": "baidu_search",
+    "SERPER_API_KEY": "serper_search",
+    "TAVILY_API_KEY": "tavily_search",
+}
+
+
+def _env_var_to_tool_name(env_var: str) -> str:
+    """将环境变量名转换为 tools_credentials 中的工具名。
+
+    BAIDU_API_KEY → baidu_search
+    OPENAI_API_KEY → openai
+    CUSTOM_TOOL_API_KEY → custom_tool
+    """
+    # 先查映射表
+    if env_var in _ENV_TO_TOOL_NAME_MAP:
+        return _ENV_TO_TOOL_NAME_MAP[env_var]
+
+    # 通用规则：{PROVIDER}_API_KEY → provider（小写）
+    if env_var.endswith("_API_KEY"):
+        return env_var[:-len("_API_KEY")].lower()
+
+    # 其他环境变量：直接小写
+    return env_var.lower()
 
 
 def skill_add(
@@ -102,10 +130,38 @@ def skill_add(
     env_vars = requires.get("env", []) if isinstance(requires, dict) else []
     bins = requires.get("bins", []) if isinstance(requires, dict) else []
 
-    # 构建 env 字典（标记所需的环境变量）
+    # 加载配置
+    config = load_config(base_dir=base_dir, config_file=config_file)
+
+    # 构建 env 字典：从 config.json 查找 API key，缺失时提示用户输入
     env: dict[str, str] = {}
+    config_changed = False
     for var in env_vars:
-        env[var] = ""  # 占位，实际值由运行时环境提供
+        tool_name = _env_var_to_tool_name(var)
+        # 先从 config.tools_credentials 查找
+        api_key_value = config.tools_credentials.get_api_key(tool_name) if config.tools_credentials else None
+        if api_key_value:
+            env[var] = api_key_value
+            console.print(f"  [dim]{var}[/]: 从 config.json (tools_credentials.{tool_name}) 加载")
+        else:
+            # 提示用户输入
+            console.print(f"  [yellow]{var}[/] 未在 config.json 中配置，请输入 API Key:")
+            api_key_input = input(f"  {var}=").strip()
+            if api_key_input:
+                env[var] = api_key_input
+                # 写入 config.tools_credentials
+                if config.tools_credentials:
+                    config.tools_credentials.set_api_key(tool_name, api_key_input)
+                    config_changed = True
+                    console.print(f"  [green]已将 {var} 写入 config.json (tools_credentials.{tool_name})[/]")
+            else:
+                env[var] = ""
+                console.print(f"  [yellow]警告: {var} 未设置，工具执行时可能失败[/]")
+
+    # 如果配置有变更，保存到 config.json
+    if config_changed:
+        save_config(config, base_dir=base_dir, config_file=config_file)
+        console.print("  [dim]config.json 已更新[/]")
 
     # 查找 scripts 目录下的脚本
     scripts_dir = skill_dir / "scripts"
@@ -128,8 +184,7 @@ def skill_add(
         "required": ["arguments"],
     }
 
-    # 加载配置并注册
-    config = load_config(base_dir=base_dir, config_file=config_file)
+    # 注册工具到数据库
     db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
     registry = ToolRegistry(db_path=db_path)
 
