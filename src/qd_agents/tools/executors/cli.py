@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import sys
 import locale
@@ -118,16 +119,26 @@ class CLIToolExecutor(ToolExecutor):
 
         # 始终返回包含 stdout、stderr 和 returncode 的结构化结果
         # 这样可以保持与 OpenAI tool calling 标准的兼容性
+        stdout_str = safe_decode(stdout)
+        stderr_str = safe_decode(stderr)
+        success = proc.returncode == 0
+
+        if not success:
+            logger.warning(
+                "CLI tool execution failed (returncode=%d): %s\nstderr: %s",
+                proc.returncode, cmd_str, stderr_str[:500]
+            )
+
         result = {
-            "stdout": safe_decode(stdout),
-            "stderr": safe_decode(stderr),
+            "stdout": stdout_str,
+            "stderr": stderr_str,
             "returncode": proc.returncode,
-            "success": proc.returncode == 0
+            "success": success
         }
 
         # 如果输出是 JSON，也提供解析后的版本
         try:
-            result["json"] = json.loads(safe_decode(stdout))
+            result["json"] = json.loads(stdout_str)
         except json.JSONDecodeError:
             pass
 
@@ -142,32 +153,64 @@ class BashToolExecutor(ToolExecutor):
         shell_command: str,
         shell: str = "bash",
         timeout: int = 30,
+        env: dict[str, str] | None = None,
+        use_exec: bool = False,
+        command: str | None = None,
     ):
         self.shell_command = shell_command
         self.shell = shell
         self.timeout = timeout
+        self.env = env
+        self.use_exec = use_exec
+        self.command = command
 
     async def execute(self, **kwargs: Any) -> Any:
         import shlex
 
-        # 替换命令中的占位符
-        formatted_command = self.shell_command
-        for key, value in kwargs.items():
-            placeholder = f"{{{key}}}"
-            if placeholder in formatted_command:
-                formatted_command = formatted_command.replace(placeholder, str(value))
+        # 合并环境变量：当前进程环境 + 工具指定的额外环境变量
+        process_env = None
+        if self.env:
+            process_env = {**os.environ, **self.env}
 
-        logger.info("Executing bash tool: %s", formatted_command)
+        # Windows 下子进程 stdout 默认 GBK 编码，强制 UTF-8
+        if sys.platform == "win32":
+            if process_env is None:
+                process_env = {**os.environ}
+            process_env["PYTHONUTF8"] = "1"
 
-        # 使用指定的shell执行命令
-        # 在Windows上，如果shell是"bash"，可能需要使用"wsl bash -c"或其他方式
-        # 这里简化处理，假设shell在PATH中
-        proc = await asyncio.create_subprocess_shell(
-            formatted_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=True,  # 使用shell执行
-        )
+        if self.use_exec and self.command:
+            # exec 模式：直接构建 argv，不经过 shell 解析
+            # 避免 Windows 下 shell 引号转义导致 JSON 参数丢失
+            # 使用当前进程的 python 解释器（venv），确保依赖可用
+            cmd_parts = [sys.executable, self.command]
+            # 按占位符顺序追加参数值
+            for key, value in kwargs.items():
+                cmd_parts.append(str(value))
+            executed_command = " ".join(cmd_parts)
+            logger.info("Executing bash tool (exec mode): %s", executed_command)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd_parts,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=process_env,
+            )
+        else:
+            # 替换命令中的占位符
+            formatted_command = self.shell_command
+            for key, value in kwargs.items():
+                placeholder = f"{{{key}}}"
+                if placeholder in formatted_command:
+                    formatted_command = formatted_command.replace(placeholder, str(value))
+
+            executed_command = formatted_command
+            logger.info("Executing bash tool: %s", formatted_command)
+            proc = await asyncio.create_subprocess_shell(
+                formatted_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=True,
+                env=process_env,
+            )
 
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -180,16 +223,26 @@ class BashToolExecutor(ToolExecutor):
             raise TimeoutError(f"Bash command timed out after {self.timeout}s")
 
         # 返回结构化结果
+        stdout_str = safe_decode(stdout)
+        stderr_str = safe_decode(stderr)
+        success = proc.returncode == 0
+
+        if not success:
+            logger.warning(
+                "Bash tool execution failed (returncode=%d): %s\nstderr: %s",
+                proc.returncode, executed_command, stderr_str[:500]
+            )
+
         result = {
-            "stdout": safe_decode(stdout),
-            "stderr": safe_decode(stderr),
+            "stdout": stdout_str,
+            "stderr": stderr_str,
             "returncode": proc.returncode,
-            "success": proc.returncode == 0
+            "success": success
         }
 
         # 如果输出是JSON，也提供解析后的版本
         try:
-            result["json"] = json.loads(safe_decode(stdout))
+            result["json"] = json.loads(stdout_str)
         except json.JSONDecodeError:
             pass
 
