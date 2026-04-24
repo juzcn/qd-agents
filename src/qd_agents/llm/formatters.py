@@ -38,6 +38,81 @@ def clean_escape_sequences(text: str) -> str:
     return cleaned
 
 
+def _try_format_json_string(text: str, indent: str = "          ") -> str:
+    """
+    尝试将字符串解析为 JSON 并 pretty-print。
+
+    处理三种情况：
+    1. 整个字符串是 JSON → 直接 pretty-print
+    2. 前缀文本 + JSON（CLI 工具常见：日志行 + JSON 输出）→ 分离后分别渲染
+    3. 非 JSON → 清理转义序列后返回原文
+    """
+    if not isinstance(text, str) or not text.strip():
+        return text
+
+    # 情况 1：整个字符串是 JSON
+    try:
+        parsed = json.loads(text)
+        formatted = json.dumps(parsed, ensure_ascii=False, indent=2)
+        lines = formatted.split("\n")
+        return lines[0] + "\n" + "\n".join(
+            indent + line for line in lines[1:]
+        )
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 情况 2：前缀文本 + JSON（按行查找 JSON 起始位置）
+    cleaned = clean_escape_sequences(text)
+    lines = cleaned.split("\n")
+    json_start = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(("{", "[")):
+            # 尝试从该行开始解析 JSON
+            candidate = "\n".join(lines[i:])
+            try:
+                parsed = json.loads(candidate)
+                json_start = i
+                break
+            except (json.JSONDecodeError, ValueError):
+                continue
+
+    if json_start is not None:
+        prefix_lines = lines[:json_start]
+        prefix_text = "\n".join(prefix_lines)
+        candidate = "\n".join(lines[json_start:])
+        parsed = json.loads(candidate)
+        formatted = json.dumps(parsed, ensure_ascii=False, indent=2)
+        json_lines = formatted.split("\n")
+        json_text = json_lines[0] + "\n" + "\n".join(
+            indent + line for line in json_lines[1:]
+        )
+        if prefix_text.strip():
+            return prefix_text + "\n" + json_text
+        return json_text
+
+    # 情况 3：纯文本
+    return cleaned
+
+
+def _format_tool_result_value(value: Any, indent: str = "          ") -> str:
+    """
+    格式化 tool 角色返回结果中的值。
+
+    对 stdout/stderr 等字符串字段，尝试解析内部 JSON 并 pretty-print；
+    对 dict/list 等结构化字段，递归格式化。
+    """
+    if isinstance(value, str):
+        return _try_format_json_string(value, indent)
+    if isinstance(value, (dict, list)):
+        formatted = json.dumps(value, ensure_ascii=False, indent=2)
+        lines = formatted.split("\n")
+        return lines[0] + "\n" + "\n".join(
+            indent + line for line in lines[1:]
+        )
+    return str(value)
+
+
 def format_content(content: Any) -> str:
     """格式化消息 content 字段，纯文本渲染"""
     if content is None:
@@ -131,16 +206,26 @@ def format_messages_for_logging(
         # content — 纯文本渲染
         content = msg.get("content")
         if content is not None:
-            # tool 角色的 content 尝试 JSON 格式化输出
+            # tool 角色的 content：解析外层 JSON 后逐字段格式化
             if role == "tool" and isinstance(content, str):
                 try:
                     parsed = json.loads(content)
-                    text = json.dumps(parsed, ensure_ascii=False, indent=2)
-                    # 缩进对齐
-                    indented_lines = text.split("\n")
-                    text = indented_lines[0] + "\n" + "\n".join(
-                        "          " + line for line in indented_lines[1:]
-                    )
+                    if isinstance(parsed, dict):
+                        # 逐字段格式化，stdout/stderr 等字符串字段尝试解析内部 JSON
+                        field_lines = ["{"]
+                        field_items = list(parsed.items())
+                        for k, (key, value) in enumerate(field_items):
+                            formatted_value = _format_tool_result_value(value, "            ")
+                            comma = "," if k < len(field_items) - 1 else ""
+                            field_lines.append(f'          "{key}": {formatted_value}{comma}')
+                        field_lines.append("        }")
+                        text = "\n".join(field_lines)
+                    else:
+                        text = json.dumps(parsed, ensure_ascii=False, indent=2)
+                        lines = text.split("\n")
+                        text = lines[0] + "\n" + "\n".join(
+                            "          " + line for line in lines[1:]
+                        )
                 except (json.JSONDecodeError, ValueError):
                     text = format_content(content)
             else:
