@@ -88,6 +88,31 @@ class ExecutionConfig(BaseModel):
     code_exec_timeout: int = 30000
 
 
+class ToolCredentialConfig(BaseModel):
+    """单个外部工具的凭证配置"""
+    api_key: str = ""
+
+
+class ToolsCredentialsConfig(BaseModel):
+    """外部工具凭证配置（CLI/MCP/Skill 等工具的 API key）"""
+    # 每个工具一个子配置，key 为工具名（如 baidu_search）
+    tools: dict[str, ToolCredentialConfig] = Field(default_factory=dict)
+
+    def get_api_key(self, tool_name: str) -> str | None:
+        """获取指定工具的 API key"""
+        cred = self.tools.get(tool_name)
+        if cred and cred.api_key:
+            return cred.api_key
+        return None
+
+    def set_api_key(self, tool_name: str, api_key: str) -> None:
+        """设置指定工具的 API key"""
+        if tool_name in self.tools:
+            self.tools[tool_name].api_key = api_key
+        else:
+            self.tools[tool_name] = ToolCredentialConfig(api_key=api_key)
+
+
 class PromptsConfig(BaseModel):
     """提示词配置"""
     template_dir: Path
@@ -132,8 +157,13 @@ class SystemConfig(BaseModel):
     environment: str = "development"
 
 
+class RuntimeConfig(BaseModel):
+    """运行时配置 — 由 CLI 命令自动读写，存储在 runtime.json"""
+    tools_credentials: ToolsCredentialsConfig = Field(default_factory=ToolsCredentialsConfig)
+
+
 class Config(BaseSettings):
-    """主配置类"""
+    """主配置类 — 静态系统配置，存储在 config.json"""
     model_config = SettingsConfigDict(
         env_prefix="QD_",
         env_nested_delimiter="__",
@@ -182,6 +212,9 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
     if base_dir is None:
         base_dir = Path.cwd()
 
+    # tools_credentials 已迁移到 runtime.json，从 config.json 数据中移除
+    data.pop('tools_credentials', None)
+
     # 转换 Path 字段
     if 'tool_registry' in data and data['tool_registry']:
         tr = data['tool_registry']
@@ -226,34 +259,27 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
     return Config(**data)
 
 
+def _convert_paths(obj: Any, base_dir: Path) -> Any:
+    """递归转换字典中的 Path 对象为相对路径字符串"""
+    if isinstance(obj, Path):
+        try:
+            return str(obj.relative_to(base_dir))
+        except ValueError:
+            return str(obj)
+    if isinstance(obj, dict):
+        return {k: _convert_paths(v, base_dir) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_convert_paths(v, base_dir) for v in obj]
+    return obj
+
+
 def _config_to_dict(config: Config, base_dir: Path | None = None) -> dict[str, Any]:
-    """将 Config 对象转换为字典"""
+    """将 Config 对象转换为可 JSON 序列化的字典"""
     if base_dir is None:
         base_dir = Path.cwd()
 
     data = config.model_dump()
-
-    # 转换 Path 字段为相对路径
-    if data.get('tool_registry') and data['tool_registry'].get('db_path'):
-        data['tool_registry']['db_path'] = str(Path(data['tool_registry']['db_path']).relative_to(base_dir))
-    if data.get('tool_registry') and data['tool_registry'].get('model_path'):
-        data['tool_registry']['model_path'] = str(Path(data['tool_registry']['model_path']).relative_to(base_dir))
-
-    if data.get('prompts') and data['prompts'].get('template_dir'):
-        data['prompts']['template_dir'] = str(Path(data['prompts']['template_dir']).relative_to(base_dir))
-
-    if data.get('storage'):
-        if data['storage'].get('data_dir'):
-            data['storage']['data_dir'] = str(Path(data['storage']['data_dir']).relative_to(base_dir))
-        if data['storage'].get('traces_dir'):
-            data['storage']['traces_dir'] = str(Path(data['storage']['traces_dir']).relative_to(base_dir))
-        if data['storage'].get('audit_dir'):
-            data['storage']['audit_dir'] = str(Path(data['storage']['audit_dir']).relative_to(base_dir))
-
-    if data.get('observability') and data['observability'].get('log_session_dir'):
-        data['observability']['log_session_dir'] = str(Path(data['observability']['log_session_dir']).relative_to(base_dir))
-
-    return data
+    return _convert_paths(data, base_dir)
 
 
 def save_config(
@@ -315,3 +341,76 @@ def load_config(
     # 设置全局配置
     set_config(config)
     return config
+
+
+def load_runtime_config(
+    base_dir: Path | None = None,
+    runtime_file: Path | None = None,
+) -> RuntimeConfig:
+    """
+    加载运行时配置（runtime.json）
+
+    如果 runtime.json 不存在，尝试从 config.json 迁移 tools_credentials。
+
+    Args:
+        base_dir: 项目根目录
+        runtime_file: runtime.json 文件路径
+
+    Returns:
+        运行时配置对象
+    """
+    if base_dir is None:
+        base_dir = Path.cwd()
+
+    if runtime_file is None:
+        runtime_file = base_dir / "runtime.json"
+
+    if runtime_file.exists():
+        with open(runtime_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return RuntimeConfig(**data)
+
+    # runtime.json 不存在，尝试从 config.json 迁移
+    config_file = base_dir / "config.json"
+    if config_file.exists():
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+
+        if 'tools_credentials' in config_data:
+            logger.info("Migrating tools_credentials from config.json to runtime.json")
+            runtime_config = RuntimeConfig(**config_data['tools_credentials'])
+            save_runtime_config(runtime_config, base_dir=base_dir, runtime_file=runtime_file)
+
+            # 从 config.json 中移除 tools_credentials
+            del config_data['tools_credentials']
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, ensure_ascii=False, indent=2)
+
+            return runtime_config
+
+    return RuntimeConfig()
+
+
+def save_runtime_config(
+    runtime_config: RuntimeConfig,
+    base_dir: Path | None = None,
+    runtime_file: Path | None = None,
+) -> None:
+    """
+    保存运行时配置到 runtime.json
+
+    Args:
+        runtime_config: 运行时配置对象
+        base_dir: 项目根目录
+        runtime_file: runtime.json 文件路径
+    """
+    if base_dir is None:
+        base_dir = Path.cwd()
+
+    if runtime_file is None:
+        runtime_file = base_dir / "runtime.json"
+
+    data = runtime_config.model_dump()
+
+    with open(runtime_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)

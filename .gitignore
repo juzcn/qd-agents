@@ -23,6 +23,7 @@ wheels/
 runtime.json
 config.json
 config.*.json
+runtime.json
 
 # Project docs (from parent directory)
 # CLAUDE.md
