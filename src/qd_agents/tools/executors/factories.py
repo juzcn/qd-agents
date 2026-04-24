@@ -88,6 +88,8 @@ def create_executor(tool: Tool) -> ToolExecutor:
             shell=exec_config.shell or "bash",
             timeout=exec_config.timeout,
             env=exec_config.env,
+            use_exec=True,
+            command=exec_config.command,
         )
 
     else:

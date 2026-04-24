@@ -154,37 +154,63 @@ class BashToolExecutor(ToolExecutor):
         shell: str = "bash",
         timeout: int = 30,
         env: dict[str, str] | None = None,
+        use_exec: bool = False,
+        command: str | None = None,
     ):
         self.shell_command = shell_command
         self.shell = shell
         self.timeout = timeout
         self.env = env
+        self.use_exec = use_exec
+        self.command = command
 
     async def execute(self, **kwargs: Any) -> Any:
         import shlex
-
-        # 替换命令中的占位符
-        formatted_command = self.shell_command
-        for key, value in kwargs.items():
-            placeholder = f"{{{key}}}"
-            if placeholder in formatted_command:
-                formatted_command = formatted_command.replace(placeholder, str(value))
-
-        logger.info("Executing bash tool: %s", formatted_command)
 
         # 合并环境变量：当前进程环境 + 工具指定的额外环境变量
         process_env = None
         if self.env:
             process_env = {**os.environ, **self.env}
 
-        # 使用指定的shell执行命令
-        proc = await asyncio.create_subprocess_shell(
-            formatted_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=True,
-            env=process_env,
-        )
+        # Windows 下子进程 stdout 默认 GBK 编码，强制 UTF-8
+        if sys.platform == "win32":
+            if process_env is None:
+                process_env = {**os.environ}
+            process_env["PYTHONUTF8"] = "1"
+
+        if self.use_exec and self.command:
+            # exec 模式：直接构建 argv，不经过 shell 解析
+            # 避免 Windows 下 shell 引号转义导致 JSON 参数丢失
+            # 使用当前进程的 python 解释器（venv），确保依赖可用
+            cmd_parts = [sys.executable, self.command]
+            # 按占位符顺序追加参数值
+            for key, value in kwargs.items():
+                cmd_parts.append(str(value))
+            executed_command = " ".join(cmd_parts)
+            logger.info("Executing bash tool (exec mode): %s", executed_command)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd_parts,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=process_env,
+            )
+        else:
+            # 替换命令中的占位符
+            formatted_command = self.shell_command
+            for key, value in kwargs.items():
+                placeholder = f"{{{key}}}"
+                if placeholder in formatted_command:
+                    formatted_command = formatted_command.replace(placeholder, str(value))
+
+            executed_command = formatted_command
+            logger.info("Executing bash tool: %s", formatted_command)
+            proc = await asyncio.create_subprocess_shell(
+                formatted_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=True,
+                env=process_env,
+            )
 
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -204,7 +230,7 @@ class BashToolExecutor(ToolExecutor):
         if not success:
             logger.warning(
                 "Bash tool execution failed (returncode=%d): %s\nstderr: %s",
-                proc.returncode, formatted_command, stderr_str[:500]
+                proc.returncode, executed_command, stderr_str[:500]
             )
 
         result = {

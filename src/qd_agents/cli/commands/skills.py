@@ -165,7 +165,8 @@ def skill_add(
     script_files = list(scripts_dir.glob("*.py")) if scripts_dir.exists() else []
     # 使用第一个 .py 脚本作为主入口
     # relative_to 基准为项目根目录，确保执行时路径正确
-    project_root = base_dir if base_dir else Path.cwd()
+    # skills_dir 是 base_dir/tools/skills，项目根 = skills_dir 的上两级
+    project_root = skills_dir.parent.parent
     main_script = script_files[0].relative_to(project_root) if script_files else None
 
     # 构建 shell_command
