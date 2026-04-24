@@ -19,6 +19,7 @@ dependencies = [
     "pymupdf>=1.27.0",
     "mcp-server-fetch>=2025.1.17",
     "pyyaml>=6.0.3",
+    "markitdown>=0.1.5",
 ]
 
 [dependency-groups]

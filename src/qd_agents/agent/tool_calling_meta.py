@@ -49,6 +49,25 @@ class ToolCallingMetaAgent(MetaAgent):
         self.temperature = temperature
         self.max_iterations = max_iterations
 
+    def _ensure_bash_available(self, openai_tools: list[dict], tool_map: dict[str, Tool]) -> tuple[list[dict], dict[str, Tool]]:
+        """确保 bash 工具始终在 openai_tools 中可用。
+
+        SKILL 工具通过 SKILL.md 指导 LLM 用 bash 执行命令，
+        因此 tool_use 阶段总是需要 bash 工具。
+        """
+        existing_names = {t.get("function", {}).get("name") for t in openai_tools if "function" in t}
+        if "execute_bash" in existing_names:
+            return openai_tools, tool_map
+
+        if self.tool_registry:
+            bash_tool = self.tool_registry.get("execute_bash")
+            if bash_tool and bash_tool.name not in existing_names:
+                openai_tools.append(bash_tool.to_openai_function())
+                tool_map[bash_tool.name] = bash_tool
+                logger.info("Adding execute_bash to openai_tools")
+
+        return openai_tools, tool_map
+
     async def run(self, input: MetaAgentInput) -> MetaAgentOutput:
         """
         执行多轮 Tool Calling 循环。
@@ -64,6 +83,9 @@ class ToolCallingMetaAgent(MetaAgent):
         openai_tools = input.context.get("openai_tools") or self._openai_tools or []
         tool_map = input.context.get("tool_map") or self._tool_map or {}
         search_web_available = input.context.get("search_web_available", False)
+
+        # tool_use 阶段始终确保 bash 工具可用（SKILL 工具依赖 bash 执行命令）
+        openai_tools, tool_map = self._ensure_bash_available(openai_tools, tool_map)
 
         if not openai_tools:
             return MetaAgentOutput(
