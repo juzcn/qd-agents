@@ -22,6 +22,7 @@ wheels/
 .env.backup
 config.json
 config.*.json
+runtime.json
 
 # Project docs (from parent directory)
 # CLAUDE.md

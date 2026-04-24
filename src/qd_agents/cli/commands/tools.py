@@ -6,11 +6,11 @@
 
 import sys
 from pathlib import Path
-from typing import Any, Optional, List
+from typing import Optional, List
 
 from rich.console import Console
 
-from qd_agents.config import load_config, save_config
+from qd_agents.config import load_config, load_runtime_config, save_runtime_config
 from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 from qd_agents.tools.builtins import echo
 
@@ -245,29 +245,28 @@ def remove_tools(
 
     console.print(f"[green][OK][/] 已移除工具: {tool.name}")
 
-    # 清理 tools_credentials 中的对应配置
+    # 清理 runtime.json 中的对应配置
     if not keep_credentials and tool.execution.env:
-        _cleanup_credentials(console, tool, config, base_dir, config_file)
+        _cleanup_credentials(console, tool, base_dir)
 
 
 def _cleanup_credentials(
     console: Console,
     tool: Tool,
-    config: Any,
     base_dir: Optional[Path],
-    config_file: Optional[Path],
 ) -> None:
-    """清理工具对应的 credentials 配置"""
+    """清理工具对应的 credentials 配置（runtime.json）"""
     from qd_agents.cli.commands.skills import _env_var_to_tool_name
 
+    runtime_config = load_runtime_config(base_dir=base_dir)
     removed = []
     for env_var in tool.execution.env:
         tool_name = _env_var_to_tool_name(env_var)
-        if config.tools_credentials and tool_name in config.tools_credentials.tools:
-            del config.tools_credentials.tools[tool_name]
+        if runtime_config.tools_credentials.tools and tool_name in runtime_config.tools_credentials.tools:
+            del runtime_config.tools_credentials.tools[tool_name]
             removed.append(f"{env_var} (tools_credentials.{tool_name})")
 
     if removed:
-        save_config(config, base_dir=base_dir, config_file=config_file)
+        save_runtime_config(runtime_config, base_dir=base_dir)
         for item in removed:
             console.print(f"  [dim]已清理凭证配置: {item}[/]")

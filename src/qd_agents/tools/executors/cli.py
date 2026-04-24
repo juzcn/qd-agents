@@ -119,16 +119,26 @@ class CLIToolExecutor(ToolExecutor):
 
         # 始终返回包含 stdout、stderr 和 returncode 的结构化结果
         # 这样可以保持与 OpenAI tool calling 标准的兼容性
+        stdout_str = safe_decode(stdout)
+        stderr_str = safe_decode(stderr)
+        success = proc.returncode == 0
+
+        if not success:
+            logger.warning(
+                "CLI tool execution failed (returncode=%d): %s\nstderr: %s",
+                proc.returncode, cmd_str, stderr_str[:500]
+            )
+
         result = {
-            "stdout": safe_decode(stdout),
-            "stderr": safe_decode(stderr),
+            "stdout": stdout_str,
+            "stderr": stderr_str,
             "returncode": proc.returncode,
-            "success": proc.returncode == 0
+            "success": success
         }
 
         # 如果输出是 JSON，也提供解析后的版本
         try:
-            result["json"] = json.loads(safe_decode(stdout))
+            result["json"] = json.loads(stdout_str)
         except json.JSONDecodeError:
             pass
 
@@ -187,16 +197,26 @@ class BashToolExecutor(ToolExecutor):
             raise TimeoutError(f"Bash command timed out after {self.timeout}s")
 
         # 返回结构化结果
+        stdout_str = safe_decode(stdout)
+        stderr_str = safe_decode(stderr)
+        success = proc.returncode == 0
+
+        if not success:
+            logger.warning(
+                "Bash tool execution failed (returncode=%d): %s\nstderr: %s",
+                proc.returncode, formatted_command, stderr_str[:500]
+            )
+
         result = {
-            "stdout": safe_decode(stdout),
-            "stderr": safe_decode(stderr),
+            "stdout": stdout_str,
+            "stderr": stderr_str,
             "returncode": proc.returncode,
-            "success": proc.returncode == 0
+            "success": success
         }
 
         # 如果输出是JSON，也提供解析后的版本
         try:
-            result["json"] = json.loads(safe_decode(stdout))
+            result["json"] = json.loads(stdout_str)
         except json.JSONDecodeError:
             pass
 
