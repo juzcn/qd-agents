@@ -44,6 +44,7 @@ class QDAgent:
         prompt_loader: PromptLoader | None = None,
         execution_engine: ExecutionEngine | None = None,
         context_manager: ContextManager | None = None,
+        base_dir: Path | None = None,
     ):
         self.config = config
         self.llm = llm_client
@@ -55,9 +56,13 @@ class QDAgent:
             timeout=self.config.execution.code_exec_timeout,
         )
         self.executor_registry = ToolExecutorRegistry()
+        self.base_dir = base_dir
 
         # 初始化上下文管理器
-        self.context = context_manager or ContextManager(prompt_loader=prompt_loader)
+        self.context = context_manager or ContextManager(
+            prompt_loader=prompt_loader,
+            base_dir=base_dir,
+        )
 
         # 注册的 Agent 集合
         self._agents: dict[str, Agent] = {}
@@ -114,6 +119,9 @@ class QDAgent:
 
         # 缓存展开后的工具列表
         await self._cache_expanded_tools()
+
+        # 注入无脚本 SKILL 工具到 ContextManager
+        self._inject_scriptless_skills()
 
         # 将工具注册到执行引擎（用于 Code-Plan 模式）
         await self._register_tools_to_execution_engine()
@@ -300,8 +308,29 @@ class QDAgent:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    def _inject_scriptless_skills(self) -> None:
+        """将无脚本的 SKILL 工具注入到 ContextManager，使其 SKILL.md 始终出现在 system prompt 中。"""
+        all_tools = self.registry.list_all()
+        scriptless = []
+        for tool in all_tools:
+            if (tool.execution.type == ToolExecutionType.SKILL
+                    and not tool.execution.command):
+                scriptless.append({
+                    "name": tool.name,
+                    "skill_dir_name": tool.dependencies.get("skill_dir_name", tool.name),
+                })
+
+        if scriptless:
+            self.context._scriptless_skills = scriptless
+            logger.info("Injected %d scriptless SKILL tools: %s",
+                        len(scriptless), ", ".join(s["name"] for s in scriptless))
+
     async def _cache_expanded_tools(self) -> None:
-        """缓存展开后的工具列表和OpenAI格式工具"""
+        """缓存展开后的工具列表和OpenAI格式工具
+
+        所有 SKILL 工具（包括无脚本的）都加入 expanded_tools，
+        让 judge 能看到并选择它们。
+        """
         logger.info("Caching expanded tools...")
 
         all_tools = self.registry.list_all()
@@ -331,7 +360,13 @@ class QDAgent:
             openai_tools.append(search_web.to_openai_function())
             expanded_tools = [t for t in expanded_tools if t.id != "search.web"]
 
-        openai_tools.extend([t.to_openai_function() for t in expanded_tools])
+        # SKILL 工具不加入 openai_tools（不通过 function calling 调用），
+        # 但保留在 expanded_tools 中让 judge 能看到并选择
+        skill_tool_ids = {t.id for t in expanded_tools if t.execution.type == ToolExecutionType.SKILL}
+        openai_tools.extend([
+            t.to_openai_function() for t in expanded_tools
+            if t.id not in skill_tool_ids
+        ])
 
         self._expanded_tools_cache = expanded_tools
         self._openai_tools_cache = openai_tools
@@ -384,6 +419,10 @@ class QDAgent:
         all_tools = self.registry.list_all()
         for tool in all_tools:
             if tool.name in ["echo", "serper_search", "tavily_search"]:
+                continue
+
+            # SKILL 工具不通过执行器执行，跳过注册
+            if tool.execution.type == ToolExecutionType.SKILL:
                 continue
 
             try:

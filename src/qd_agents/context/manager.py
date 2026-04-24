@@ -5,14 +5,16 @@
 - 系统提示词（分阶段）
 - 会话历史记录
 - 工具描述
+- SKILL.md 注入（仅对 SKILL 类型的工具）
 """
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from ..prompts import PromptLoader
-from ..registry import Tool
+from ..registry import Tool, ToolExecutionType
 
 
 logger = logging.getLogger(__name__)
@@ -28,20 +30,27 @@ class ContextManager:
     def __init__(
         self,
         prompt_loader: PromptLoader | None = None,
+        base_dir: Path | None = None,
+        scriptless_skills: list[dict] | None = None,
     ):
         """
         初始化上下文管理器
 
         Args:
             prompt_loader: 提示词加载器
+            base_dir: 项目根目录，用于定位 tools/skills/ 目录
+            scriptless_skills: 无脚本的 SKILL 工具列表，始终注入其 SKILL.md
         """
         self.prompts = prompt_loader
+        self.base_dir = base_dir
+        self._scriptless_skills = scriptless_skills or []
         self._session_history: list[dict[str, str]] = []
-        self._cached_system_prompt: str | None = None  # 缓存的系统提示词
-        self._cached_tools: list[Any] | None = None    # 缓存的工具列表
+        self._cached_system_prompt: str | None = None
+        self._cached_tools: list[Any] | None = None
         self._tool_use_cache: dict[tuple, str] = {}    # 缓存工具调用提示词
         self._judge_cache: dict[tuple, str] = {}       # 缓存判断提示词
         self._coding_cache: dict[tuple, str] = {}      # 缓存代码生成提示词
+        self._skill_md_cache: dict[str, str] = {}      # 缓存 SKILL.md 正文
 
     def add_to_history(self, role: str, content: str) -> None:
         """
@@ -61,6 +70,87 @@ class ContextManager:
         """获取会话历史"""
         return self._session_history.copy()
 
+    def _load_skill_md(self, skill_dir_name: str) -> str | None:
+        """
+        从 tools/skills/{skill_dir_name}/SKILL.md 读取正文内容。
+
+        Args:
+            skill_dir_name: skill 目录名（即 dependencies.skill_dir_name）
+
+        Returns:
+            SKILL.md 正文内容，不存在返回 None
+        """
+        if skill_dir_name in self._skill_md_cache:
+            return self._skill_md_cache[skill_dir_name]
+
+        # 构建路径：tools/skills/{skill_dir_name}/SKILL.md
+        base = self.base_dir or Path(".")
+        skill_md_path = base / "tools" / "skills" / skill_dir_name / "SKILL.md"
+
+        if not skill_md_path.exists():
+            logger.debug("SKILL.md not found: %s", skill_md_path)
+            return None
+
+        try:
+            content = skill_md_path.read_text(encoding="utf-8")
+        except OSError as e:
+            logger.warning("Failed to read SKILL.md for %s: %s", skill_dir_name, e)
+            return None
+
+        # 提取正文（跳过 YAML frontmatter）
+        body = content
+        if content.startswith("---"):
+            end = content.find("---", 3)
+            if end != -1:
+                body = content[end + 3:].strip()
+
+        self._skill_md_cache[skill_dir_name] = body
+        logger.debug("Loaded SKILL.md for %s (%d chars)", skill_dir_name, len(body))
+        return body
+
+    def _build_skill_injection(self, tools: list[Tool]) -> str:
+        """
+        为 SKILL 类型的工具构建 SKILL.md 注入文本。
+
+        注入两部分：
+        1. tools 列表中有脚本的 SKILL 工具（judge 选中时注入）
+        2. 所有无脚本的 SKILL 工具（始终注入，因为 LLM 只能从 system prompt 获取指导）
+
+        Args:
+            tools: 当前可用的工具列表
+
+        Returns:
+            注入到 system prompt 的文本，无 SKILL 工具时返回空字符串
+        """
+        skill_sections = []
+
+        # 1. tools 列表中的 SKILL 工具（有脚本，judge 选中）
+        for tool in tools:
+            if tool.execution.type != ToolExecutionType.SKILL:
+                continue
+
+            skill_dir_name = tool.dependencies.get("skill_dir_name", tool.name)
+            skill_body = self._load_skill_md(skill_dir_name)
+            if skill_body:
+                skill_sections.append(
+                    f"## 技能指南: {tool.name}\n\n{skill_body}"
+                )
+
+        # 2. 无脚本的 SKILL 工具（始终注入）
+        for skill_info in self._scriptless_skills:
+            skill_dir_name = skill_info.get("skill_dir_name", skill_info.get("name", ""))
+            skill_name = skill_info.get("name", skill_dir_name)
+            skill_body = self._load_skill_md(skill_dir_name)
+            if skill_body:
+                skill_sections.append(
+                    f"## 技能指南: {skill_name}\n\n{skill_body}"
+                )
+
+        if not skill_sections:
+            return ""
+
+        return "\n\n---\n\n" + "\n\n".join(skill_sections)
+
 
 
     def build_tool_use_messages(
@@ -72,6 +162,8 @@ class ContextManager:
     ) -> list[dict[str, str]]:
         """
         构建工具调用消息（优化的单阶段提示词）
+
+        对于 SKILL 类型的工具，会自动注入对应的 SKILL.md 正文到系统提示词。
 
         Args:
             user_input: 当前用户输入
@@ -111,6 +203,11 @@ class ContextManager:
             # 缓存结果
             self._tool_use_cache[cache_key] = system_prompt
             logger.debug(f"Cached system prompt for {len(tools)} tools, search_web_available={search_web_available}")
+
+        # 为 SKILL 类型工具注入 SKILL.md 正文
+        skill_injection = self._build_skill_injection(tools)
+        if skill_injection:
+            system_prompt = system_prompt + skill_injection
 
         return self._build_messages(
             system_prompt=system_prompt,

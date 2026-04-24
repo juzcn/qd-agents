@@ -183,9 +183,10 @@ class BashToolExecutor(ToolExecutor):
             # 避免 Windows 下 shell 引号转义导致 JSON 参数丢失
             # 使用当前进程的 python 解释器（venv），确保依赖可用
             cmd_parts = [sys.executable, self.command]
-            # 按占位符顺序追加参数值
-            for key, value in kwargs.items():
-                cmd_parts.append(str(value))
+            # 将所有 kwargs 序列化为 JSON 字符串作为唯一参数
+            # 这样 LLM 可以直接传 {"query": "xxx"} 而非 {"arguments": "{\"query\": \"xxx\"}"}
+            args_json = json.dumps(kwargs, ensure_ascii=False)
+            cmd_parts.append(args_json)
             executed_command = " ".join(cmd_parts)
             logger.info("Executing bash tool (exec mode): %s", executed_command)
             proc = await asyncio.create_subprocess_exec(

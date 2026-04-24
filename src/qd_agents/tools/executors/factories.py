@@ -19,6 +19,24 @@ from qd_agents.registry import Tool, ToolExecutionType
 logger = logging.getLogger(__name__)
 
 
+class _ScriptlessSkillExecutor(ToolExecutor):
+    """无脚本 SKILL 工具的执行器。
+
+    当 LLM 试图通过 function calling 调用无脚本的 SKILL 工具时，
+    返回提示信息，引导 LLM 使用 bash 工具按 SKILL.md 中的指南执行。
+    """
+
+    def __init__(self, tool_name: str):
+        self.tool_name = tool_name
+
+    async def execute(self, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "error": f"工具 {self.tool_name} 没有可执行的脚本，不能通过 function calling 调用。"
+                     f"请参考系统提示词中的技能指南，使用 execute_bash 工具执行相应的命令。",
+            "tool_name": self.tool_name,
+        }
+
+
 def create_executor(tool: Tool) -> ToolExecutor:
     """
     根据工具定义创建执行器
@@ -81,16 +99,8 @@ def create_executor(tool: Tool) -> ToolExecutor:
         )
 
     elif exec_config.type == ToolExecutionType.SKILL:
-        if not exec_config.shell_command:
-            raise ValueError("SKILL tool requires shell_command")
-        return BashToolExecutor(
-            shell_command=exec_config.shell_command,
-            shell=exec_config.shell or "bash",
-            timeout=exec_config.timeout,
-            env=exec_config.env,
-            use_exec=True,
-            command=exec_config.command,
-        )
+        # SKILL 工具不通过执行器执行，LLM 按 SKILL.md 指南用 bash 工具操作
+        return _ScriptlessSkillExecutor(tool_name=tool.name)
 
     else:
         raise ValueError(f"Unknown tool type: {exec_config.type}")
