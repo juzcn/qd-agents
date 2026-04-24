@@ -6,6 +6,7 @@ Skills 管理命令
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -13,7 +14,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from qd_agents.config import load_config, save_config
+from qd_agents.config import load_config, load_runtime_config, save_runtime_config
 from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 
 
@@ -130,48 +131,48 @@ def skill_add(
     env_vars = requires.get("env", []) if isinstance(requires, dict) else []
     bins = requires.get("bins", []) if isinstance(requires, dict) else []
 
-    # 加载配置
+    # 加载配置（获取 db_path 等静态配置）
     config = load_config(base_dir=base_dir, config_file=config_file)
 
-    # 构建 env 字典：从 config.json 查找 API key，缺失时提示用户输入
+    # 加载运行时配置，处理 API key
+    runtime_config = load_runtime_config(base_dir=base_dir)
     env: dict[str, str] = {}
-    config_changed = False
+    runtime_changed = False
     for var in env_vars:
         tool_name = _env_var_to_tool_name(var)
-        # 先从 config.tools_credentials 查找
-        api_key_value = config.tools_credentials.get_api_key(tool_name) if config.tools_credentials else None
+        api_key_value = runtime_config.tools_credentials.get_api_key(tool_name)
         if api_key_value:
             env[var] = api_key_value
-            console.print(f"  [dim]{var}[/]: 从 config.json (tools_credentials.{tool_name}) 加载")
+            console.print(f"  [dim]{var}[/]: 从 runtime.json (tools_credentials.{tool_name}) 加载")
         else:
-            # 提示用户输入
-            console.print(f"  [yellow]{var}[/] 未在 config.json 中配置，请输入 API Key:")
+            console.print(f"  [yellow]{var}[/] 未在 runtime.json 中配置，请输入 API Key:")
             api_key_input = input(f"  {var}=").strip()
             if api_key_input:
                 env[var] = api_key_input
-                # 写入 config.tools_credentials
-                if config.tools_credentials:
-                    config.tools_credentials.set_api_key(tool_name, api_key_input)
-                    config_changed = True
-                    console.print(f"  [green]已将 {var} 写入 config.json (tools_credentials.{tool_name})[/]")
+                runtime_config.tools_credentials.set_api_key(tool_name, api_key_input)
+                runtime_changed = True
+                console.print(f"  [green]已将 {var} 写入 runtime.json (tools_credentials.{tool_name})[/]")
             else:
                 env[var] = ""
                 console.print(f"  [yellow]警告: {var} 未设置，工具执行时可能失败[/]")
 
-    # 如果配置有变更，保存到 config.json
-    if config_changed:
-        save_config(config, base_dir=base_dir, config_file=config_file)
-        console.print("  [dim]config.json 已更新[/]")
+    if runtime_changed:
+        save_runtime_config(runtime_config, base_dir=base_dir)
+        console.print("  [dim]runtime.json 已更新[/]")
 
     # 查找 scripts 目录下的脚本
     scripts_dir = skill_dir / "scripts"
     script_files = list(scripts_dir.glob("*.py")) if scripts_dir.exists() else []
     # 使用第一个 .py 脚本作为主入口
-    main_script = script_files[0].relative_to(skill_dir.parent.parent) if script_files else None
+    # relative_to 基准为项目根目录，确保执行时路径正确
+    project_root = base_dir if base_dir else Path.cwd()
+    main_script = script_files[0].relative_to(project_root) if script_files else None
 
     # 构建 shell_command
+    # 构建执行命令（Windows 上 python3 不存在，使用 python）
+    python_cmd = "python" if sys.platform == "win32" else "python3"
     if main_script:
-        shell_command = f"python3 {main_script} '{{arguments}}'"
+        shell_command = f"{python_cmd} {main_script} '{{arguments}}'"
     else:
         shell_command = None
 

@@ -157,8 +157,13 @@ class SystemConfig(BaseModel):
     environment: str = "development"
 
 
+class RuntimeConfig(BaseModel):
+    """运行时配置 — 由 CLI 命令自动读写，存储在 runtime.json"""
+    tools_credentials: ToolsCredentialsConfig = Field(default_factory=ToolsCredentialsConfig)
+
+
 class Config(BaseSettings):
-    """主配置类"""
+    """主配置类 — 静态系统配置，存储在 config.json"""
     model_config = SettingsConfigDict(
         env_prefix="QD_",
         env_nested_delimiter="__",
@@ -171,7 +176,6 @@ class Config(BaseSettings):
     search: SearchConfig = Field(default_factory=SearchConfig)
     tool_registry: ToolRegistryConfig | None = None
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
-    tools_credentials: ToolsCredentialsConfig = Field(default_factory=ToolsCredentialsConfig)
     prompts: PromptsConfig | None = None
 
     storage: StorageConfig | None = None
@@ -207,6 +211,9 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
     """将字典转换为 Config 对象"""
     if base_dir is None:
         base_dir = Path.cwd()
+
+    # tools_credentials 已迁移到 runtime.json，从 config.json 数据中移除
+    data.pop('tools_credentials', None)
 
     # 转换 Path 字段
     if 'tool_registry' in data and data['tool_registry']:
@@ -334,3 +341,76 @@ def load_config(
     # 设置全局配置
     set_config(config)
     return config
+
+
+def load_runtime_config(
+    base_dir: Path | None = None,
+    runtime_file: Path | None = None,
+) -> RuntimeConfig:
+    """
+    加载运行时配置（runtime.json）
+
+    如果 runtime.json 不存在，尝试从 config.json 迁移 tools_credentials。
+
+    Args:
+        base_dir: 项目根目录
+        runtime_file: runtime.json 文件路径
+
+    Returns:
+        运行时配置对象
+    """
+    if base_dir is None:
+        base_dir = Path.cwd()
+
+    if runtime_file is None:
+        runtime_file = base_dir / "runtime.json"
+
+    if runtime_file.exists():
+        with open(runtime_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return RuntimeConfig(**data)
+
+    # runtime.json 不存在，尝试从 config.json 迁移
+    config_file = base_dir / "config.json"
+    if config_file.exists():
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+
+        if 'tools_credentials' in config_data:
+            logger.info("Migrating tools_credentials from config.json to runtime.json")
+            runtime_config = RuntimeConfig(**config_data['tools_credentials'])
+            save_runtime_config(runtime_config, base_dir=base_dir, runtime_file=runtime_file)
+
+            # 从 config.json 中移除 tools_credentials
+            del config_data['tools_credentials']
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, ensure_ascii=False, indent=2)
+
+            return runtime_config
+
+    return RuntimeConfig()
+
+
+def save_runtime_config(
+    runtime_config: RuntimeConfig,
+    base_dir: Path | None = None,
+    runtime_file: Path | None = None,
+) -> None:
+    """
+    保存运行时配置到 runtime.json
+
+    Args:
+        runtime_config: 运行时配置对象
+        base_dir: 项目根目录
+        runtime_file: runtime.json 文件路径
+    """
+    if base_dir is None:
+        base_dir = Path.cwd()
+
+    if runtime_file is None:
+        runtime_file = base_dir / "runtime.json"
+
+    data = runtime_config.model_dump()
+
+    with open(runtime_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
