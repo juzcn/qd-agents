@@ -14,17 +14,16 @@
 - **上下文管理** - 统一管理会话历史和提示词构建
 - **Tool Registry** - SQLite 存储的工具注册中心
 - **多种工具执行** - 支持 HTTP/CLI/Function/MCP/Bash/Skill 6种工具类型
-- **MCP 服务器管理** - 通过命令行注册、列出和移除 MCP 服务器
+- **MCP 服务器管理** - 通过命令行注册 MCP 服务器，自动发现和展开子工具
 - **异步代码执行** - 支持顶层 await 语法，自动包装为异步函数执行
 - **重试与熔断** - 4 种退避策略 + 熔断器模式
 - **CLI 界面** - 简洁的命令行交互
 - **内置搜索工具** - 支持 Tavily、Serper 搜索引擎
-- **技能转 MCP** - 将技能目录自动转换为 MCP 服务器
 - **Add-Skill 元Agent** - 用 LLM 分析 SKILL.md，自动识别参数和工具依赖
 - **运行时配置分离** - 静态配置(config.json)与运行时配置(runtime.json)分离存储
 - **详细日志记录** - LLM 请求/响应完整日志，支持 DEBUG 级别
 - **实时日志刷新** - ImmediateFlushFileHandler 确保日志实时写入磁盘
-- **模式切换** - 支持 tool-use 和 code-plan 两种工作模式，可通过命令行或聊天命令切换
+- **Agent 切换** - 支持 tool-use 和 code-plan 两种 Agent，可通过命令行或聊天命令切换
 
 ## 安装
 
@@ -156,59 +155,58 @@ cp config.json.template config.json
 
 ## 使用
 
-### 查看帮助
+### 全局选项
 
 ```bash
-uv run qd-agents --help
+uv run qd-agents --help            # 查看帮助
+uv run qd-agents --version         # 查看版本
+uv run qd-agents --list-models     # 列出所有提供商的可用模型
+uv run qd-agents -a code-plan      # 指定启动 Agent（tool-use / code-plan）
+uv run qd-agents -c config.json    # 指定配置文件路径
+uv run qd-agents -d /path/to/dir  # 指定基础目录
 ```
 
-### 列出可用模型
+### 工具管理
 
 ```bash
-# 列出所有提供商的模型
-uv run qd-agents --list-models
-```
-
-### 列出已注册工具
-
-```bash
+# 列出已注册工具（表格形式，显示名称、类型、描述、分类、ID）
 uv run qd-agents tools list
-```
 
-输出格式为 `工具名(类型)`，其中类型包括：`function`、`cli`、`bash`、`mcp`、`skill`。
-
-### 初始化内置工具
-
-```bash
+# 初始化内置工具（清空数据库并重新注册）
 uv run qd-agents tools init
+
+# 移除已注册工具
+uv run qd-agents tools remove <tool_name_or_id>
+
+# 移除工具但保留凭证
+uv run qd-agents tools remove <tool_name_or_id> --keep-credentials
 ```
 
-此命令会清空现有工具数据库并重新注册所有内置工具，包括：
-- 搜索工具 (serper_search, tavily_search, web_search)
-- 实用工具 (echo)
-- Bash 工具 (execute_bash)
+**内置工具**（`tools init` 注册）：
+- 搜索工具：serper_search、tavily_search
+- 实用工具：echo
+- Bash 工具：execute_bash
 
 ### 管理 MCP 服务器
-
-MCP (Model Context Protocol) 服务器可以通过以下命令管理：
-
-**参数说明**：
-- `name`：工具名称，在聊天中使用的名称
-- `server`：MCP服务器标识，描述性名称（如 "Open Meteo Weather"）
-- `--command`：stdio模式下启动服务器的命令（如 "node"、"npx"）
-- `--args`：stdio模式下命令的参数（JSON数组或逗号分隔）
-- `--transport`：传输模式（stdio/sse/streamable-http）
 
 ```bash
 # 添加 MCP 服务器
 uv run qd-agents tools mcp add <name> <server> [options]
-
-# 列出已注册的 MCP 服务器
-uv run qd-agents tools mcp list
-
-# 移除 MCP 服务器
-uv run qd-agents tools mcp remove <name>
 ```
+
+**参数说明**：
+
+| 参数 | 说明 |
+|------|------|
+| `name` | 工具名称，在聊天中使用的名称 |
+| `server` | MCP 服务器标识，描述性名称 |
+| `-t/--transport` | 传输模式：stdio（默认）/ sse / streamable-http |
+| `--command/--cmd` | stdio 模式下启动服务器的命令（如 "node"、"npx"） |
+| `-a/--args` | stdio 模式下的命令参数（JSON 数组或逗号分隔） |
+| `-u/--url` | SSE / streamable-http 模式的 URL |
+| `-j/--json` | 从 JSON 文件读取配置（tools/mcp/\<name\>.json） |
+| `-c/--config` | 指定配置文件路径 |
+| `-d/--base-dir` | 指定基础目录 |
 
 **示例：注册 open-meteo-mcp 服务器**
 
@@ -226,18 +224,13 @@ uv run qd-agents tools mcp add open-meteo "Open Meteo Weather" \
   --args "tools/mcp/open-meteo-mcp/dist/index.js"
 ```
 
-**注意**：MCP工具执行器具有自动发现功能，在上下文管理中会自动连接到MCP服务器并展开所有可用工具，将MCP服务器提供的每个工具作为独立工具加载到可用工具列表中，无需手动注册每个工具。这使得大模型在使用tool calling时可以获得完整的工具信息。
+**注意**：MCP 工具执行器具有自动发现功能，在上下文管理中会自动连接到 MCP 服务器并展开所有可用工具，将 MCP 服务器提供的每个工具作为独立工具加载到可用工具列表中，无需手动注册每个工具。
 
 ### 管理 Skill 工具
-
-Skill 工具可以通过以下命令管理：
 
 ```bash
 # 添加 Skill 工具（用 LLM 分析 SKILL.md，自动识别参数和工具依赖）
 uv run qd-agents tools skill add <skill_name>
-
-# 列出已注册的 Skill 工具
-uv run qd-agents tools skill list
 ```
 
 **参数说明**：
@@ -267,31 +260,23 @@ metadata:
 ### 启动交互式聊天
 
 ```bash
-# 默认直接启动聊天
+# 默认启动（使用 tool-use Agent）
 uv run qd-agents
 
-# 指定工作模式启动
-uv run qd-agents --mode tool-use
-uv run qd-agents --mode code-plan
+# 指定 Agent 启动
+uv run qd-agents -a tool-use
+uv run qd-agents -a code-plan
 ```
 
 ### 聊天命令
 
 在聊天会话中可以使用以下命令：
-- `/mode` - 显示/切换工作模式
+- `/help` - 显示帮助信息
+- `/model` - 显示当前模型
 - `/models` - 列出并切换可用模型
 - `/tools` - 列出可用工具
-- `/model` - 显示当前模型
-- `/help` - 显示帮助信息
+- `/agent` - 显示/切换 Agent
 - `/quit` 或 `/q` - 退出程序
-- `/clear` - 清空屏幕
-- `/history` - 显示历史记录
-
-### 查看版本
-
-```bash
-uv run qd-agents --version
-```
 
 ## 项目结构
 
