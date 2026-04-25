@@ -160,7 +160,7 @@ class ToolCallingMetaAgent(MetaAgent):
                 except json.JSONDecodeError:
                     tool_input = {"raw": tool_call.function.arguments}
 
-                tool_result = await self._execute_tool(tool_name, tool_input, tool_map)
+                tool_result = await self._execute_tool(tool_name, tool_input, tool_map, expanded_tools)
 
                 messages.append({
                     "role": "tool",
@@ -186,8 +186,12 @@ class ToolCallingMetaAgent(MetaAgent):
         tool_name: str,
         tool_input: dict,
         tool_map: dict[str, Tool],
+        expanded_tools: list[Tool] | None = None,
     ) -> str:
-        """执行单个工具调用并返回结果字符串"""
+        """执行单个工具调用并返回结果字符串
+
+        当执行 execute_bash 时，合并当前会话中 SKILL 工具的 env 到执行环境。
+        """
         tool = tool_map.get(tool_name)
 
         if not tool and self.tool_registry:
@@ -199,6 +203,16 @@ class ToolCallingMetaAgent(MetaAgent):
         try:
             logger.info("Executing tool: %s (id: %s)", tool.name, tool.id)
             executor = self.executor_registry.get_executor(tool)
+
+            # 当执行 execute_bash 时，合并 SKILL 工具的 env
+            if tool_name == "execute_bash" and expanded_tools and hasattr(executor, 'env'):
+                skill_env = {}
+                for t in expanded_tools:
+                    if t.execution.type == ToolExecutionType.SKILL and t.execution.env:
+                        skill_env.update(t.execution.env)
+                if skill_env:
+                    executor.env = {**(executor.env or {}), **skill_env}
+
             if tool.execution.type == ToolExecutionType.MCP:
                 tool_input_with_name = {"tool_name": tool.name, **tool_input}
                 tool_result = await executor.execute(**tool_input_with_name)
