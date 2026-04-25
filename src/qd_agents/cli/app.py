@@ -11,7 +11,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from .commands import chat_async, list_models_async, list_tools, init_tools, remove_tools, show_version, mcp_add, mcp_list, skill_add, skill_list
+from .commands import chat_async, list_models_async, list_tools, init_tools, remove_tools, show_version, mcp_add, skill_add
 
 
 # 创建 Typer 应用实例
@@ -62,9 +62,28 @@ tools_app.add_typer(skill_app)
 def tools_list(
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+    mcp: bool = typer.Option(False, "--mcp", help="只列出 MCP 工具"),
+    skill: bool = typer.Option(False, "--skill", help="只列出 Skill 工具"),
+    function: bool = typer.Option(False, "--function", help="只列出 Function 工具"),
+    bash: bool = typer.Option(False, "--bash", help="只列出 Bash 工具"),
+    cli: bool = typer.Option(False, "--cli", help="只列出 CLI 工具"),
+    http: bool = typer.Option(False, "--http", help="只列出 HTTP 工具"),
 ):
     """列出已注册的工具"""
-    list_tools(console, base_dir, config_file)
+    type_filter = []
+    if mcp:
+        type_filter.append("mcp")
+    if skill:
+        type_filter.append("skill")
+    if function:
+        type_filter.append("function")
+    if bash:
+        type_filter.append("bash")
+    if cli:
+        type_filter.append("cli")
+    if http:
+        type_filter.append("http")
+    list_tools(console, base_dir, config_file, type_filter=type_filter or None)
 
 # tools init 命令
 @tools_app.command("init", help="初始化内置工具")
@@ -111,16 +130,6 @@ def mcp_add_command(
     mcp_add(console, name, server, transport, command, args, url, config_file, base_dir, json_file)
 
 
-# mcp list 命令
-@mcp_app.command("list", help="列出已注册的 MCP 服务器")
-def mcp_list_command(
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-):
-    """列出已注册的 MCP 服务器"""
-    mcp_list(console, config_file, base_dir)
-
-
 # tools remove 命令
 @tools_app.command("remove", help="移除已注册的工具")
 def tools_remove_command(
@@ -145,16 +154,6 @@ def skill_add_command(
         console.print("[red][ERROR][/] Skill 名称不能为空")
         return
     skill_add(console, skill_name, base_dir, config_file)
-
-
-# skill list 命令
-@skill_app.command("list", help="列出已注册的 Skill 工具")
-def skill_list_command(
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
-):
-    """列出已注册的 Skill 工具"""
-    skill_list(console, base_dir, config_file)
 
 
 @app.callback(invoke_without_command=True)

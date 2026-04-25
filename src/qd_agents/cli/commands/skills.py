@@ -12,13 +12,13 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 from rich.console import Console
-from rich.table import Table
 
 from qd_agents.config import load_config, load_runtime_config, save_runtime_config
+from qd_agents.cli.managers import setup_configuration
 from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 
 
@@ -174,9 +174,8 @@ def skill_add(
     """
     添加 skill 工具
 
-    所有 skill 统一注册为 ToolExecutionType.SKILL 类型：
-    - 有 Python 脚本：可被 LLM 调用执行，SKILL.md 正文存入 dependencies.skill_body
-    - 无 Python 脚本：SKILL.md 正文存入 dependencies.skill_body，LLM 从 system prompt 中获取指南
+    使用 AddSkillMetaAgent（LLM）分析 SKILL.md，识别参数定义和工具依赖。
+    所有 skill 统一注册为 ToolExecutionType.SKILL 类型。
     """
     skills_dir = _get_skills_dir(base_dir)
     skill_dir = skills_dir / skill_name
@@ -204,8 +203,38 @@ def skill_add(
     skill_body = meta.pop("_skill_body", "")
     has_scripts = _has_python_scripts(skill_dir)
 
-    # 加载配置
-    config = load_config(base_dir=base_dir, config_file=config_file)
+    # 加载配置并设置会话日志
+    config = setup_configuration(console, base_dir=base_dir, config_file=config_file)
+
+    # --- 使用 AddSkillMetaAgent 分析 SKILL.md ---
+    console.print(f"  [dim]正在分析 SKILL.md（识别参数和工具依赖）...[/]")
+    add_skill_result = _run_add_skill_agent(skill_dir, config, base_dir, console)
+
+    if add_skill_result is None:
+        console.print(f"  [yellow]AddSkillMetaAgent 不可用，使用默认参数和依赖[/]")
+        parameters = _extract_parameters_from_md(skill_body) or meta.get("parameters") or {
+            "type": "object",
+            "properties": {
+                "arguments": {"type": "string", "description": "JSON 格式的工具参数"},
+            },
+            "required": ["arguments"],
+        }
+        tool_deps = []
+    elif not add_skill_result.success:
+        console.print(f"[red][ERROR][/] AddSkill 分析失败: {add_skill_result.failure_reason}[/]")
+        return
+    else:
+        parameters = add_skill_result.parameters or _extract_parameters_from_md(skill_body) or {
+            "type": "object",
+            "properties": {
+                "arguments": {"type": "string", "description": "JSON 格式的工具参数"},
+            },
+            "required": ["arguments"],
+        }
+        tool_deps = add_skill_result.tool_deps
+        console.print(f"  [green]AddSkill 分析完成[/]")
+        console.print(f"    参数: {', '.join(parameters.get('properties', {}).keys())}")
+        console.print(f"    工具依赖: {', '.join(tool_deps) if tool_deps else '无'}")
 
     # 处理 API key（仅对有脚本的 skill）
     env: dict[str, str] = {}
@@ -252,19 +281,6 @@ def skill_add(
         python_cmd = "python" if sys.platform == "win32" else "python3"
         shell_command = f"{python_cmd} {main_script} '{{arguments}}'"
 
-    # 构建 parameters schema：优先从 SKILL.md 正文提取，否则使用 frontmatter 中的，最后兜底
-    parameters = _extract_parameters_from_md(skill_body)
-    if parameters is None:
-        parameters = meta.get("parameters")
-    if parameters is None:
-        parameters = {
-            "type": "object",
-            "properties": {
-                "arguments": {"type": "string", "description": "JSON 格式的工具参数"},
-            },
-            "required": ["arguments"],
-        }
-
     # 注册工具到数据库
     db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
     registry = ToolRegistry(db_path=db_path)
@@ -285,7 +301,8 @@ def skill_add(
             tags=["skill", name] + ([Path(main_script).stem] if main_script else []),
         ),
         dependencies={
-            "skill_dir_name": skill_name,  # 目录名，用于定位 SKILL.md
+            "skill_dir_name": skill_name,
+            "tool_deps": tool_deps,
         },
     )
 
@@ -309,38 +326,79 @@ def skill_add(
     console.print(f"  必填: {', '.join(required_params) if required_params else '无'}")
 
 
-def skill_list(
-    console: Console,
+def _run_add_skill_agent(
+    skill_dir: Path,
+    config: Any,
     base_dir: Optional[Path] = None,
-    config_file: Optional[Path] = None,
-) -> None:
+    console: Console | None = None,
+) -> Any:
+    """运行 AddSkillMetaAgent 分析 SKILL.md，返回 AddSkillResult 或 None
+
+    像 chat 一样完整初始化：启动 MCP server、创建 LLMClient、运行元Agent、输出日志、关闭资源。
     """
-    列出已注册的 skill 工具
-    """
-    config = load_config(base_dir=base_dir, config_file=config_file)
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
+    import asyncio
 
-    all_tools = registry.list_all()
-    skill_tools = [t for t in all_tools if t.execution.type == ToolExecutionType.SKILL]
+    try:
+        from qd_agents.agent.add_skill_meta import AddSkillMetaAgent
+        from qd_agents.agent.base import MetaAgentInput
+        from qd_agents.cli.managers import LLMClientManager
+        from qd_agents.context import ContextManager
+        from qd_agents.prompts import PromptLoader
+    except ImportError as e:
+        logger.warning("AddSkillMetaAgent 依赖不可用: %s", e)
+        return None
 
-    if skill_tools:
-        table = Table(title=f"Skill Tools ({len(skill_tools)} 个)")
-        table.add_column("名称", style="cyan")
-        table.add_column("描述", style="dim", max_width=50)
-        table.add_column("有脚本", style="green")
-        table.add_column("参数", style="magenta")
-        table.add_column("ID", style="dim")
+    async def _run():
+        # 1. 读取 SKILL.md 全文
+        skill_md_path = skill_dir / "SKILL.md"
+        skill_md_content = skill_md_path.read_text(encoding="utf-8")
 
-        for tool in skill_tools:
-            param_names = list(tool.parameters.get("properties", {}).keys())
-            has_script = "是" if tool.execution.command else "否"
-            table.add_row(
-                tool.name, tool.description, has_script,
-                ", ".join(param_names) or "-",
-                tool.id,
+        # 2. 初始化工具注册表和上下文
+        db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
+        tool_registry = ToolRegistry(db_path=db_path)
+
+        prompt_loader = None
+        if config.prompts and config.prompts.template_dir:
+            prompt_loader = PromptLoader(template_dir=Path(config.prompts.template_dir))
+
+        context_manager = ContextManager(prompt_loader=prompt_loader, base_dir=base_dir)
+
+        # 3. 初始化 LLM 客户端和 QDAgent（启动 MCP server）
+        provider_name = config.llm.default_provider
+        _console = console or Console()
+        llm_manager = LLMClientManager(_console, config, tool_registry, prompt_loader, context_manager)
+        if not await llm_manager.initialize(provider_name):
+            logger.warning("LLMClientManager 初始化失败")
+            return None
+
+        try:
+            # 4. 收集所有已注册工具（含 MCP subtools）
+            all_tools = tool_registry.list_all()
+
+            # 5. 创建并运行 AddSkillMetaAgent
+            agent = AddSkillMetaAgent(
+                llm_client=llm_manager.llm_client,
+                context_manager=context_manager,
             )
 
-        console.print(table)
-    else:
-        console.print("[yellow]未找到 Skill Tool[/]")
+            meta_input = MetaAgentInput(
+                user_message="分析 SKILL.md",
+                history=[],
+                context={
+                    "skill_md": skill_md_content,
+                    "tools": all_tools,
+                },
+            )
+
+            output = await agent.run(meta_input)
+            return output.output
+
+        finally:
+            # 6. 关闭资源（MCP server 等）
+            await llm_manager.close()
+
+    try:
+        return asyncio.run(_run())
+    except Exception as e:
+        logger.warning("AddSkillMetaAgent 执行失败: %s", e)
+        return None

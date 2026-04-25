@@ -120,10 +120,11 @@ class CodePlanAgent(Agent):
             meta_traces = [judge_output]
 
         elif judge_result.route == "tool_use":
-            # 简单工具调用 - 使用 judge 指定的工具
-            filtered_tools = self._filter_tools(judge_result.tool_list)
-            filtered_openai_tools = self._filter_openai_tools(judge_result.tool_list)
-            filtered_tool_map = self._filter_tool_map(judge_result.tool_list)
+            # 简单工具调用 - 使用 judge 指定的工具 + 递归加载依赖
+            all_needed = self._resolve_tool_deps(judge_result.tool_list)
+            filtered_tools = self._filter_tools(list(all_needed))
+            filtered_openai_tools = self._filter_openai_tools(list(all_needed))
+            filtered_tool_map = self._filter_tool_map(list(all_needed))
 
             tool_input = MetaAgentInput(
                 user_message=user_input,
@@ -141,8 +142,11 @@ class CodePlanAgent(Agent):
             meta_traces = [judge_output, tool_output]
 
         elif judge_result.route == "coding":
-            # 复杂工具编排 - 使用 judge 指定的工具
-            filtered_tools = self._filter_tools(judge_result.tool_list)
+            # 复杂工具编排 - 使用 judge 指定的工具 + 递归加载依赖
+            all_needed = self._resolve_tool_deps(judge_result.tool_list)
+            filtered_tools = self._filter_tools(list(all_needed))
+            filtered_openai_tools = self._filter_openai_tools(list(all_needed))
+            filtered_tool_map = self._filter_tool_map(list(all_needed))
 
             coding_input = MetaAgentInput(
                 user_message=user_input,
@@ -175,6 +179,28 @@ class CodePlanAgent(Agent):
         if not tool_names:
             return self._expanded_tools
         return [t for t in self._expanded_tools if t.name in tool_names]
+
+    def _resolve_tool_deps(self, tool_names: list[str]) -> set[str]:
+        """递归解析工具依赖，返回所有需要的工具名（含去重）。
+
+        当一个 SKILL 工具依赖其他工具时（dependencies["tool_deps"]），
+        需要将依赖的工具也加入加载列表。支持递归：SKILL A 依赖 SKILL B，
+        SKILL B 又依赖其他工具。
+        """
+        resolved = set(tool_names)
+        queue = list(tool_names)
+        while queue:
+            name = queue.pop(0)
+            tool = self._tool_map.get(name)
+            if not tool:
+                continue
+            deps = tool.dependencies.get("tool_deps", [])
+            for dep in deps:
+                if dep not in resolved:
+                    resolved.add(dep)
+                    queue.append(dep)
+                    logger.info("递归加载工具依赖: %s → %s", name, dep)
+        return resolved
 
     def _filter_openai_tools(self, tool_names: list[str]) -> list[dict]:
         """根据工具名列表过滤 OpenAI 格式工具"""

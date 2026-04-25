@@ -120,9 +120,6 @@ class QDAgent:
         # 缓存展开后的工具列表
         await self._cache_expanded_tools()
 
-        # 注入无脚本 SKILL 工具到 ContextManager
-        self._inject_scriptless_skills()
-
         # 将工具注册到执行引擎（用于 Code-Plan 模式）
         await self._register_tools_to_execution_engine()
 
@@ -308,23 +305,6 @@ class QDAgent:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    def _inject_scriptless_skills(self) -> None:
-        """将无脚本的 SKILL 工具注入到 ContextManager，使其 SKILL.md 始终出现在 system prompt 中。"""
-        all_tools = self.registry.list_all()
-        scriptless = []
-        for tool in all_tools:
-            if (tool.execution.type == ToolExecutionType.SKILL
-                    and not tool.execution.command):
-                scriptless.append({
-                    "name": tool.name,
-                    "skill_dir_name": tool.dependencies.get("skill_dir_name", tool.name),
-                })
-
-        if scriptless:
-            self.context._scriptless_skills = scriptless
-            logger.info("Injected %d scriptless SKILL tools: %s",
-                        len(scriptless), ", ".join(s["name"] for s in scriptless))
-
     async def _cache_expanded_tools(self) -> None:
         """缓存展开后的工具列表和OpenAI格式工具
 
@@ -360,13 +340,8 @@ class QDAgent:
             openai_tools.append(search_web.to_openai_function())
             expanded_tools = [t for t in expanded_tools if t.id != "search.web"]
 
-        # SKILL 工具不加入 openai_tools（不通过 function calling 调用），
-        # 但保留在 expanded_tools 中让 judge 能看到并选择
-        skill_tool_ids = {t.id for t in expanded_tools if t.execution.type == ToolExecutionType.SKILL}
-        openai_tools.extend([
-            t.to_openai_function() for t in expanded_tools
-            if t.id not in skill_tool_ids
-        ])
+        # 所有 SKILL 工具加入 openai_tools（工具依赖通过 tool_deps 声明，由 _resolve_tool_deps 递归加载）
+        openai_tools.extend([t.to_openai_function() for t in expanded_tools])
 
         self._expanded_tools_cache = expanded_tools
         self._openai_tools_cache = openai_tools
