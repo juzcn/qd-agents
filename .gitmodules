@@ -13,6 +13,3 @@
 [submodule "tools/mcp/n8n-mcp"]
 	path = tools/mcp/n8n-mcp
 	url = https://github.com/czlonkowski/n8n-mcp
-[submodule "tools/skills/self-improving-agent"]
-	path = tools/skills/self-improving-agent
-	url = https://github.com/peterskoett/self-improving-agent.git
