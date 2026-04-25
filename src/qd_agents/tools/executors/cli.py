@@ -23,7 +23,7 @@ from qd_agents.registry import Tool, ToolExecutionConfig, ToolMetadata, ToolExec
 logger = logging.getLogger(__name__)
 
 
-def safe_decode(bytes_data: bytes, encoding: str = None) -> str:
+def safe_decode(bytes_data: bytes, encoding: str | None = None) -> str:
     """
     安全解码字节数据
 

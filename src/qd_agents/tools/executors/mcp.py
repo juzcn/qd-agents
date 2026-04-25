@@ -83,7 +83,7 @@ class MCPToolExecutor(ToolExecutor):
 
         # 缓存客户端会话
         self._session: ClientSession | None = None
-        self._tools_cache: dict[str, dict] = {}
+        self._tools_cache: dict[str, Any] = {}
         # 存储异步上下文管理器
         self._context_manager: Any = None
         # 关闭标志
@@ -155,9 +155,10 @@ class MCPToolExecutor(ToolExecutor):
                     raise ValueError("streamable-http transport requires url")
 
                 # streamable_http_client 返回异步上下文管理器
+                http_client = httpx.AsyncClient(headers=self.headers) if self.headers else None
                 self._context_manager = streamable_http_client(
                     url=self.url,
-                    headers=self.headers,
+                    http_client=http_client,
                 )
                 transport = await self._context_manager.__aenter__()
                 self._session = ClientSession(*transport)

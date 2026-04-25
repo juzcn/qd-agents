@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional, Any, Dict, List
 
 import questionary
+import typer
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from rich.console import Console

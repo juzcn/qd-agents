@@ -1,10 +1,8 @@
 """
-核心智能体实现
+QDAgent 核心容器
 
-QDAgent 是 Agent 容器 + 资源管理器：
-- 管理共享资源（MCP 连接、工具缓存、执行引擎、历史等）
-- 注册和切换可用 Agent
-- 将 process() 委托给当前 Agent
+负责 Agent 注册/切换、process 委托和历史管理。
+MCP 连接管理委托给 MCPService，工具注册/缓存委托给 ToolService。
 """
 from __future__ import annotations
 
@@ -12,18 +10,22 @@ import asyncio
 import json
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 from ..config import Config
 from ..llm import LLMClient
-from ..registry import ToolRegistry, Tool, ToolExecutionType, ToolMetadata
+from ..models.tool import Tool, ToolExecutionType, ToolMetadata
+from ..registry import ToolRegistry
 from ..prompts import PromptLoader
 from ..execution import ExecutionEngine
 from ..tools import ToolExecutorRegistry
 from ..tools.executors.mcp import MCPToolExecutor
-from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig
+from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig, BackoffStrategy
 from ..context import ContextManager
 from .base import Agent, AgentResult
+from .mcp_service import MCPService
+from .tool_service import ToolService
 from .tool_use import ToolUseAgent
 
 logger = logging.getLogger(__name__)
@@ -71,9 +73,11 @@ class QDAgent:
         # 初始化重试和熔断
         self._setup_retry_and_circuit_breaker()
 
-        # MCP 工具缓存
-        self._mcp_tools_cache: dict[str, list[Tool]] = {}
-        self._mcp_executors_cache: dict[str, Any] = {}
+        # MCP 服务（委托 MCP 连接管理）
+        self._mcp_service = MCPService()
+
+        # 工具服务（委托工具注册和缓存）
+        self._tool_service = ToolService()
 
         # 展开工具缓存
         self._expanded_tools_cache: list[Tool] | None = None
@@ -84,7 +88,7 @@ class QDAgent:
         """配置重试和熔断器"""
         self.retry_config = RetryConfig(
             max_attempts=self.config.execution.max_attempts,
-            backoff_strategy=self.config.execution.backoff_strategy,
+            backoff_strategy=BackoffStrategy(self.config.execution.backoff_strategy),
             initial_delay_ms=self.config.execution.initial_delay_ms,
             max_delay_ms=self.config.execution.max_delay_ms,
         )
@@ -98,7 +102,7 @@ class QDAgent:
             )
         )
 
-        self.retry_executor = RetryExecutor(
+        self.retry_executor: RetryExecutor = RetryExecutor(
             config=self.retry_config,
             circuit_breaker=self.circuit_breaker,
         )
@@ -247,124 +251,32 @@ class QDAgent:
                 total_duration_ms=0,
             )
 
-    # --- MCP 管理（委托给 MCPToolManager）---
+    # --- MCP 管理（委托给 MCPService）---
 
     async def _preload_mcp_tools(self) -> None:
-        """预加载 MCP 工具（会话开始时连接 MCP 服务器）"""
-        logger.info("Preloading MCP tools...")
-
+        """预加载 MCP 工具（委托给 MCPService）"""
         all_tools = self.registry.list_all()
         mcp_tools = [t for t in all_tools if t.execution.type == ToolExecutionType.MCP]
 
-        if not mcp_tools:
-            logger.info("No MCP tools found to preload")
-            return
-
-        server_configs = {}
-        for tool in mcp_tools:
-            exec_config = tool.execution
-            server_key = exec_config.server or ""
-            if not server_key:
-                logger.warning(f"MCP tool {tool.id} has no server configuration, skipping")
-                continue
-            if server_key in server_configs:
-                continue
-
-            server_configs[server_key] = {
-                'type': ToolExecutionType.MCP,
-                'server': server_key,
-                'transport': exec_config.transport or "stdio",
-                'command': exec_config.command,
-                'args': exec_config.args,
-                'endpoint': exec_config.endpoint,
-                'headers': exec_config.headers,
-                'env': exec_config.env or {},
-                'timeout': exec_config.timeout,
-                'tool': None,
-            }
-
-        if not server_configs:
-            logger.warning("No valid MCP server configurations found")
-            return
-
-        async def connect_server(server_key: str, config: dict):
-            try:
-                subtools, executor = await self._get_mcp_server_tools(config)
-                if subtools:
-                    logger.info(f"Preloaded MCP server '{server_key}' with {len(subtools)} tools")
-                else:
-                    logger.warning(f"Failed to preload MCP server '{server_key}'")
-            except Exception as e:
-                logger.error(f"Error preloading MCP server '{server_key}': {e}")
-
-        tasks = [
-            connect_server(server_key, config)
-            for server_key, config in server_configs.items()
-        ]
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        await self._mcp_service.preload(
+            mcp_tools=mcp_tools,
+            executor_registry=self.executor_registry,
+        )
 
     async def _cache_expanded_tools(self) -> None:
-        """缓存展开后的工具列表和OpenAI格式工具
-
-        所有 SKILL 工具（包括无脚本的）都加入 expanded_tools，
-        让 judge 能看到并选择它们。
-        """
-        logger.info("Caching expanded tools...")
-
-        all_tools = self.registry.list_all()
-
-        expanded_tools = []
-        for tool in all_tools:
-            if tool.execution.type != ToolExecutionType.MCP:
-                expanded_tools.append(tool)
-                continue
-
-            exec_config = tool.execution
-            server_key = exec_config.server or ""
-            if server_key in self._mcp_tools_cache:
-                mcp_subtools = self._mcp_tools_cache[server_key]
-                if mcp_subtools:
-                    expanded_tools.extend(mcp_subtools)
-                else:
-                    logger.warning(f"Cached MCP tools for server '{server_key}' is empty, keeping original tool")
-                    expanded_tools.append(tool)
-            else:
-                logger.warning(f"MCP server '{server_key}' not in cache, keeping original tool")
-                expanded_tools.append(tool)
-
-        openai_tools = []
-        search_web = self.registry.get("search.web")
-        if search_web:
-            openai_tools.append(search_web.to_openai_function())
-            expanded_tools = [t for t in expanded_tools if t.id != "search.web"]
-
-        # SKILL 工具不加入 openai_tools（通过依赖工具执行，不走 function calling）
-        non_skill_tools = [t for t in expanded_tools if t.execution.type != ToolExecutionType.SKILL]
-        openai_tools.extend([t.to_openai_function() for t in non_skill_tools])
-
-        self._expanded_tools_cache = expanded_tools
-        self._openai_tools_cache = openai_tools
-        self._tool_map_cache = {t.name: t for t in expanded_tools}
-
-        logger.info(f"Cached {len(expanded_tools)} expanded tools and {len(openai_tools)} OpenAI tools")
+        """缓存展开后的工具列表和OpenAI格式工具"""
+        expanded, openai, tool_map = self._tool_service.build_expanded_tools(
+            registry=self.registry,
+            mcp_tools_cache=self._mcp_service.tools_cache,
+        )
+        self._expanded_tools_cache = expanded
+        self._openai_tools_cache = openai
+        self._tool_map_cache = tool_map
 
     async def close(self) -> None:
-        """关闭智能体（会话结束时调用）"""
+        """关闭智能体（委托给 MCPService 关闭连接）"""
         logger.info("Closing QDAgent...")
-
-        for server_key, executor in self._mcp_executors_cache.items():
-            try:
-                await executor.close()
-                logger.info(f"Closed MCP connection to server: {server_key}")
-            except (RuntimeError, GeneratorExit, asyncio.CancelledError, BaseException) as e:
-                logger.debug(f"Ignoring error closing MCP connection to server {server_key}: {type(e).__name__}: {e}")
-            except Exception as e:
-                logger.error(f"Error closing MCP connection to server {server_key}: {e}")
-
-        self._mcp_tools_cache.clear()
-        self._mcp_executors_cache.clear()
+        await self._mcp_service.close()
         logger.info("QDAgent closed")
 
     async def _register_builtin_tools(self) -> None:
@@ -397,7 +309,6 @@ class QDAgent:
             if tool.name in ["echo", "serper_search", "tavily_search"]:
                 continue
 
-            # SKILL 工具不通过执行器执行，跳过注册
             if tool.execution.type == ToolExecutionType.SKILL:
                 continue
 
@@ -425,112 +336,3 @@ class QDAgent:
     def get_history(self) -> list[dict[str, str]]:
         """获取会话历史"""
         return self.context.get_history()
-
-    async def _get_mcp_server_tools(self, server_config: dict) -> tuple[list[Tool], Any]:
-        """获取 MCP 服务器的工具列表和执行器"""
-        server_key = server_config.get('server', '')
-        if not server_key:
-            return [], None
-
-        if server_key in self._mcp_tools_cache:
-            logger.debug(f"Using cached MCP tools for server: {server_key}")
-            return self._mcp_tools_cache[server_key], self._mcp_executors_cache.get(server_key)
-
-        try:
-            executor = MCPToolExecutor(
-                server=server_key,
-                transport=server_config.get('transport', 'stdio'),
-                command=server_config.get('command'),
-                args=server_config.get('args', []),
-                url=server_config.get('endpoint'),
-                headers=server_config.get('headers', {}),
-                env=server_config.get('env', {}),
-                timeout=server_config.get('timeout', 30),
-            )
-
-            default_connect_timeout = 5
-            if "filesystem" in server_key.lower() or server_config.get('command') in ["npx", "node"]:
-                default_connect_timeout = 15
-
-            connect_timeout = server_config.get('timeout', default_connect_timeout)
-            try:
-                await asyncio.wait_for(executor._ensure_connected(), timeout=connect_timeout)
-            except asyncio.TimeoutError:
-                logger.error(f"MCP server {server_key} connection timeout after {connect_timeout}s")
-                try:
-                    await executor.close()
-                except Exception:
-                    pass
-                return [], None
-            except asyncio.CancelledError:
-                logger.warning(f"MCP server {server_key} connection cancelled")
-                try:
-                    await executor.close()
-                except Exception:
-                    pass
-                return [], None
-            except Exception as e:
-                logger.error(f"MCP server {server_key} connection failed: {e}")
-                try:
-                    await executor.close()
-                except Exception:
-                    pass
-                return [], None
-
-            mcp_tools = executor.get_cached_tools()
-
-            if not mcp_tools:
-                logger.warning(f"MCP server {server_key} returned no tools")
-                try:
-                    await executor.close()
-                except Exception:
-                    pass
-                return [], None
-
-            subtools = []
-            for mcp_tool_name, mcp_tool in mcp_tools.items():
-                subtool_id = f"mcp.{server_key}.{mcp_tool_name}"
-                parameters = _extract_mcp_tool_parameters(mcp_tool)
-                exec_config = server_config.copy()
-                exec_config['tool'] = mcp_tool_name
-
-                subtool = Tool(
-                    id=subtool_id,
-                    name=mcp_tool_name,
-                    description=mcp_tool.description if hasattr(mcp_tool, 'description') else f"MCP tool: {mcp_tool_name}",
-                    parameters=parameters,
-                    execution=exec_config,
-                    metadata=ToolMetadata(
-                        category="mcp",
-                        tags=[mcp_tool_name, 'mcp-subtool', server_key],
-                    ),
-                )
-                subtools.append(subtool)
-
-            self._mcp_tools_cache[server_key] = subtools
-            self._mcp_executors_cache[server_key] = executor
-
-            for subtool in subtools:
-                self.executor_registry.register_executor(subtool.id, executor)
-
-            logger.info(f"Connected to MCP server {server_key} and cached {len(subtools)} subtools")
-            return subtools, executor
-
-        except Exception as e:
-            logger.error(f"Failed to connect to MCP server {server_key}: {e}")
-            return [], None
-
-
-def _extract_mcp_tool_parameters(mcp_tool: Any) -> dict[str, Any]:
-    """从 mcp.Tool 对象提取参数 schema"""
-    # MCP SDK uses camelCase "inputSchema", try both conventions
-    for attr in ("inputSchema", "input_schema"):
-        schema = getattr(mcp_tool, attr, None)
-        if isinstance(schema, dict) and schema.get("properties"):
-            return schema
-
-    return {
-        "type": "object",
-        "properties": {},
-        "required": [],
-    }

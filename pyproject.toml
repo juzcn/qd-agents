@@ -26,6 +26,7 @@ dependencies = [
 dev = [
     "mypy>=1.0.0",
     "pytest>=8.0.0",
+    "types-pyyaml>=6.0.12.20260408",
 ]
 llama-cpp = [
     "llama-cpp-python>=0.3.0",
