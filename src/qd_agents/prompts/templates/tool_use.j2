@@ -34,5 +34,6 @@
 - Windows 环境：使用 `python` 而不是 `python3`
 - Skill 脚本路径：使用 `tools/skills/` 而不是 `skills/`
 - Windows 环境下，调用 Python 脚本时 JSON 参数必须用双引号包裹，内部双引号用转义：`python tools/skills/xxx/scripts/xxx.py "{\"query\":\"xxx\"}"`
+- 优先使用 `python -m <module>` 而非 `uvx <module>`，项目虚拟环境已包含所需依赖，无需额外创建环境
 
 现在，请根据用户请求处理问题。
