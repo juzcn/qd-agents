@@ -13,7 +13,9 @@
 
 ---
 
-## 1. 核心设计理念
+## 1. 核心设计理念 ✅
+
+> **实现状态**: 双模式架构已实现。渐进式披露（L0/L1）部分实现在 Judge 和 ToolCalling 的工具过滤中，L2/L3 未实现。历史分离未实现（当前使用统一历史）。用户协作与动态调整未实现。
 
 ### 1.1 双模式自适应架构
 
@@ -130,7 +132,9 @@
 
 ---
 
-## 2. 现有方案评估与不足
+## 2. 现有方案评估与不足 📝
+
+> **实现状态**: 文档性质，描述设计决策背景，无需实现。
 
 | 方案 | 优点 | 不足 |
 |------|------|------|
@@ -145,9 +149,9 @@
 
 ---
 
-## 3. 核心设计理念
+## 3. 核心设计理念 ⚠️
 
-### 3.1 确定性执行优先
+> **实现状态**: 三阶段路由已实现（Judge→ToolCalling/Coding）。渐进式披露 L0/L1 部分实现，L2/L3 未实现。历史分离未实现。用户协作未实现。
 
 自动化流程由 Python 代码结合工具调用实现，图灵完备。
 
@@ -318,7 +322,9 @@ CodingMetaAgent 使用沙盒环境执行生成的代码：
 
 ---
 
-## 4. 系统架构
+## 4. 系统架构 ✅
+
+> **实现状态**: Agent 体系架构已实现。QDAgent 容器 + 4 个元Agent（Judge/ToolCalling/Coding/AddSkill）+ 2 个 Agent（ToolUse/CodePlan）。MCP/Tool 服务已从 core.py 拆分为 MCPService 和 ToolService。
 
 ### 4.1 Agent 体系架构
 
@@ -474,16 +480,21 @@ class AgentResult:
 | JudgeMetaAgent | `agent/judge_meta.py` |
 | ToolCallingMetaAgent | `agent/tool_calling_meta.py` |
 | CodingMetaAgent | `agent/coding_meta.py` |
+| AddSkillMetaAgent | `agent/add_skill_meta.py` |
 | ToolUseAgent | `agent/tool_use.py` |
 | CodePlanAgent | `agent/code_plan.py` |
-| QDAgent | `agent/core.py`（Agent 容器 + 资源管理器） |
+| QDAgent | `agent/core.py`（Agent 容器） |
+| MCPService | `agent/mcp_service.py`（MCP 连接/展开/关闭） |
+| ToolService | `agent/tool_service.py`（工具注册/缓存/执行器） |
 
 **共享数据模型**：
 
 | 数据模型 | 代码位置 |
 |---|---|
+| Tool / ToolExecutionConfig / ToolMetadata | `models/tool.py` |
 | JudgeResult | `models/judge.py` |
 | ExecutionStatus / ExecutionStep / ExecutionResult | `models/execution.py` |
+| AddSkillResult | `models/add_skill.py` |
 
 **工具模块**：
 
@@ -1060,7 +1071,9 @@ class AgentResult:
 
 ---
 
-## 5. 工作流示例
+## 5. 工作流示例 📝
+
+> **实现状态**: 文档性质，描述预期工作流。
 
 ### 场景一：简单逻辑（直接 Tool Calling）
 
@@ -1175,7 +1188,9 @@ class AgentResult:
 
 ---
 
-## 6. 单阶段工具调用的设计决策
+## 6. 单阶段工具调用 ✅
+
+> **实现状态**: 已实现。支持 6 种工具类型（function/cli/http/mcp/bash/skill）。MCP 自动展开已实现。Tool Calling 循环已实现。的设计决策
 
 ### 6.1 为何选择基于OpenAI Tool Calling的单阶段架构？
 
@@ -1228,7 +1243,9 @@ class AgentResult:
 
 ---
 
-## 7. 工具注册中心 (Tool Registry) 实现要点
+## 7. 工具注册中心 (Tool Registry) ⚠️
+
+> **实现状态**: 基础功能已实现（SQLite 存储、注册/检索/删除、关键词搜索）。向量检索未实现（配置预留）。工具版本管理数据模型存在但功能未实现。 实现要点
 
 ### 7.1 存储模型
 
@@ -1279,7 +1296,9 @@ class AgentResult:
 
 ---
 
-## 8. 提示词管理设计
+## 8. 提示词管理 ✅
+
+> **实现状态**: 已实现。4 个 Jinja2 模板（tool_use.j2, judge.j2, coding.j2, add_skill.j2）。SKILL.md 自动注入已实现。提示词缓存已实现。设计
 
 ### 8.1 技术选型
 
@@ -1301,7 +1320,10 @@ src/qd_agents/prompts/
 ├── __init__.py
 ├── loader.py          # 提示词加载器
 └── templates/
-    └── tool_use.j2    # 主要系统提示词模板
+    ├── tool_use.j2    # 工具调用系统提示词
+    ├── judge.j2       # 路由判断系统提示词
+    ├── coding.j2      # 代码生成系统提示词
+    └── add_skill.j2   # 技能分析系统提示词
 ```
 
 **模板配置**：
@@ -1373,7 +1395,9 @@ src/qd_agents/prompts/
 
 ---
 
-## 9. 确定性执行设计补充
+## 9. 确定性执行 ⚠️
+
+> **实现状态**: 重试与熔断已实现（4 种退避策略 + 熔断器）。执行轨迹数据模型已定义但未完整实现。审计日志未完整实现。
 
 ### 9.1 可靠性保障
 
@@ -1462,7 +1486,9 @@ src/qd_agents/prompts/
 
 ---
 
-## 10. 安全与稳定性设计
+## 10. 安全与稳定性 ⚠️
+
+> **实现状态**: 基础安全已实现（沙盒执行、危险模块禁止）。审计日志未完整实现。监控未实现。设计
 
 ### 10.1 工具调用安全
 
@@ -1528,7 +1554,9 @@ src/qd_agents/prompts/
 
 ---
 
-## 11. 工具版本管理设计
+## 11. 工具版本管理 ❌
+
+> **实现状态**: 数据模型（ToolVersionStatus）已定义在 models/tool.py 中，但版本管理功能（多版本共存、灰度发布、自动迁移）未实现。设计
 
 ### 11.1 版本标识规范
 
@@ -1640,7 +1668,9 @@ flowchart TD
 
 ---
 
-## 12. 错误处理与重试机制设计
+## 12. 错误处理与重试 ✅
+
+> **实现状态**: 已实现。4 种退避策略 + 熔断器模式 + 工具调用错误处理。机制设计
 
 ### 12.1 错误分类体系
 
@@ -1808,7 +1838,9 @@ stateDiagram-v2
 
 ---
 
-## 13. 工具依赖关系设计
+## 13. 工具依赖关系 ❌
+
+> **实现状态**: 未实现。Tool 模型中有 dependencies 字段但未使用。设计
 
 ### 13.1 依赖类型
 
@@ -1912,7 +1944,9 @@ graph TD
 
 ---
 
-## 14. 配置管理设计
+## 14. 配置管理 ⚠️
+
+> **实现状态**: JSON 配置已实现（config.json + runtime.json 分离）。Pydantic 验证已实现。YAML 配置未实现（文档描述为 YAML 但实际使用 JSON）。配置热重载未实现。设计
 
 ### 14.1 配置层次结构
 
@@ -2100,7 +2134,9 @@ llm:
 
 ---
 
-## 15. 测试策略设计
+## 15. 测试策略 ❌
+
+> **实现状态**: 未实现。无测试文件。设计
 
 ### 15.1 测试分层
 
@@ -2289,7 +2325,9 @@ class AgentUser(HttpUser):
 
 ---
 
-## 16. 流式输出支持设计
+## 16. 流式输出 ❌
+
+> **实现状态**: 未实现。支持设计
 
 ### 16.1 流式输出场景
 
@@ -2442,7 +2480,9 @@ print(result.final_answer)
 
 ---
 
-## 17. 非功能需求（暂定）
+## 17. 非功能需求 📝
+
+> **实现状态**: 文档性质，描述性能和可靠性目标。（暂定）
 
 ### 17.1 性能目标
 

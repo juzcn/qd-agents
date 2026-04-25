@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 
 from ..llm import LLMClient
 from ..context import ContextManager
 from ..models import JudgeResult
+from ..utils.parsing import extract_json_from_llm_output
 from .base import MetaAgent, MetaAgentInput, MetaAgentOutput
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ class JudgeMetaAgent(MetaAgent):
     def _parse_result(self, content: str) -> JudgeResult:
         """解析判断结果"""
         try:
-            json_str = self._extract_json(content)
+            json_str = extract_json_from_llm_output(content)
             result_dict = json.loads(json_str)
             return JudgeResult(**result_dict)
         except (json.JSONDecodeError, ValueError) as e:
@@ -94,18 +94,3 @@ class JudgeMetaAgent(MetaAgent):
                 route="tool_use",
                 reasoning=f"解析失败，默认使用工具调用: {e}",
             )
-
-    def _extract_json(self, content: str) -> str:
-        """从内容中提取 JSON"""
-        # 匹配 ```json ... ``` 或 ``` ... ```
-        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
-        if json_match:
-            return json_match.group(1).strip()
-
-        # 尝试找到 { } 包裹的内容
-        brace_start = content.find('{')
-        brace_end = content.rfind('}')
-        if brace_start != -1 and brace_end != -1:
-            return content[brace_start:brace_end + 1]
-
-        return content

@@ -13,13 +13,15 @@
 - **Fallback 机制** - 模型失败时自动切换到下一个
 - **上下文管理** - 统一管理会话历史和提示词构建
 - **Tool Registry** - SQLite 存储的工具注册中心
-- **多种工具执行** - 支持 HTTP/CLI/Function/MCP 工具
+- **多种工具执行** - 支持 HTTP/CLI/Function/MCP/Bash/Skill 6种工具类型
 - **MCP 服务器管理** - 通过命令行注册、列出和移除 MCP 服务器
 - **异步代码执行** - 支持顶层 await 语法，自动包装为异步函数执行
 - **重试与熔断** - 4 种退避策略 + 熔断器模式
 - **CLI 界面** - 简洁的命令行交互
 - **内置搜索工具** - 支持 Tavily、Serper 搜索引擎
 - **技能转 MCP** - 将技能目录自动转换为 MCP 服务器
+- **Add-Skill 元Agent** - 用 LLM 分析 SKILL.md，自动识别参数和工具依赖
+- **运行时配置分离** - 静态配置(config.json)与运行时配置(runtime.json)分离存储
 - **详细日志记录** - LLM 请求/响应完整日志，支持 DEBUG 级别
 - **实时日志刷新** - ImmediateFlushFileHandler 确保日志实时写入磁盘
 - **模式切换** - 支持 tool-use 和 code-plan 两种工作模式，可通过命令行或聊天命令切换
@@ -77,13 +79,18 @@ cp config.json.template config.json
 
 ### 配置说明
 
-**config.json** - 唯一配置文件
-- 所有配置都在此文件中，包括 API Keys
+**config.json** - 静态系统配置
+- LLM 提供商、模型、搜索 API Keys 等不变配置
 - 不提交到版本控制（已在 .gitignore 中）
 
 **config.json.template** - 配置模板
 - 提交到版本控制
 - 包含所有配置项和默认值
+
+**runtime.json** - 运行时配置
+- 工具凭证（CLI/MCP/Skill 等工具的 API key）
+- 由 `qd-agents tools skill add` 等命令自动写入
+- 首次运行时自动从 config.json 迁移 tools_credentials
 
 ### LLM 提供商配置
 
@@ -226,7 +233,7 @@ uv run qd-agents tools mcp add open-meteo "Open Meteo Weather" \
 Skill 工具可以通过以下命令管理：
 
 ```bash
-# 添加 Skill 工具
+# 添加 Skill 工具（用 LLM 分析 SKILL.md，自动识别参数和工具依赖）
 uv run qd-agents tools skill add <skill_name>
 
 # 列出已注册的 Skill 工具
@@ -264,7 +271,7 @@ metadata:
 uv run qd-agents
 
 # 指定工作模式启动
-uv run qd-agents --mode enen
+uv run qd-agents --mode tool-use
 uv run qd-agents --mode code-plan
 ```
 
@@ -291,23 +298,51 @@ uv run qd-agents --version
 ```
 qd-agents/
 ├── src/qd_agents/
-│   ├── config/          # 配置管理
-│   ├── llm/             # LLM 客户端 + 消息格式化
-│   ├── models/          # 共享数据模型（JudgeResult, ExecutionResult 等）
-│   ├── registry/        # Tool Registry
+│   ├── config/          # 配置管理（JSON + 运行时配置分离）
+│   ├── llm/             # LLM 客户端 + 消息格式化 + 模型评分
+│   ├── models/          # 共享数据模型
+│   │   ├── tool.py      # Tool/ToolExecutionConfig/ToolMetadata
+│   │   ├── judge.py     # JudgeResult
+│   │   ├── execution.py # ExecutionResult/ExecutionStep
+│   │   └── add_skill.py # AddSkillResult
+│   ├── registry/        # Tool Registry（注册/查询/搜索）
 │   ├── prompts/         # 提示词模板
 │   │   └── templates/
+│   │       ├── tool_use.j2   # 工具调用系统提示词
+│   │       ├── judge.j2      # 路由判断系统提示词
+│   │       ├── coding.j2     # 代码生成系统提示词
+│   │       └── add_skill.j2  # 技能分析系统提示词
 │   ├── context/         # 上下文管理器
 │   ├── tools/           # 工具执行器 + 内置工具 + MCP 管理器
 │   ├── execution/       # 执行引擎
-│   ├── agent/           # Agent 核心（MetaAgent + Agent）
-│   ├── utils/           # 工具函数（重试、熔断、日志）
+│   ├── agent/           # Agent 核心
+│   │   ├── base.py      # MetaAgent/Agent 基类和数据模型
+│   │   ├── core.py      # QDAgent 容器（Agent注册/切换/委托）
+│   │   ├── mcp_service.py  # MCP 服务管理（连接/展开/关闭）
+│   │   ├── tool_service.py # 工具服务（注册/缓存/执行器）
+│   │   ├── judge_meta.py   # JudgeMetaAgent
+│   │   ├── tool_calling_meta.py  # ToolCallingMetaAgent
+│   │   ├── coding_meta.py  # CodingMetaAgent
+│   │   ├── add_skill_meta.py # AddSkillMetaAgent
+│   │   ├── tool_use.py   # ToolUseAgent
+│   │   └── code_plan.py  # CodePlanAgent
+│   ├── utils/           # 工具函数
+│   │   ├── retry.py     # 重试与熔断
+│   │   ├── logging.py   # 日志配置
+│   │   └── parsing.py   # LLM 输出 JSON 解析
 │   └── cli/             # CLI 界面
+├── tools/               # 工具资源目录
+│   ├── mcp/             # MCP 服务器配置和子项目
+│   └── skills/          # SKILL 工具目录（由 qd-agents 管理）
+│       └── <skill>/
+│           ├── SKILL.md
+│           └── scripts/
+├── skills/              # Claude Code skills（非 qd-agents SKILL 工具）
 ├── data/                # 数据目录（自动创建）
-│   ├── tools.db         # Tool Registry 数据库
-│   ├── traces/          # 执行轨迹
-│   └── audit/           # 审计日志
-├── .env                 # 环境变量
+│   └── tools.db         # Tool Registry 数据库
+├── config.json          # 静态系统配置
+├── config.json.template # 配置模板
+├── runtime.json         # 运行时配置（工具凭证）
 ├── pyproject.toml       # 项目配置
 └── README.md
 ```
@@ -320,18 +355,19 @@ qd-agents/
 
 **元Agent（MetaAgent）**：原子 LLM 调用单元
 - 一个系统提示词 + 一种上下文构建 + 一种处理逻辑
-- 类型：单轮（Judge、Coding）或多轮 Tool Calling（ToolCalling）
+- 类型：单轮（Judge、Coding、AddSkill）或多轮 Tool Calling（ToolCalling）
 
 **Agent**：任务处理单元
 - 简单 Agent：包装单个元Agent（ToolUseAgent）
 - 编排型 Agent：协调多个元Agent（CodePlanAgent）
 
 **当前实现的元Agent**：
-| 元Agent | 功能 | 提示词模板 |
-|---------|------|------------|
-| JudgeMetaAgent | 路由判断（direct/tool_use/coding） | judge.j2 |
-| ToolCallingMetaAgent | 简单工具调用 | tool_use.j2 |
-| CodingMetaAgent | 复杂工具编排（代码生成+执行） | coding.j2 |
+| 元Agent | 类型 | 功能 | 提示词模板 |
+|---------|------|------|------------|
+| JudgeMetaAgent | 单轮 | 路由判断（direct/tool_use/coding） | judge.j2 |
+| ToolCallingMetaAgent | 多轮 | 工具调用循环 | tool_use.j2 |
+| CodingMetaAgent | 单轮 | 复杂工具编排（代码生成+执行） | coding.j2 |
+| AddSkillMetaAgent | 单轮 | 分析 SKILL.md，识别参数和依赖 | add_skill.j2 |
 
 ### Code-Plan 模式
 
@@ -345,9 +381,10 @@ qd-agents/
 
 ### 配置管理 (config/)
 
-- 多层配置支持（默认 → 全局 → 环境 → 实例）
+- JSON 配置文件（config.json + runtime.json 分离）
 - 环境变量插值
 - Pydantic 类型验证
+- 运行时配置自动迁移
 
 ### LLM 客户端 (llm/)
 
@@ -370,13 +407,17 @@ qd-agents/
 
 - 统一管理会话历史
 - 分阶段消息构建（system_prompt + 历史 + 当前用户输入）
+- SKILL.md 自动注入（SKILL 类型工具在提示词中注入 SKILL.md 正文）
+- 提示词缓存（按工具集合缓存系统提示词）
 - 支持三阶段路由模式的上下文构建
 
 ### 数据模型 (models/)
 
 共享 Pydantic 数据模型，供多个模块引用：
+- `Tool` / `ToolExecutionConfig` / `ToolMetadata` — 工具定义和执行配置
 - `JudgeResult` — 路由判断结果（route, reasoning, tool_list）
 - `ExecutionStatus` / `ExecutionStep` / `ExecutionResult` — 执行轨迹模型
+- `AddSkillResult` — 技能分析结果
 
 ### 执行引擎 (execution/)
 
@@ -389,7 +430,6 @@ qd-agents/
 
 - SQLite 存储
 - 工具注册/检索/更新/删除
-- 版本管理框架
 - 关键词搜索
 
 ### 工具执行器 (tools/)
@@ -417,6 +457,7 @@ qd-agents/
 - `tools/skills/` — Skill 工具目录
 - 通过 `qd-agents tools skill add` 命令注册 Skill
 - Skill 支持环境变量和命令依赖声明
+- AddSkillMetaAgent 自动分析 SKILL.md 识别参数和工具依赖
 
 ### 重试与熔断 (utils/retry.py)
 
@@ -435,6 +476,11 @@ OPEN → HALF_OPEN (冷却时间后)
 HALF_OPEN → CLOSED (成功)
 HALF_OPEN → OPEN (失败)
 ```
+
+### LLM 输出解析 (utils/parsing.py)
+
+- `extract_json_from_llm_output()` — 从 LLM 输出提取 JSON（支持 markdown 代码块和裸 JSON）
+- `parse_json_from_llm_output()` — 提取并解析 JSON 字典
 
 ## 开发
 
