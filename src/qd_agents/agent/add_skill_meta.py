@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 
 from ..llm import LLMClient
 from ..context import ContextManager
 from ..models.add_skill import AddSkillResult
+from ..utils.parsing import extract_json_from_llm_output
 from .base import MetaAgent, MetaAgentInput, MetaAgentOutput
 
 logger = logging.getLogger(__name__)
@@ -97,21 +97,9 @@ class AddSkillMetaAgent(MetaAgent):
     @staticmethod
     def _parse_response(content: str) -> AddSkillResult:
         """解析 LLM 返回的 JSON"""
-        text = content.strip()
-
-        # 尝试从 markdown 代码块中提取 JSON
-        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
-        if json_match:
-            text = json_match.group(1).strip()
-        else:
-            # 尝试找到 { } 包裹的内容
-            brace_start = text.find('{')
-            brace_end = text.rfind('}')
-            if brace_start != -1 and brace_end != -1:
-                text = text[brace_start:brace_end + 1]
-
         try:
-            data = json.loads(text)
+            json_str = extract_json_from_llm_output(content)
+            data = json.loads(json_str)
             return AddSkillResult(**data)
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning("Failed to parse add_skill result: %s", e)
