@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import sys
 import os
 import subprocess
 import sys
@@ -204,7 +206,24 @@ class BashToolExecutor(ToolExecutor):
                     formatted_command = formatted_command.replace(placeholder, str(value))
 
             executed_command = formatted_command
-            logger.info("Executing bash tool: %s", formatted_command)
+
+            # Windows: 检测 python 脚本 + JSON 参数模式，自动切换为 exec 模式
+            # 避免 cmd.exe 破坏 JSON 引号
+            if sys.platform == "win32" and not self.use_exec:
+                json_argv_match = re.match(
+                    r'(python\d*)\s+(\S+)\s+[\'"](\{.*\})[\'"]\s*$',
+                    executed_command.strip(),
+                )
+                if json_argv_match:
+                    python_exe = json_argv_match.group(1)
+                    script_path = json_argv_match.group(2)
+                    json_arg = json_argv_match.group(3)
+                    self.use_exec = True
+                    self.command = script_path
+                    executed_command = json_arg
+                    logger.info("Windows: auto-switched to exec mode for JSON argument")
+
+            logger.info("Executing bash tool: %s", executed_command)
             proc = await asyncio.create_subprocess_shell(
                 formatted_command,
                 stdout=subprocess.PIPE,
