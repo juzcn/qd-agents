@@ -82,7 +82,8 @@ async def mcp_add_async(
                 config_server_name = server
             else:
                 # 如果没有匹配的 server，使用第一个服务器
-                extracted_config = servers[first_server_name]
+                if first_server_name:
+                    extracted_config = servers[first_server_name]
                 # 命令行提供的 server 不匹配，所以使用配置中的服务器名
                 # config_server_name 已经是 first_server_name
         else:

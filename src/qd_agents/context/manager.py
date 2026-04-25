@@ -121,8 +121,8 @@ class ContextManager:
         user_input: str,
         tools: list[Tool],
         search_web_available: bool = False,
-        history: list[dict[str, str]] | None = None,
-    ) -> list[dict[str, str]]:
+        history: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         构建工具调用消息（优化的单阶段提示词）
 
@@ -138,7 +138,7 @@ class ContextManager:
             完整的消息列表
         """
         # 为 SKILL 工具预加载 SKILL.md 正文（附加到 tool._skill_md）
-        tools_for_render = []
+        tools_for_render: list[Tool | _ToolWithSkillMd] = []
         for tool in tools:
             if tool.execution.type == ToolExecutionType.SKILL:
                 skill_dir_name = tool.dependencies.get("skill_dir_name", tool.name)

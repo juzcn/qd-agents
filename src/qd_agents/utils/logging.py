@@ -105,7 +105,7 @@ def setup_logging(
         log_immediate_flush: 是否立即刷新日志到磁盘，默认为True
     """
     # 配置标准库 logging
-    handlers = []
+    handlers: list[logging.Handler] = []
 
     # 定义日志格式
     formatter = logging.Formatter(

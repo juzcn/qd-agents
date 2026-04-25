@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from ..models.tool import Tool, ToolExecutionConfig, ToolExecutionType, ToolMetadata
 from ..registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -86,11 +87,21 @@ class MCPToolManager:
                         tools.append(tool_info)
 
                         # 注册到工具注册表
-                        self._tool_registry.register(
+                        mcp_tool = Tool(
+                            id=f"mcp.{server_name}.{tool.name}",
                             name=tool.name,
                             description=tool.description or "",
-                            input_schema=tool.inputSchema,
+                            parameters=tool.inputSchema if isinstance(tool.inputSchema, dict) else {},
+                            execution=ToolExecutionConfig(
+                                type=ToolExecutionType.MCP,
+                                server=server_name,
+                            ),
+                            metadata=ToolMetadata(
+                                category="mcp",
+                                tags=[tool.name, server_name],
+                            ),
                         )
+                        self._tool_registry.register(mcp_tool)
 
                     return tools
 

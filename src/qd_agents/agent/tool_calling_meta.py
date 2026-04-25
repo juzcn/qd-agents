@@ -133,7 +133,7 @@ class ToolCallingMetaAgent(MetaAgent):
             # 追加 assistant 消息
             messages.append({
                 "role": "assistant",
-                "content": assistant_message.content,
+                "content": assistant_message.content or "",
                 "tool_calls": assistant_message.tool_calls if hasattr(assistant_message, "tool_calls") else None,
             })
 

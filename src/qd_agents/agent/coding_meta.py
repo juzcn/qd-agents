@@ -14,6 +14,7 @@ from ..llm import LLMClient
 from ..context import ContextManager
 from ..tools import ToolExecutorRegistry
 from ..execution import ExecutionEngine
+from ..models import ExecutionStatus
 from .base import MetaAgent, MetaAgentInput, MetaAgentOutput
 
 logger = logging.getLogger(__name__)
@@ -92,8 +93,8 @@ class CodingMetaAgent(MetaAgent):
                 extra_globals=tool_functions,
             )
 
-            if exec_result.success:
-                output = exec_result.result or exec_result.output
+            if exec_result.status == ExecutionStatus.COMPLETED:
+                output = exec_result.final_output or ""
             else:
                 output = f"代码执行失败: {exec_result.error}"
 
