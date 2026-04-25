@@ -176,6 +176,17 @@ class QDAgent:
         self._agents[code_plan_agent.name] = code_plan_agent
         logger.info("Registered agent: %s", code_plan_agent.name)
 
+        # Evolve Agent
+        from .evolve import EvolveAgent
+        evolve_agent = EvolveAgent(
+            llm_client=self.llm,
+            tool_registry=self.registry,
+            context_manager=self.context,
+            expanded_tools_cache=self._expanded_tools_cache,
+        )
+        self._agents[evolve_agent.name] = evolve_agent
+        logger.info("Registered agent: %s", evolve_agent.name)
+
     @property
     def registered_agents(self) -> dict[str, Agent]:
         """获取所有已注册的 Agent"""

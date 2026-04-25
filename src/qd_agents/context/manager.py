@@ -57,6 +57,7 @@ class ContextManager:
         self._cached_tools: list[Any] | None = None
         self._tool_use_cache: dict[tuple, str] = {}    # 缓存工具调用提示词
         self._judge_cache: dict[tuple, str] = {}       # 缓存判断提示词
+        self._evolve_cache: dict[tuple, str] = {}     # 缓存进化判断提示词
         self._coding_cache: dict[tuple, str] = {}      # 缓存代码生成提示词
         self._skill_md_cache: dict[str, str] = {}      # 缓存 SKILL.md 正文
 
@@ -236,6 +237,64 @@ class ContextManager:
 
             self._judge_cache[cache_key] = system_prompt
             logger.debug(f"Cached system prompt for judge with {len(tools)} tools")
+
+        return self._build_messages(
+            system_prompt=system_prompt,
+            user_input=user_input,
+            history=history,
+        )
+
+    def build_evolve_messages(
+        self,
+        user_input: str,
+        tools: list[Tool],
+        history: list[dict[str, str]] | None = None,
+    ) -> list[dict[str, str]]:
+        """
+        构建进化路由判断消息
+
+        Args:
+            user_input: 当前用户输入
+            tools: 可用工具列表
+            history: 会话历史
+
+        Returns:
+            完整的消息列表
+        """
+        # 构建缓存键
+        tool_ids = tuple(sorted(tool.id for tool in tools))
+        cache_key = tool_ids
+
+        # 检查缓存
+        if cache_key in self._evolve_cache:
+            system_prompt = self._evolve_cache[cache_key]
+            logger.debug("Using cached system prompt for evolve")
+        else:
+            if self.prompts:
+                system_prompt = self.prompts.render(
+                    "evolve",
+                    tools=tools,
+                )
+            else:
+                # 回退到硬编码
+                tools_info = "\n".join(
+                    f"- {getattr(t, 'name', str(t))}: {getattr(t, 'description', '')[:100]}"
+                    for t in tools[:20]
+                )
+                system_prompt = f"""你是一个进化路由判断助手。分析用户的问题，决定应该由哪个路径处理。
+
+可用工具:
+{tools_info or '暂无'}
+
+路由选项:
+1. direct - 直接回答（基于知识，不需要工具）
+2. tool_use - 简单工具调用（1-3个工具）
+3. coding - 复杂工具编排（需要条件判断、循环等）
+
+返回JSON: {{"route": "direct|tool_use|coding", "reasoning": "...", "direct_answer": "..."}}"""
+
+            self._evolve_cache[cache_key] = system_prompt
+            logger.debug(f"Cached system prompt for evolve with {len(tools)} tools")
 
         return self._build_messages(
             system_prompt=system_prompt,

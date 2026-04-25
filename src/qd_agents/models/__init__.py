@@ -1,4 +1,5 @@
 from .execution import ExecutionResult, ExecutionStatus, ExecutionStep
+from .evolve import EvolveResult
 from .judge import JudgeResult
 from .tool import (
     Tool,
@@ -12,6 +13,7 @@ __all__ = [
     "ExecutionResult",
     "ExecutionStatus",
     "ExecutionStep",
+    "EvolveResult",
     "JudgeResult",
     "Tool",
     "ToolExecutionConfig",
