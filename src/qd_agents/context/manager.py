@@ -20,6 +20,17 @@ from ..registry import Tool, ToolExecutionType
 logger = logging.getLogger(__name__)
 
 
+class _ToolWithSkillMd:
+    """代理 Tool 对象，附加 _skill_md 属性供模板渲染。"""
+
+    def __init__(self, tool: Tool, skill_md: str):
+        self._tool = tool
+        self._skill_md = skill_md
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._tool, name)
+
+
 class ContextManager:
     """
     上下文管理器
@@ -105,39 +116,6 @@ class ContextManager:
         logger.debug("Loaded SKILL.md for %s (%d chars)", skill_dir_name, len(body))
         return body
 
-    def _build_skill_injection(self, tools: list[Tool]) -> str:
-        """
-        为 SKILL 类型的工具构建 SKILL.md 注入文本（按需注入）。
-
-        仅注入 judge 选中的 SKILL 工具对应的 SKILL.md，
-        统一通过 tools 列表过滤，不区分有脚本/无脚本。
-
-        Args:
-            tools: 当前请求选中的工具列表（由 judge 过滤后）
-
-        Returns:
-            注入到 system prompt 的文本，无 SKILL 工具时返回空字符串
-        """
-        skill_sections = []
-
-        for tool in tools:
-            if tool.execution.type != ToolExecutionType.SKILL:
-                continue
-
-            skill_dir_name = tool.dependencies.get("skill_dir_name", tool.name)
-            skill_body = self._load_skill_md(skill_dir_name)
-            if skill_body:
-                skill_sections.append(
-                    f"## 技能指南: {tool.name}\n\n{skill_body}"
-                )
-
-        if not skill_sections:
-            return ""
-
-        return "\n\n---\n\n" + "\n\n".join(skill_sections)
-
-
-
     def build_tool_use_messages(
         self,
         user_input: str,
@@ -148,7 +126,7 @@ class ContextManager:
         """
         构建工具调用消息（优化的单阶段提示词）
 
-        对于 SKILL 类型的工具，会自动注入对应的 SKILL.md 正文到系统提示词。
+        SKILL 类型工具在工具列表中直接注入 SKILL.md 正文，不输出参数。
 
         Args:
             user_input: 当前用户输入
@@ -159,6 +137,18 @@ class ContextManager:
         Returns:
             完整的消息列表
         """
+        # 为 SKILL 工具预加载 SKILL.md 正文（附加到 tool._skill_md）
+        tools_for_render = []
+        for tool in tools:
+            if tool.execution.type == ToolExecutionType.SKILL:
+                skill_dir_name = tool.dependencies.get("skill_dir_name", tool.name)
+                skill_body = self._load_skill_md(skill_dir_name) or ""
+                # 创建带 _skill_md 属性的代理对象
+                tool_copy = _ToolWithSkillMd(tool, skill_body)
+                tools_for_render.append(tool_copy)
+            else:
+                tools_for_render.append(tool)
+
         # 构建缓存键：使用工具ID列表和search_web_available
         tool_ids = tuple(sorted(tool.id for tool in tools))
         cache_key = (tool_ids, search_web_available)
@@ -171,7 +161,7 @@ class ContextManager:
             if self.prompts:
                 system_prompt = self.prompts.render(
                     "tool_use",
-                    tools=tools,
+                    tools=tools_for_render,
                     search_web_available=search_web_available,
                 )
             else:
@@ -188,11 +178,6 @@ class ContextManager:
             # 缓存结果
             self._tool_use_cache[cache_key] = system_prompt
             logger.debug(f"Cached system prompt for {len(tools)} tools, search_web_available={search_web_available}")
-
-        # 为 SKILL 类型工具注入 SKILL.md 正文
-        skill_injection = self._build_skill_injection(tools)
-        if skill_injection:
-            system_prompt = system_prompt + skill_injection
 
         return self._build_messages(
             system_prompt=system_prompt,
@@ -340,9 +325,9 @@ class ContextManager:
                 for t in tools[:30]
             )
             system_prompt = (
-                "你是一个技能分析助手。分析 SKILL.md 的内容，识别技能的参数定义和工具依赖。\n\n"
+                "你是一个技能分析助手。分析 SKILL.md 的内容，识别技能的工具依赖。\n\n"
                 f"## 已注册工具\n{tools_info}\n\n"
-                "请返回 JSON 格式的分析结果，包含 name, description, parameters, tool_deps, success, failure_reason 字段。"
+                "请返回 JSON 格式的分析结果，包含 name, description, tool_deps, success, failure_reason 字段。"
             )
 
         return self._build_messages(

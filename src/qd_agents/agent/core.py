@@ -340,8 +340,9 @@ class QDAgent:
             openai_tools.append(search_web.to_openai_function())
             expanded_tools = [t for t in expanded_tools if t.id != "search.web"]
 
-        # 所有 SKILL 工具加入 openai_tools（工具依赖通过 tool_deps 声明，由 _resolve_tool_deps 递归加载）
-        openai_tools.extend([t.to_openai_function() for t in expanded_tools])
+        # SKILL 工具不加入 openai_tools（通过依赖工具执行，不走 function calling）
+        non_skill_tools = [t for t in expanded_tools if t.execution.type != ToolExecutionType.SKILL]
+        openai_tools.extend([t.to_openai_function() for t in non_skill_tools])
 
         self._expanded_tools_cache = expanded_tools
         self._openai_tools_cache = openai_tools
