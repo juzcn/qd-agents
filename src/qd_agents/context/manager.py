@@ -31,7 +31,6 @@ class ContextManager:
         self,
         prompt_loader: PromptLoader | None = None,
         base_dir: Path | None = None,
-        scriptless_skills: list[dict] | None = None,
     ):
         """
         初始化上下文管理器
@@ -39,11 +38,9 @@ class ContextManager:
         Args:
             prompt_loader: 提示词加载器
             base_dir: 项目根目录，用于定位 tools/skills/ 目录
-            scriptless_skills: 无脚本的 SKILL 工具列表，始终注入其 SKILL.md
         """
         self.prompts = prompt_loader
         self.base_dir = base_dir
-        self._scriptless_skills = scriptless_skills or []
         self._session_history: list[dict[str, str]] = []
         self._cached_system_prompt: str | None = None
         self._cached_tools: list[Any] | None = None
@@ -110,21 +107,19 @@ class ContextManager:
 
     def _build_skill_injection(self, tools: list[Tool]) -> str:
         """
-        为 SKILL 类型的工具构建 SKILL.md 注入文本。
+        为 SKILL 类型的工具构建 SKILL.md 注入文本（按需注入）。
 
-        注入两部分：
-        1. tools 列表中有脚本的 SKILL 工具（judge 选中时注入）
-        2. 所有无脚本的 SKILL 工具（始终注入，因为 LLM 只能从 system prompt 获取指导）
+        仅注入 judge 选中的 SKILL 工具对应的 SKILL.md，
+        统一通过 tools 列表过滤，不区分有脚本/无脚本。
 
         Args:
-            tools: 当前可用的工具列表
+            tools: 当前请求选中的工具列表（由 judge 过滤后）
 
         Returns:
             注入到 system prompt 的文本，无 SKILL 工具时返回空字符串
         """
         skill_sections = []
 
-        # 1. tools 列表中的 SKILL 工具（有脚本，judge 选中）
         for tool in tools:
             if tool.execution.type != ToolExecutionType.SKILL:
                 continue
@@ -134,16 +129,6 @@ class ContextManager:
             if skill_body:
                 skill_sections.append(
                     f"## 技能指南: {tool.name}\n\n{skill_body}"
-                )
-
-        # 2. 无脚本的 SKILL 工具（始终注入）
-        for skill_info in self._scriptless_skills:
-            skill_dir_name = skill_info.get("skill_dir_name", skill_info.get("name", ""))
-            skill_name = skill_info.get("name", skill_dir_name)
-            skill_body = self._load_skill_md(skill_dir_name)
-            if skill_body:
-                skill_sections.append(
-                    f"## 技能指南: {skill_name}\n\n{skill_body}"
                 )
 
         if not skill_sections:
@@ -327,6 +312,42 @@ class ContextManager:
             system_prompt=system_prompt,
             user_input=user_input,
             history=history,
+        )
+
+    def build_add_skill_messages(
+        self,
+        skill_md: str,
+        tools: list[Tool],
+    ) -> list[dict[str, str]]:
+        """
+        构建 add-skill 分析消息
+
+        Args:
+            skill_md: SKILL.md 全文内容
+            tools: 已注册工具列表
+
+        Returns:
+            完整的消息列表
+        """
+        if self.prompts:
+            system_prompt = self.prompts.render(
+                "add_skill",
+                tools=tools,
+            )
+        else:
+            tools_info = "\n".join(
+                f"- **{t.name}**: {t.description[:120]}"
+                for t in tools[:30]
+            )
+            system_prompt = (
+                "你是一个技能分析助手。分析 SKILL.md 的内容，识别技能的参数定义和工具依赖。\n\n"
+                f"## 已注册工具\n{tools_info}\n\n"
+                "请返回 JSON 格式的分析结果，包含 name, description, parameters, tool_deps, success, failure_reason 字段。"
+            )
+
+        return self._build_messages(
+            system_prompt=system_prompt,
+            user_input=skill_md,
         )
 
     def _build_messages(

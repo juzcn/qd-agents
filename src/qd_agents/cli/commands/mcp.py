@@ -11,11 +11,9 @@ from typing import Optional, Dict, Any
 
 import typer
 from rich.console import Console
-from rich.table import Table
-from rich.syntax import Syntax
 
 from qd_agents.config import load_config
-from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
+from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata
 from qd_agents.tools.executors import create_mcp_tool, extract_mcp_servers_config
 
 
@@ -234,104 +232,3 @@ def mcp_add(
         base_dir=base_dir,
         json_file=json_file,
     ))
-
-
-async def mcp_list_async(
-    console: Console,
-    config_file: Optional[Path] = None,
-    base_dir: Optional[Path] = None,
-) -> None:
-    """
-    列出已注册的 MCP 服务器
-
-    Args:
-        console: Rich 控制台对象
-        config_file: 配置文件路径
-        base_dir: 基础目录
-    """
-    config = load_config(base_dir=base_dir, config_file=config_file)
-
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
-
-    # 获取所有工具并筛选 MCP 类型
-    all_tools = registry.list_all()
-    mcp_tools = [tool for tool in all_tools if tool.execution.type == ToolExecutionType.MCP]
-
-    if not mcp_tools:
-        console.print("[yellow][WARN][/] 未找到已注册的 MCP 服务器")
-        return
-
-    # 创建表格
-    table = Table(title=f"已注册 MCP 服务器 ({len(mcp_tools)} 个)")
-    table.add_column("名称", style="cyan")
-    table.add_column("服务器", style="green")
-    table.add_column("传输模式", style="magenta")
-    table.add_column("命令/URL", style="dim")
-    table.add_column("ID", style="dim")
-
-    for tool in mcp_tools:
-        exec_config = tool.execution
-        command_or_url = exec_config.command or exec_config.endpoint or "N/A"
-        table.add_row(
-            tool.name,
-            exec_config.server or "N/A",
-            exec_config.transport or "stdio",
-            command_or_url,
-            tool.id,
-        )
-
-    console.print(table)
-
-
-def mcp_list(
-    console: Console,
-    config_file: Optional[Path] = typer.Option(None, "--config", help="配置文件路径"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-) -> None:
-    """列出已注册的 MCP 服务器"""
-    asyncio.run(mcp_list_async(console, config_file, base_dir))
-
-
-async def mcp_remove_async(
-    console: Console,
-    name: str,
-    config_file: Optional[Path] = None,
-    base_dir: Optional[Path] = None,
-) -> None:
-    """
-    移除 MCP 服务器
-
-    Args:
-        console: Rich 控制台对象
-        name: 工具名称
-        config_file: 配置文件路径
-        base_dir: 基础目录
-    """
-    config = load_config(base_dir=base_dir, config_file=config_file)
-
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
-
-    # 查找工具
-    tool = registry.get_by_name(name)
-    if not tool or tool.execution.type != ToolExecutionType.MCP:
-        console.print(f"[red][ERROR][/] 未找到 MCP 服务器: {name}")
-        return
-
-    # 删除工具
-    success = registry.delete(tool.id)
-    if success:
-        console.print(f"[green][OK][/] 已移除 MCP 服务器: {name}")
-    else:
-        console.print(f"[red][ERROR][/] 移除 MCP 服务器失败: {name}")
-
-
-def mcp_remove(
-    console: Console,
-    name: str = typer.Argument(..., help="工具名称"),
-    config_file: Optional[Path] = typer.Option(None, "--config", help="配置文件路径"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-) -> None:
-    """移除 MCP 服务器"""
-    asyncio.run(mcp_remove_async(console, name, config_file, base_dir))

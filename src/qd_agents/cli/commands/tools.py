@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from rich.console import Console
+from rich.table import Table
 
 from qd_agents.config import load_config, load_runtime_config, save_runtime_config
 from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
@@ -19,6 +20,7 @@ def list_tools(
     console: Console,
     base_dir: Optional[Path] = None,
     config_file: Optional[Path] = None,
+    type_filter: Optional[List[str]] = None,
 ) -> None:
     """
     列出工具
@@ -27,23 +29,44 @@ def list_tools(
         console: Rich 控制台对象
         base_dir: 基础目录
         config_file: 配置文件路径
+        type_filter: 工具类型过滤列表（如 ["mcp", "skill", "function"]）
     """
     config = load_config(base_dir=base_dir, config_file=config_file)
 
     db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
     registry = ToolRegistry(db_path=db_path)
 
-
     tools = registry.list_all()
 
-    console.print(f"[bold]已注册工具 ({len(tools)} 个):[/]\n")
+    # 按类型过滤
+    if type_filter:
+        tools = [t for t in tools if t.execution.type.value.lower() in type_filter]
+
+    if not tools:
+        if type_filter:
+            console.print(f"[yellow]未找到类型为 {', '.join(type_filter)} 的工具[/]")
+        else:
+            console.print("[yellow]未找到已注册的工具[/]")
+        return
+
+    table = Table(title=f"已注册工具 ({len(tools)} 个)")
+    table.add_column("名称", style="cyan")
+    table.add_column("类型", style="green")
+    table.add_column("描述", style="dim", max_width=50)
+    table.add_column("分类", style="magenta")
+    table.add_column("ID", style="dim")
+
     for tool in tools:
-        # 获取工具类型
         tool_type = tool.execution.type.value.lower() if tool.execution.type else "unknown"
-        console.print(f"  - [cyan]{tool.name}[/]({tool_type}) ({tool.id})")
-        console.print(f"    描述: {tool.description}", style="dim")
-        console.print(f"    分类: {tool.metadata.category}", style="dim")
-        console.print()
+        table.add_row(
+            tool.name,
+            tool_type,
+            tool.description,
+            tool.metadata.category,
+            tool.id,
+        )
+
+    console.print(table)
 
 
 def init_tools(

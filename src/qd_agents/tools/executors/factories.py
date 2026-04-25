@@ -99,7 +99,18 @@ def create_executor(tool: Tool) -> ToolExecutor:
         )
 
     elif exec_config.type == ToolExecutionType.SKILL:
-        # SKILL 工具不通过执行器执行，LLM 按 SKILL.md 指南用 bash 工具操作
+        # 有脚本的 SKILL 工具：用 exec 模式直接构建 argv，不经过 shell 解析
+        if exec_config.command:
+            return BashToolExecutor(
+                shell_command=exec_config.shell_command or "",
+                shell=exec_config.shell or "bash",
+                timeout=exec_config.timeout,
+                env=exec_config.env,
+                use_exec=True,
+                command=exec_config.command,
+            )
+        # 无脚本的 SKILL 工具：依赖 tool_deps 中声明的工具（如 execute_bash）来执行
+        # LLM 通过 SKILL.md 指南 + 依赖工具完成操作，此工具本身不可直接执行
         return _ScriptlessSkillExecutor(tool_name=tool.name)
 
     else:
