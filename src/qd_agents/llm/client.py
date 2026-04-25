@@ -53,6 +53,7 @@ class LLMClient:
         self._base_url = base_url
         self._meta_agent_name: str = ""
         self._meta_agent_message_counts: dict[str, int] = {}
+        self._last_system_prompts: dict[str, str] = {}
 
     @property
     def meta_agent_name(self) -> str:
@@ -150,9 +151,27 @@ class LLMClient:
         return False
 
     def _log_prompt(self, messages: list[dict[str, Any]], is_stream: bool = False) -> None:
-        """记录 LLM 输入消息（增量日志）"""
+        """记录 LLM 输入消息（增量日志）
+
+        按 MetaAgent 分别跟踪系统提示词变化。当某个 MetaAgent 的系统提示词
+        发生变化时，重置该 MetaAgent 的增量计数并重新记录全部消息。
+        """
         meta_name = self._meta_agent_name or "unknown"
-        logged_count = self._get_logged_message_count()
+
+        # 检测系统提示词是否变化（按 MetaAgent 分别跟踪）
+        current_system = ""
+        if messages and messages[0].get("role") == "system":
+            current_system = messages[0].get("content", "")
+
+        last_system = self._last_system_prompts.get(meta_name, "")
+        if current_system != last_system:
+            # 系统提示词变化，重置增量计数，重新记录全部消息
+            self._last_system_prompts[meta_name] = current_system
+            self._update_logged_message_count(0)
+            logged_count = 0
+        else:
+            logged_count = self._get_logged_message_count()
+
         new_msg_count = len(messages) - logged_count
         prefix = "stream, " if is_stream else ""
 
