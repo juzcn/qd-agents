@@ -9,8 +9,6 @@ Skills 管理命令
 
 import json
 import logging
-import re
-import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -52,91 +50,6 @@ def _parse_skill_md(skill_dir: Path) -> dict | None:
     except yaml.YAMLError as e:
         logger.warning("Failed to parse SKILL.md frontmatter in %s: %s", skill_dir, e)
         return None
-
-
-def _has_python_scripts(skill_dir: Path) -> bool:
-    """检查 skill 目录是否有 Python 脚本。"""
-    scripts_dir = skill_dir / "scripts"
-    return scripts_dir.exists() and bool(list(scripts_dir.glob("*.py")))
-
-
-def _extract_parameters_from_md(skill_body: str) -> dict | None:
-    """从 SKILL.md 正文的 Request Parameters 表格提取 JSON Schema。
-
-    解析 markdown 表格中的参数定义，构建 OpenAI function calling 格式的 parameters schema。
-    """
-    if not skill_body:
-        return None
-
-    # 查找 "Request Parameters" 或 "## Request Parameters" 段落
-    param_section_match = re.search(
-        r'(?:##\s*)?Request\s+Parameters?\s*\n',
-        skill_body,
-        re.IGNORECASE,
-    )
-    if not param_section_match:
-        return None
-
-    # 从匹配位置开始，找到下一个 ## 标题或文档结束
-    start = param_section_match.end()
-    next_section = re.search(r'\n##\s', skill_body[start:])
-    end = start + next_section.start() if next_section else len(skill_body)
-    section_text = skill_body[start:end]
-
-    # 解析 markdown 表格行
-    # 格式: | Param | Type | Required | Default | Description |
-    properties = {}
-    required = []
-
-    for line in section_text.strip().split('\n'):
-        line = line.strip()
-        if not line.startswith('|'):
-            continue
-        # 跳过表头分隔行 |---|---|
-        if re.match(r'^\|[\s\-|]+\|$', line):
-            continue
-
-        cells = [c.strip() for c in line.split('|')[1:-1]]  # 去掉首尾空元素
-        if len(cells) < 4:
-            continue
-
-        param_name = cells[0]
-        param_type_raw = cells[1].lower()
-        is_required = cells[2].lower() in ('yes', 'true', 'required')
-        # default_val = cells[3] if len(cells) > 3 else None
-        description = cells[4] if len(cells) > 4 else (cells[3] if len(cells) > 3 else "")
-
-        # 跳过表头行
-        if param_name.lower() in ('param', 'parameter', 'name', '参数'):
-            continue
-
-        # 类型映射
-        prop = {"description": description}
-        if 'str' in param_type_raw or 'string' in param_type_raw:
-            prop["type"] = "string"
-        elif 'int' in param_type_raw or 'integer' in param_type_raw or 'number' in param_type_raw:
-            prop["type"] = "integer"
-        elif 'bool' in param_type_raw:
-            prop["type"] = "boolean"
-        elif 'list' in param_type_raw or 'array' in param_type_raw:
-            prop["type"] = "array"
-        elif 'obj' in param_type_raw or 'dict' in param_type_raw:
-            prop["type"] = "object"
-        else:
-            prop["type"] = "string"  # 默认 string
-
-        properties[param_name] = prop
-        if is_required:
-            required.append(param_name)
-
-    if not properties:
-        return None
-
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": required,
-    }
 
 
 def _get_skills_dir(base_dir: Optional[Path] = None) -> Path:
@@ -200,8 +113,6 @@ def skill_add(
 
     name = meta.get("name", skill_name)
     description = meta.get("description", f"Skill: {skill_name}")
-    skill_body = meta.pop("_skill_body", "")
-    has_scripts = _has_python_scripts(skill_dir)
 
     # 加载配置并设置会话日志
     config = setup_configuration(console, base_dir=base_dir, config_file=config_file)
@@ -211,29 +122,14 @@ def skill_add(
     add_skill_result = _run_add_skill_agent(skill_dir, config, base_dir, console)
 
     if add_skill_result is None:
-        console.print(f"  [yellow]AddSkillMetaAgent 不可用，使用默认参数和依赖[/]")
-        parameters = _extract_parameters_from_md(skill_body) or meta.get("parameters") or {
-            "type": "object",
-            "properties": {
-                "arguments": {"type": "string", "description": "JSON 格式的工具参数"},
-            },
-            "required": ["arguments"],
-        }
+        console.print(f"  [yellow]AddSkillMetaAgent 不可用，使用默认依赖[/]")
         tool_deps = []
     elif not add_skill_result.success:
         console.print(f"[red][ERROR][/] AddSkill 分析失败: {add_skill_result.failure_reason}[/]")
         return
     else:
-        parameters = add_skill_result.parameters or _extract_parameters_from_md(skill_body) or {
-            "type": "object",
-            "properties": {
-                "arguments": {"type": "string", "description": "JSON 格式的工具参数"},
-            },
-            "required": ["arguments"],
-        }
         tool_deps = add_skill_result.tool_deps
         console.print(f"  [green]AddSkill 分析完成[/]")
-        console.print(f"    参数: {', '.join(parameters.get('properties', {}).keys())}")
         console.print(f"    工具依赖: {', '.join(tool_deps) if tool_deps else '无'}")
 
     # 处理 API key（仅对有脚本的 skill）
@@ -243,9 +139,8 @@ def skill_add(
     openclaw = metadata_raw.get("openclaw", {}) if isinstance(metadata_raw, dict) else {}
     requires = openclaw.get("requires", {}) if isinstance(openclaw, dict) else {}
     env_vars = requires.get("env", []) if isinstance(requires, dict) else []
-    bins = requires.get("bins", []) if isinstance(requires, dict) else []
 
-    if has_scripts and env_vars:
+    if env_vars:
         runtime_config = load_runtime_config(base_dir=base_dir)
         for var in env_vars:
             tool_name = _env_var_to_tool_name(var)
@@ -269,18 +164,6 @@ def skill_add(
             save_runtime_config(runtime_config, base_dir=base_dir)
             console.print("  [dim]runtime.json 已更新[/]")
 
-    # 查找脚本
-    scripts_dir = skill_dir / "scripts"
-    script_files = list(scripts_dir.glob("*.py")) if scripts_dir.exists() else []
-    project_root = _get_skills_dir(base_dir).parent.parent
-    main_script = script_files[0].relative_to(project_root) if script_files else None
-
-    # 构建 shell_command（仅对有脚本的 skill）
-    shell_command = None
-    if main_script:
-        python_cmd = "python" if sys.platform == "win32" else "python3"
-        shell_command = f"{python_cmd} {main_script} '{{arguments}}'"
-
     # 注册工具到数据库
     db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
     registry = ToolRegistry(db_path=db_path)
@@ -289,16 +172,18 @@ def skill_add(
         id=f"skill.{name}",
         name=name,
         description=description,
-        parameters=parameters,
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
         execution=ToolExecutionConfig(
             type=ToolExecutionType.SKILL,
-            command=str(main_script) if main_script else None,
-            shell_command=shell_command,
             env=env,
         ),
         metadata=ToolMetadata(
             category="skills",
-            tags=["skill", name] + ([Path(main_script).stem] if main_script else []),
+            tags=["skill", name],
         ),
         dependencies={
             "skill_dir_name": skill_name,
@@ -309,21 +194,9 @@ def skill_add(
     tool_id = registry.register(tool)
 
     console.print(f"[green][OK][/] 已注册 Skill Tool: {name} ({tool_id})")
-    console.print(f"  类型: SKILL（ToolExecutionType.SKILL）")
-    console.print(f"  有执行脚本: {'是' if has_scripts else '否'}")
     console.print(f"  目录: {skill_dir}")
-    if main_script:
-        console.print(f"  脚本: {main_script}")
     if env_vars:
         console.print(f"  所需环境变量: {', '.join(env_vars)}")
-    if bins:
-        console.print(f"  所需命令: {', '.join(bins)}")
-
-    # 显示参数 schema 信息
-    param_names = list(parameters.get("properties", {}).keys())
-    required_params = parameters.get("required", [])
-    console.print(f"  参数: {', '.join(param_names)}")
-    console.print(f"  必填: {', '.join(required_params) if required_params else '无'}")
 
 
 def _run_add_skill_agent(

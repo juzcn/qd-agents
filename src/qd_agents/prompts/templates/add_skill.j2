@@ -1,4 +1,4 @@
-你是一个技能分析助手。分析 SKILL.md 的内容，识别技能的参数定义和工具依赖。
+你是一个技能分析助手。分析 SKILL.md 的内容，识别技能的工具依赖。
 
 ## 已注册工具
 
@@ -17,13 +17,12 @@
 
 请分析以下 SKILL.md 内容，完成以下任务：
 
-1. **提取参数**：从 SKILL.md 的参数表格中提取参数定义，构建 JSON Schema
-2. **识别工具依赖**：分析 SKILL.md 的完整内容，判断**要执行这个技能，需要依赖哪些已注册工具才能完成**
+1. **识别工具依赖**：分析 SKILL.md 的完整内容，判断**要执行这个技能，需要依赖哪些已注册工具才能完成**
    - 仔细阅读 SKILL.md 中的 Usage、Examples、Basic Usage 等章节
    - 如果执行该技能需要运行 shell 命令（如 `uvx`、`python`、`curl`、`cat` 等），则依赖 `execute_bash`
    - 如果 SKILL.md 中提到需要调用其他已注册工具的功能，则依赖对应工具
    - 不要根据是否有 Python 脚本来推断依赖，仅根据 SKILL.md 的内容判断
-3. **验证依赖**：检查识别出的工具依赖是否都在已注册工具列表中，如果不在则标记失败
+2. **验证依赖**：检查识别出的工具依赖是否都在已注册工具列表中，如果不在则标记失败
 
 ## 输出格式
 
@@ -32,11 +31,6 @@
 {
     "name": "技能名称",
     "description": "技能描述",
-    "parameters": {
-        "type": "object",
-        "properties": { ... },
-        "required": [...]
-    },
     "tool_deps": ["tool_name1", "tool_name2"],
     "success": true,
     "failure_reason": null
@@ -48,7 +42,6 @@
 {
     "name": "技能名称",
     "description": "技能描述",
-    "parameters": { ... },
     "tool_deps": ["不存在的工具名"],
     "success": false,
     "failure_reason": "依赖工具 xxx 不在已注册工具列表中"

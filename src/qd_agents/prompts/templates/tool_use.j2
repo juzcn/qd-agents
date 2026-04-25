@@ -7,9 +7,14 @@
 {% if tools %}
 你可以使用以下工具：
 {% for tool in tools %}
-### {{ tool.name }}
+### {{ tool.name }} [{{ tool.execution.type.value }}]
 - 描述: {{ tool.description }}
+{% if tool.execution.type.value == "skill" %}
+- 技能指南:
+{{ tool._skill_md }}
+{% else %}
 - 参数: {{ tool.parameters | tojson }}
+{% endif %}
 {% endfor %}
 {% endif %}
 
@@ -26,5 +31,7 @@
 - 如果工具调用失败，可以尝试其他工具或直接说明无法完成
 - 如果没有任何工具适合，直接回复用户说明情况
 - 不要编造工具名称或参数
+- Windows 环境：使用 `python` 而不是 `python3`
+- Skill 脚本路径：使用 `tools/skills/` 而不是 `skills/`
 
 现在，请根据用户请求处理问题。
