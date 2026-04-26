@@ -1,18 +1,21 @@
 """
-Evolve Agent — 包装 EvolveMetaAgent 的 Agent
+Evolve Agent — 自主进化智能体
 
-只包含一个 MetaAgent: EvolveMetaAgent，用于路由判断。
+EvolveMetaAgent 是一个真正的自主 agent，通过 function calling 直接调用工具。
+EvolveAgent 只做外层控制：构建初始上下文、处理 ask_user/delegate 等特殊输出。
 """
 from __future__ import annotations
 
 import logging
 import time
 import uuid
+from typing import Any
 
 from ..llm import LLMClient
 from ..registry import ToolRegistry
 from ..context import ContextManager
 from ..models import EvolveResult
+from ..tools import ToolExecutorRegistry
 from .base import Agent, AgentResult, MetaAgentInput
 from .evolve_meta import EvolveMetaAgent
 
@@ -20,33 +23,45 @@ logger = logging.getLogger(__name__)
 
 
 class EvolveAgent(Agent):
-    """Evolve Agent — 单阶段路由判断模式
+    """Evolve Agent — 自主进化智能体
 
-    只编排 EvolveMetaAgent，输出路由判断结果。
+    EvolveMetaAgent 自己持有完整上下文，通过 function calling 直接调用工具。
+    EvolveAgent 只做外层包装：处理 ask_user/delegate 等特殊输出格式。
     """
 
     name = "evolve"
-    description = "进化路由判断Agent，分析用户问题并决定处理路径"
+    description = "自主进化Agent，能自主思考、决策、行动，并在需要时向用户求助或请求协作"
 
     def __init__(
         self,
         llm_client: LLMClient,
         tool_registry: ToolRegistry,
         context_manager: ContextManager,
+        executor_registry: ToolExecutorRegistry | None = None,
         expanded_tools_cache: list | None = None,
+        openai_tools_cache: list[dict[str, Any]] | None = None,
+        tool_map_cache: dict[str, Any] | None = None,
     ):
         self.llm = llm_client
         self.registry = tool_registry
         self.context = context_manager
+        self.executor_registry = executor_registry
         self._expanded_tools = expanded_tools_cache or []
+        self._openai_tools = openai_tools_cache or []
+        self._tool_map = tool_map_cache or {}
 
         self._evolve = EvolveMetaAgent(
             llm_client=llm_client,
             context_manager=context_manager,
+            executor_registry=executor_registry,
+            tool_registry=tool_registry,
+            openai_tools=openai_tools_cache,
+            tool_map=tool_map_cache,
+            expanded_tools=expanded_tools_cache,
         )
 
     async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
-        """执行路由判断"""
+        """执行自主进化"""
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
 
@@ -59,27 +74,53 @@ class EvolveAgent(Agent):
         )
 
         evolve_output = await self._evolve.run(evolve_input)
-        evolve_result: EvolveResult = evolve_output.output
 
-        logger.info(
-            f"Evolve result: route={evolve_result.route}, "
-            f"reasoning={evolve_result.reasoning}, "
-            f"tools={evolve_result.tool_list}"
-        )
-
-        # 直接返回路由判断结果作为最终答案
-        final_answer = (
-            evolve_result.direct_answer
-            if evolve_result.route == "direct" and evolve_result.direct_answer
-            else f"路由: {evolve_result.route}\n理由: {evolve_result.reasoning}\n工具: {', '.join(evolve_result.tool_list) or '无'}"
-        )
+        # 处理特殊输出格式
+        if evolve_output.output_type == "evolve_result":
+            evolve_result: EvolveResult = evolve_output.output
+            if evolve_result.action == "ask_user":
+                final_answer = self._format_ask_user(evolve_result)
+            elif evolve_result.action == "delegate":
+                final_answer = self._format_delegate(evolve_result)
+            else:
+                final_answer = evolve_result.direct_answer or str(evolve_result)
+        else:
+            final_answer = str(evolve_output.output)
 
         total_duration_ms = int((time.perf_counter() - start_time) * 1000)
 
         return AgentResult(
             final_answer=final_answer,
-            success=True,
+            success=evolve_output.success,
             meta_traces=[evolve_output],
             trace_id=trace_id,
             total_duration_ms=total_duration_ms,
         )
+
+    @staticmethod
+    def _format_ask_user(result: EvolveResult) -> str:
+        """格式化向用户提问"""
+        parts = ["**需要你的输入**\n"]
+        if result.ask_user:
+            parts.append(result.ask_user.question)
+            if result.ask_user.options:
+                parts.append("\n选项：")
+                for i, opt in enumerate(result.ask_user.options, 1):
+                    parts.append(f"  {i}. {opt}")
+            if result.ask_user.reason:
+                parts.append(f"\n原因：{result.ask_user.reason}")
+        if result.reflection:
+            parts.append(f"\n\n*反思：{result.reflection}*")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _format_delegate(result: EvolveResult) -> str:
+        """格式化委托用户执行"""
+        parts = ["**需要你来执行**\n"]
+        if result.delegate:
+            parts.append(f"任务：{result.delegate.task}")
+            parts.append(f"\n操作指南：\n{result.delegate.guide}")
+            parts.append(f"\n原因：{result.delegate.reason}")
+        if result.reflection:
+            parts.append(f"\n\n*反思：{result.reflection}*")
+        return "\n".join(parts)

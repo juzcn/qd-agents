@@ -10,6 +10,10 @@
 from __future__ import annotations
 
 import logging
+import os
+import platform
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -249,19 +253,24 @@ class ContextManager:
         user_input: str,
         tools: list[Tool],
         history: list[dict[str, str]] | None = None,
+        observations: list[str] | None = None,
     ) -> list[dict[str, str]]:
         """
-        构建进化路由判断消息
+        构建自主进化决策消息
+
+        初始只列出所有工具的 name+description（渐进式披露）。
+        SKILL 工具的 SKILL.md 在 LLM 选择使用时由 evolve_meta 动态注入。
 
         Args:
             user_input: 当前用户输入
             tools: 可用工具列表
             history: 会话历史
+            observations: 前几轮观察结果
 
         Returns:
             完整的消息列表
         """
-        # 构建缓存键
+        # 构建缓存键（observations 不参与缓存，因为每轮不同）
         tool_ids = tuple(sorted(tool.id for tool in tools))
         cache_key = tool_ids
 
@@ -274,33 +283,64 @@ class ContextManager:
                 system_prompt = self.prompts.render(
                     "evolve",
                     tools=tools,
+                    observations=[],
+                    env_info=self._get_env_info(),
                 )
             else:
                 # 回退到硬编码
+                env_info = self._get_env_info()
                 tools_info = "\n".join(
-                    f"- {getattr(t, 'name', str(t))}: {getattr(t, 'description', '')[:100]}"
-                    for t in tools[:20]
+                    f"- {getattr(t, 'name', str(t))}: {getattr(t, 'description', '')[:150]}"
+                    for t in tools[:30]
                 )
-                system_prompt = f"""你是一个进化路由判断助手。分析用户的问题，决定应该由哪个路径处理。
+                system_prompt = f"""你是一个自主进化的智能体。你能够自主思考、自主决策、自主行动，并在需要时向用户求助或请求协作。
+
+你具备直接调用工具的能力——这是你的元工具，是你自身具备的能力。你可以自主决定调用哪些工具、观察结果、继续调用或给出最终答案。
+
+自我认知：
+- 系统提示词: src/qd_agents/prompts/templates/evolve.j2
+- 运行配置: config.json
+- 数据模型: src/qd_agents/models/evolve.py
+- 决策逻辑: src/qd_agents/agent/evolve_meta.py
+
+运行环境：
+- 操作系统: {env_info['os']}
+- Python 版本: {env_info['python_version']}
+- Python 路径: {env_info['python_path']}
+- 虚拟环境: {env_info['venv_path']}
+- 包管理器: uv {env_info['uv_version']}
+- 项目根目录: {env_info['project_dir']}
+
+自主循环：你可以多轮迭代：思考 → 调用工具 → 观察结果 → 继续或完成。不要猜测！不确定就先调工具获取信息。
 
 可用工具:
 {tools_info or '暂无'}
 
-路由选项:
-1. direct - 直接回答（基于知识，不需要工具）
-2. tool_use - 简单工具调用（1-3个工具）
-3. coding - 复杂工具编排（需要条件判断、循环等）
-
-返回JSON: {{"route": "direct|tool_use|coding", "reasoning": "...", "direct_answer": "..."}}"""
+需要请求用户输入时输出: {{"action": "ask_user", "ask_user": {{"question": "...", "options": [...], "reason": "..."}}}}
+需要委托用户执行时输出: {{"action": "delegate", "delegate": {{"task": "...", "guide": "...", "reason": "..."}}}}
+其他情况直接用自然语言回答。"""
 
             self._evolve_cache[cache_key] = system_prompt
             logger.debug(f"Cached system prompt for evolve with {len(tools)} tools")
 
-        return self._build_messages(
+        # 构建 base messages（system + history + user_input）
+        messages = self._build_messages(
             system_prompt=system_prompt,
             user_input=user_input,
             history=history,
         )
+
+        # 如果有 observations，作为独立消息注入到 user_input 之前
+        if observations:
+            obs_text = "\n".join(f"- {obs}" for obs in observations)
+            obs_message = {
+                "role": "user",
+                "content": f"## 前几轮观察结果\n\n{obs_text}\n\n请基于以上观察结果继续决策。如果信息已足够，给出最终答案；如果仍需更多信息，继续 observe。\n\n重要：你的回复必须是 JSON 格式，不要直接输出文本回答。",
+            }
+            # 插入到 user_input 之前（倒数第二个位置）
+            messages.insert(-1, obs_message)
+
+        return messages
 
     def build_coding_messages(
         self,
@@ -393,6 +433,30 @@ class ContextManager:
             system_prompt=system_prompt,
             user_input=skill_md,
         )
+
+    @staticmethod
+    def _get_env_info() -> dict[str, str]:
+        """收集当前运行环境信息"""
+        info = {
+            "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
+            "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "python_path": sys.executable,
+            "venv_path": sys.prefix,
+            "uv_version": "unknown",
+            "project_dir": str(Path.cwd()),
+            "work_dir": str(Path.cwd()),
+        }
+        try:
+            result = subprocess.run(
+                ["uv", "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                # uv 0.9.18 (xxx) → 0.9.18
+                info["uv_version"] = result.stdout.strip().split()[1] if len(result.stdout.strip().split()) > 1 else result.stdout.strip()
+        except Exception:
+            pass
+        return info
 
     def _build_messages(
         self,

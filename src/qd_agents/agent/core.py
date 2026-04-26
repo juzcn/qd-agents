@@ -182,7 +182,10 @@ class QDAgent:
             llm_client=self.llm,
             tool_registry=self.registry,
             context_manager=self.context,
+            executor_registry=self.executor_registry,
             expanded_tools_cache=self._expanded_tools_cache,
+            openai_tools_cache=self._openai_tools_cache,
+            tool_map_cache=self._tool_map_cache,
         )
         self._agents[evolve_agent.name] = evolve_agent
         logger.info("Registered agent: %s", evolve_agent.name)

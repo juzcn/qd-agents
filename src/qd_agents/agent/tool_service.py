@@ -59,9 +59,8 @@ class ToolService:
             openai_tools.append(search_web.to_openai_function())
             expanded_tools = [t for t in expanded_tools if t.id != "search.web"]
 
-        # SKILL 工具不加入 openai_tools
-        non_skill_tools = [t for t in expanded_tools if t.execution.type != ToolExecutionType.SKILL]
-        openai_tools.extend([t.to_openai_function() for t in non_skill_tools])
+        # SKILL 工具也加入 openai_tools（参数 schema 为空，触发渐进式披露）
+        openai_tools.extend([t.to_openai_function() for t in expanded_tools])
 
         tool_map = {t.name: t for t in expanded_tools}
 
