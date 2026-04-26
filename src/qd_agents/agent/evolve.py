@@ -16,7 +16,7 @@ from ..registry import ToolRegistry
 from ..context import ContextManager
 from ..models import EvolveResult
 from ..tools import ToolExecutorRegistry
-from .base import Agent, AgentResult, MetaAgentInput
+from .base import Agent, AgentResult, MetaAgentInput, StepCallback
 from .evolve_meta import EvolveMetaAgent
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,7 @@ class EvolveAgent(Agent):
         expanded_tools_cache: list | None = None,
         openai_tools_cache: list[dict[str, Any]] | None = None,
         tool_map_cache: dict[str, Any] | None = None,
+        on_step: StepCallback | None = None,
     ):
         self.llm = llm_client
         self.registry = tool_registry
@@ -49,6 +50,7 @@ class EvolveAgent(Agent):
         self._expanded_tools = expanded_tools_cache or []
         self._openai_tools = openai_tools_cache or []
         self._tool_map = tool_map_cache or {}
+        self._on_step = on_step
 
         self._evolve = EvolveMetaAgent(
             llm_client=llm_client,
@@ -58,10 +60,17 @@ class EvolveAgent(Agent):
             openai_tools=openai_tools_cache,
             tool_map=tool_map_cache,
             expanded_tools=expanded_tools_cache,
+            on_step=on_step,
         )
 
     async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
         """执行自主进化"""
+        # 动态注入 on_step 回调（构造时可能为 None，运行时从 kwargs 传入）
+        on_step = kwargs.get("on_step")
+        if on_step:
+            self._on_step = on_step
+            self._evolve._on_step = on_step
+
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
 

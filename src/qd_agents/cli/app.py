@@ -11,7 +11,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from .commands import chat_async, list_models_async, list_tools, init_tools, remove_tools, show_version, mcp_add, skill_add
+from .commands import chat_async, list_models_async, list_tools, init_tools, add_tool, remove_tools, show_version, mcp_add, skill_add
 
 
 # 创建 Typer 应用实例
@@ -95,6 +95,18 @@ def tools_init(
     init_tools(console, base_dir, config_file)
 
 
+# tools add 命令
+@tools_app.command("add", help="注册 CLI/Bash 工具到工具箱")
+def tools_add_command(
+    name: str = typer.Argument(..., help="工具名称"),
+    command: str = typer.Option(..., "--command", "-c", help="命令模板，可用 {args} 作为参数占位符"),
+    description: Optional[str] = typer.Option(None, "--description", "-d", help="工具描述"),
+    category: str = typer.Option("cli", "--category", "-t", help="工具分类"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", help="配置文件路径"),
+):
+    """注册 CLI/Bash 工具到工具箱"""
+    add_tool(console, name, command, description, category, base_dir, config_file)
 
 
 # mcp add 命令

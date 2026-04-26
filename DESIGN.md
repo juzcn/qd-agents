@@ -13,7 +13,8 @@
    ↓
 QDAgent（容器 + 资源管理）
    ├─ ToolUseAgent      → ToolCallingMetaAgent（多轮 Tool Calling 循环）
-   └─ CodePlanAgent     → JudgeMetaAgent → ToolCallingMetaAgent / CodingMetaAgent
+   ├─ CodePlanAgent     → JudgeMetaAgent → ToolCallingMetaAgent / CodingMetaAgent
+   └─ EvolveAgent       → EvolveMetaAgent（自主循环 + function calling + 工具进化）
 ```
 
 **双层抽象**：
@@ -35,6 +36,7 @@ QDAgent（容器 + 资源管理）
 | ToolCallingMetaAgent | 多轮 | 0.7 | LLM 不返回 tool_calls 或达到 max_iterations | OpenAI Tool Calling 循环 |
 | CodingMetaAgent | 单轮 | 0.3 | 首次 LLM 回复 | 生成 Python 代码 + 沙盒执行 |
 | AddSkillMetaAgent | 单轮 | 0.1 | 首次 LLM 回复 | 分析 SKILL.md，提取参数和工具依赖 |
+| EvolveMetaAgent | 多轮 | 0.3 | LLM 不返回 tool_calls 或达到 max_iterations | 自主进化：function calling + SKILL渐进式披露 + 工具进化 |
 
 ### 2.2 Agent
 
@@ -90,6 +92,30 @@ JudgeMetaAgent
 - 禁止：eval, exec, `__import__`, open, subprocess, os.system
 - 自动检测 `await`，包装为异步函数执行
 - 工具函数通过 `extra_globals` 注入执行环境
+
+### 3.4 Evolve 模式（自主进化）
+
+EvolveAgent 是一个真正的自主 agent，不依赖路由判断，直接持有完整对话上下文并通过 function calling 调用工具：
+
+```
+用户输入 → EvolveMetaAgent（自主循环）
+             ├─ LLM 返回 tool_calls → 执行工具 → 观察结果 → 继续循环
+             ├─ LLM 返回 SKILL 工具 → 渐进式披露：注入 SKILL.md → LLM 按 Usage 执行
+             ├─ LLM 不返回 tool_calls → 输出最终答案
+             └─ 达到 max_iterations → 终止
+```
+
+**核心能力**：
+
+1. **自主循环**：LLM 自己决定是否需要调用工具、调用哪些工具、何时停止
+2. **SKILL 渐进式披露**：初始只展示工具名+描述，LLM 调用 SKILL 工具名时才注入 SKILL.md 到系统提示词
+3. **工具进化**：发现缺失工具时自动安装使用（如 `uvx yt-dlp`），成功后通过 `qd-agents tools add` 注册到工具箱
+4. **步骤回调**：通过 `on_step` 回调实时输出中间过程到终端
+
+**SKILL 渐进式披露流程**：
+1. 系统提示词列出所有工具（含 SKILL），只有名称和描述
+2. LLM 调用 SKILL 工具名 → 检测到 SKILL 类型 → 加载 SKILL.md 注入系统提示词
+3. LLM 阅读 SKILL.md 的 Usage 部分 → 生成正确的 `execute_bash` 命令执行
 
 ---
 

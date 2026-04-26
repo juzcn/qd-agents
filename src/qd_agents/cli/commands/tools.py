@@ -231,6 +231,66 @@ def init_tools(
         console.print(f"  - {tool.name}({tool_type})")
 
 
+def add_tool(
+    console: Console,
+    name: str,
+    command: str,
+    description: Optional[str] = None,
+    category: str = "cli",
+    base_dir: Optional[Path] = None,
+    config_file: Optional[Path] = None,
+) -> None:
+    """注册 CLI/Bash 工具到工具箱
+
+    Args:
+        console: Rich 控制台对象
+        name: 工具名称
+        command: 命令模板（可用 {args} 作为参数占位符）
+        description: 工具描述
+        category: 工具分类
+        base_dir: 基础目录
+        config_file: 配置文件路径
+    """
+    config = load_config(base_dir=base_dir, config_file=config_file)
+    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
+    registry = ToolRegistry(db_path=db_path)
+
+    # 检查是否已存在
+    existing = registry.get_by_name(name)
+    if existing:
+        console.print(f"[yellow]工具 {name} 已存在 (ID: {existing.id})，将更新[/]")
+
+    tool_desc = description or f"CLI tool: {name}"
+    tool_id = f"cli.{name}"
+
+    tool = Tool(
+        id=tool_id,
+        name=name,
+        description=tool_desc,
+        parameters={
+            "type": "object",
+            "properties": {
+                "args": {"type": "string", "description": f"传递给 {name} 的参数"},
+            },
+            "required": [],
+        },
+        execution=ToolExecutionConfig(
+            type=ToolExecutionType.BASH,
+            shell_command=command,
+            shell="bash",
+        ),
+        metadata=ToolMetadata(
+            category=category,
+            tags=["cli", name, "learned"],
+        ),
+    )
+
+    registry.register(tool)
+    console.print(f"[green][OK][/] 已注册工具: {name} ({tool_id})")
+    console.print(f"  命令模板: {command}")
+    console.print(f"  分类: {category}")
+
+
 def remove_tools(
     console: Console,
     tool_identifier: str,

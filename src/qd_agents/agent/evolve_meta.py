@@ -22,7 +22,7 @@ from ..models import EvolveResult, AskUserInfo, DelegateInfo
 from ..registry import Tool, ToolExecutionType
 from ..tools import ToolExecutorRegistry
 from ..utils.parsing import extract_json_from_llm_output
-from .base import MetaAgent, MetaAgentInput, MetaAgentOutput
+from .base import MetaAgent, MetaAgentInput, MetaAgentOutput, StepCallback
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ class EvolveMetaAgent(MetaAgent):
         expanded_tools: list[Tool] | None = None,
         temperature: float = 0.3,
         max_iterations: int = 10,
+        on_step: StepCallback | None = None,
     ):
         self.llm = llm_client
         self.context = context_manager
@@ -56,6 +57,7 @@ class EvolveMetaAgent(MetaAgent):
         self._expanded_tools = expanded_tools or []
         self.temperature = temperature
         self.max_iterations = max_iterations
+        self._on_step = on_step
 
     async def run(self, input: MetaAgentInput) -> MetaAgentOutput:
         """
@@ -165,6 +167,7 @@ class EvolveMetaAgent(MetaAgent):
                     ) or ""
                     if skill_md:
                         logger.info("Injecting SKILL.md into system prompt: %s (progressive disclosure)", tool_name)
+                        self._emit_step(iteration, event="skill_load", tool_name=tool_name, detail=tool_name)
                         messages = self._inject_skill_into_system_prompt(messages, tool_name, skill_md)
                         # 同步增量日志缓存，避免重新输出全部系统提示词
                         self.llm._last_system_prompts[self.llm.meta_agent_name] = messages[0]["content"]
@@ -185,10 +188,16 @@ class EvolveMetaAgent(MetaAgent):
                 if tool_name == "execute_bash":
                     command = tool_input.get("command", tool_input.get("code", ""))
                     logger.info("LLM generated command [%s]: %s", tool_name, command)
+                    self._emit_step(iteration, event="tool_call", tool_name=tool_name, command=command)
                 else:
                     logger.info("LLM generated tool call [%s]: %s", tool_name, json.dumps(tool_input, ensure_ascii=False))
+                    self._emit_step(iteration, event="tool_call", tool_name=tool_name)
 
                 tool_result = await self._execute_tool(tool_name, tool_input, tool_map, expanded_tools)
+
+                # 回调：工具执行结果
+                result_summary = tool_result[:200] if len(tool_result) > 200 else tool_result
+                self._emit_step(iteration, event="tool_result", tool_name=tool_name, result_summary=result_summary)
 
                 messages.append({
                     "role": "tool",
@@ -223,6 +232,27 @@ class EvolveMetaAgent(MetaAgent):
             return None
         except (json.JSONDecodeError, ValueError):
             return None
+
+    def _emit_step(
+        self,
+        iteration: int,
+        event: str,
+        tool_name: str = "",
+        command: str = "",
+        result_summary: str = "",
+        detail: str = "",
+    ) -> None:
+        """触发步骤回调"""
+        if self._on_step:
+            self._on_step({
+                "iteration": iteration,
+                "max_iterations": self.max_iterations,
+                "event": event,
+                "tool_name": tool_name,
+                "command": command,
+                "result_summary": result_summary,
+                "detail": detail,
+            })
 
     async def _execute_tool(
         self,

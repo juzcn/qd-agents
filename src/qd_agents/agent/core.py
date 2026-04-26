@@ -23,7 +23,7 @@ from ..tools import ToolExecutorRegistry
 from ..tools.executors.mcp import MCPToolExecutor
 from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig, BackoffStrategy
 from ..context import ContextManager
-from .base import Agent, AgentResult
+from .base import Agent, AgentResult, StepCallback
 from .mcp_service import MCPService
 from .tool_service import ToolService
 from .tool_use import ToolUseAgent
@@ -219,6 +219,7 @@ class QDAgent:
         self,
         user_input: str,
         session_id: str | None = None,
+        on_step: StepCallback | None = None,
     ) -> AgentResult:
         """处理用户输入，委托给当前 Agent 执行。"""
         trace_id = str(uuid.uuid4())
@@ -246,6 +247,7 @@ class QDAgent:
                 user_input=user_input,
                 history=conversation_history,
                 trace_id=trace_id,
+                on_step=on_step,
             )
 
             # 添加到历史
