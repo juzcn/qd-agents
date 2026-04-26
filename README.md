@@ -23,7 +23,11 @@
 - **运行时配置分离** - 静态配置(config.json)与运行时配置(runtime.json)分离存储
 - **详细日志记录** - LLM 请求/响应完整日志，支持 DEBUG 级别
 - **实时日志刷新** - ImmediateFlushFileHandler 确保日志实时写入磁盘
-- **Agent 切换** - 支持 tool-use 和 code-plan 两种 Agent，可通过命令行或聊天命令切换
+- **Agent 切换** - 支持 tool-use、code-plan、evolve 三种 Agent，可通过命令行或聊天命令切换
+- **Evolve 自主进化 Agent** - 自主思考、决策、行动，发现缺失工具时自动安装使用，成功后注册到工具箱
+- **SKILL 渐进式披露** - Evolve Agent 按需加载 SKILL.md，不预加载全部技能指南
+- **步骤回调** - Evolve Agent 执行过程实时输出到终端，用户可观察中间步骤
+- **工具箱管理 CLI** - `tools add/skill add/mcp add/list/remove` 命令管理工具注册
 
 ## 安装
 
@@ -174,6 +178,11 @@ uv run qd-agents tools list
 
 # 初始化内置工具（清空数据库并重新注册）
 uv run qd-agents tools init
+
+# 注册 CLI/Bash 工具到工具箱
+uv run qd-agents tools add <name> --command "<命令模板>"
+# 例：注册 yt-dlp
+uv run qd-agents tools add yt-dlp --command "uvx yt-dlp {args}" --description "Download videos from YouTube and other sites"
 
 # 移除已注册工具
 uv run qd-agents tools remove <tool_name_or_id>

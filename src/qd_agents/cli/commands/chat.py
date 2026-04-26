@@ -246,8 +246,35 @@ class ChatCommandHandler:
         agent_name = self.llm_manager.agent.current_agent_name
         self.console.print(f"\n[green]使用 Agent: {agent_name}[/]")
 
-        with self.console.status("[bold]思考中...[/]"):
-            result = await self.llm_manager.agent.process(user_input=user_input)
+        # 构造步骤回调，实时输出中间过程
+        def on_step(step_info: dict) -> None:
+            iteration = step_info.get("iteration", "?")
+            max_iter = step_info.get("max_iterations", "?")
+            event = step_info.get("event", "")
+            tool_name = step_info.get("tool_name", "")
+            command = step_info.get("command", "")
+            result_summary = step_info.get("result_summary", "")
+            detail = step_info.get("detail", "")
+            prefix = f"[dim][{iteration}/{max_iter}][/]"
+
+            if event == "skill_load":
+                self.console.print(f"{prefix} [cyan]加载技能[/]: {tool_name}")
+            elif event == "tool_call":
+                if tool_name == "execute_bash" and command:
+                    # 截断长命令
+                    cmd_display = command if len(command) <= 80 else command[:77] + "..."
+                    self.console.print(f"{prefix} [yellow]执行[/]: {cmd_display}")
+                else:
+                    self.console.print(f"{prefix} [yellow]调用工具[/]: {tool_name}")
+            elif event == "tool_result":
+                # 截断结果摘要
+                summary = result_summary.replace("\n", " ").strip()
+                if len(summary) > 60:
+                    summary = summary[:57] + "..."
+                if summary:
+                    self.console.print(f"       [dim]→ {summary}[/]")
+
+        result = await self.llm_manager.agent.process(user_input=user_input, on_step=on_step)
 
         self.console.print(f"\n[bold green]助手[/]: {result.final_answer}\n")
         self.console.print(f"[dim]耗时: {result.total_duration_ms}ms[/]", style="dim")
