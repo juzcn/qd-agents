@@ -18,21 +18,10 @@ from pathlib import Path
 from typing import Any
 
 from ..prompts import PromptLoader
-from ..registry import Tool, ToolExecutionType
+from ..models.tool import Tool, ToolExecutionType
 
 
 logger = logging.getLogger(__name__)
-
-
-class _ToolWithSkillMd:
-    """代理 Tool 对象，附加 _skill_md 属性供模板渲染。"""
-
-    def __init__(self, tool: Tool, skill_md: str):
-        self._tool = tool
-        self._skill_md = skill_md
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._tool, name)
 
 
 class ContextManager:
@@ -59,10 +48,7 @@ class ContextManager:
         self._session_history: list[dict[str, str]] = []
         self._cached_system_prompt: str | None = None
         self._cached_tools: list[Any] | None = None
-        self._tool_use_cache: dict[tuple, str] = {}    # 缓存工具调用提示词
-        self._judge_cache: dict[tuple, str] = {}       # 缓存判断提示词
         self._evolve_cache: dict[tuple, str] = {}     # 缓存进化判断提示词
-        self._coding_cache: dict[tuple, str] = {}      # 缓存代码生成提示词
         self._skill_md_cache: dict[str, str] = {}      # 缓存 SKILL.md 正文
 
     def add_to_history(self, role: str, content: str) -> None:
@@ -121,133 +107,6 @@ class ContextManager:
         logger.debug("Loaded SKILL.md for %s (%d chars)", skill_dir_name, len(body))
         return body
 
-    def build_tool_use_messages(
-        self,
-        user_input: str,
-        tools: list[Tool],
-        search_web_available: bool = False,
-        history: list[dict[str, Any]] | None = None,
-    ) -> list[dict[str, Any]]:
-        """
-        构建工具调用消息（优化的单阶段提示词）
-
-        SKILL 类型工具在工具列表中直接注入 SKILL.md 正文，不输出参数。
-
-        Args:
-            user_input: 当前用户输入
-            tools: 可用工具列表
-            search_web_available: search.web 工具是否可用
-            history: 会话历史（如果不传则使用内部存储的历史）
-
-        Returns:
-            完整的消息列表
-        """
-        # 为 SKILL 工具预加载 SKILL.md 正文（附加到 tool._skill_md）
-        tools_for_render: list[Tool | _ToolWithSkillMd] = []
-        for tool in tools:
-            if tool.execution.type == ToolExecutionType.SKILL:
-                skill_dir_name = tool.dependencies.get("skill_dir_name", tool.name)
-                skill_body = self._load_skill_md(skill_dir_name) or ""
-                # 创建带 _skill_md 属性的代理对象
-                tool_copy = _ToolWithSkillMd(tool, skill_body)
-                tools_for_render.append(tool_copy)
-            else:
-                tools_for_render.append(tool)
-
-        # 构建缓存键：使用工具ID列表和search_web_available
-        tool_ids = tuple(sorted(tool.id for tool in tools))
-        cache_key = (tool_ids, search_web_available)
-
-        # 检查缓存
-        if cache_key in self._tool_use_cache:
-            system_prompt = self._tool_use_cache[cache_key]
-            logger.debug("Using cached system prompt for tool_use")
-        else:
-            if self.prompts:
-                system_prompt = self.prompts.render(
-                    "tool_use",
-                    tools=tools_for_render,
-                    search_web_available=search_web_available,
-                )
-            else:
-                # 回退到硬编码
-                if search_web_available:
-                    system_prompt = (
-                        "你是一个智能助手，可以调用工具帮助用户。\n"
-                        "如果用户的问题需要实时信息或外部知识，请优先使用 search.web 工具进行网络搜索。\n"
-                        "注意：我们是在Windows环境下工作。"
-                    )
-                else:
-                    system_prompt = "你是一个智能助手，可以调用工具帮助用户。\n注意：我们是在Windows环境下工作。"
-
-            # 缓存结果
-            self._tool_use_cache[cache_key] = system_prompt
-            logger.debug(f"Cached system prompt for {len(tools)} tools, search_web_available={search_web_available}")
-
-        return self._build_messages(
-            system_prompt=system_prompt,
-            user_input=user_input,
-            history=history,
-        )
-
-    def build_judge_messages(
-        self,
-        user_input: str,
-        tools: list[Tool],
-        history: list[dict[str, str]] | None = None,
-    ) -> list[dict[str, str]]:
-        """
-        构建路由判断消息
-
-        Args:
-            user_input: 当前用户输入
-            tools: 可用工具列表
-            history: 会话历史
-
-        Returns:
-            完整的消息列表
-        """
-        # 构建缓存键
-        tool_ids = tuple(sorted(tool.id for tool in tools))
-        cache_key = tool_ids
-
-        # 检查缓存
-        if cache_key in self._judge_cache:
-            system_prompt = self._judge_cache[cache_key]
-            logger.debug("Using cached system prompt for judge")
-        else:
-            if self.prompts:
-                system_prompt = self.prompts.render(
-                    "judge",
-                    tools=tools,
-                )
-            else:
-                # 回退到硬编码
-                tools_info = "\n".join(
-                    f"- {getattr(t, 'name', str(t))}: {getattr(t, 'description', '')[:100]}"
-                    for t in tools[:20]
-                )
-                system_prompt = f"""你是一个路由判断助手。分析用户的问题，决定应该由哪个路径处理。
-
-可用工具:
-{tools_info or '暂无'}
-
-路由选项:
-1. direct - 直接回答（基于知识，不需要工具）
-2. tool_use - 简单工具调用（1-3个工具）
-3. coding - 复杂工具编排（需要条件判断、循环等）
-
-返回JSON: {{"route": "direct|tool_use|coding", "reasoning": "...", "direct_answer": "..."}}"""
-
-            self._judge_cache[cache_key] = system_prompt
-            logger.debug(f"Cached system prompt for judge with {len(tools)} tools")
-
-        return self._build_messages(
-            system_prompt=system_prompt,
-            user_input=user_input,
-            history=history,
-        )
-
     def build_evolve_messages(
         self,
         user_input: str,
@@ -259,7 +118,7 @@ class ContextManager:
         构建自主进化决策消息
 
         初始只列出所有工具的 name+description（渐进式披露）。
-        SKILL 工具的 SKILL.md 在 LLM 选择使用时由 evolve_meta 动态注入。
+        SKILL 工具的 SKILL.md 在 LLM 选择使用时由 EvolveAgent 动态注入。
 
         Args:
             user_input: 当前用户输入
@@ -301,7 +160,7 @@ class ContextManager:
 - 系统提示词: src/qd_agents/prompts/templates/evolve.j2
 - 运行配置: config.json
 - 数据模型: src/qd_agents/models/evolve.py
-- 决策逻辑: src/qd_agents/agent/evolve_meta.py
+- 决策逻辑: src/qd_agents/agent/evolve.py
 
 运行环境：
 - 操作系统: {env_info['os']}
@@ -341,62 +200,6 @@ class ContextManager:
             messages.insert(-1, obs_message)
 
         return messages
-
-    def build_coding_messages(
-        self,
-        user_input: str,
-        tools: list[Tool],
-        history: list[dict[str, str]] | None = None,
-    ) -> list[dict[str, str]]:
-        """
-        构建代码生成消息
-
-        Args:
-            user_input: 当前用户输入
-            tools: 可用工具列表
-            history: 会话历史
-
-        Returns:
-            完整的消息列表
-        """
-        # 构建缓存键
-        tool_ids = tuple(sorted(tool.id for tool in tools))
-        cache_key = tool_ids
-
-        # 检查缓存
-        if cache_key in self._coding_cache:
-            system_prompt = self._coding_cache[cache_key]
-            logger.debug("Using cached system prompt for coding")
-        else:
-            if self.prompts:
-                system_prompt = self.prompts.render(
-                    "coding",
-                    tools=tools,
-                )
-            else:
-                # 回退到硬编码
-                tools_info = "\n".join(
-                    f"- {getattr(t, 'name', str(t))}: {getattr(t, 'description', '')}"
-                    for t in tools
-                )
-                system_prompt = f"""你是一个代码生成助手。根据用户的需求，生成Python代码来编排工具调用。
-
-可用工具函数:
-{tools_info or '暂无'}
-
-要求:
-1. 使用 await 调用异步工具
-2. 结果赋值给 result 变量
-3. 只使用列出的工具"""
-
-            self._coding_cache[cache_key] = system_prompt
-            logger.debug(f"Cached system prompt for coding with {len(tools)} tools")
-
-        return self._build_messages(
-            system_prompt=system_prompt,
-            user_input=user_input,
-            history=history,
-        )
 
     def build_add_skill_messages(
         self,

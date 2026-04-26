@@ -1,7 +1,7 @@
 """
 工具模块
 
-包含工具执行器、内置工具函数和工具注册表。
+包含工具执行器、内置工具函数。
 """
 from .executors import (
     ToolExecutor,
@@ -17,8 +17,7 @@ from .executors import (
     FunctionToolExecutor,
 )
 from .builtins import echo
-from .builtin_search import serper_search, tavily_search
-from .mcp_manager import MCPToolManager
+from .search import serper_search, tavily_search
 
 __all__ = [
     "ToolExecutor",
@@ -36,6 +35,4 @@ __all__ = [
     "echo",
     "serper_search",
     "tavily_search",
-    # MCP 管理
-    "MCPToolManager",
 ]

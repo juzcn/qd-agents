@@ -104,7 +104,7 @@ class LLMClientManager:
         with self.console.status("[dim]正在初始化 Agent...[/]"):
             await self.agent.initialize()
 
-        self.console.print(f"[green]当前模型:[/] {self.provider_name}/{self.llm_client.current_model}  [green]Agent:[/] {self.agent.current_agent_name}\n")
+        self.console.print(f"[green]当前模型:[/] {self.provider_name}/{self.llm_client.current_model}\n")
         return True
 
     def switch_model(self, model_name: str) -> bool:

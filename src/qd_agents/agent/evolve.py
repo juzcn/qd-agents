@@ -1,23 +1,33 @@
 """
 Evolve Agent — 自主进化智能体
 
-EvolveMetaAgent 是一个真正的自主 agent，通过 function calling 直接调用工具。
-EvolveAgent 只做外层控制：构建初始上下文、处理 ask_user/delegate 等特殊输出。
+核心循环：思考 → 调用工具 → 观察结果 → 继续或完成。
+工具执行逻辑在 tool_execution.py 中。
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import time
 import uuid
 from typing import Any
 
 from ..llm import LLMClient
-from ..registry import ToolRegistry
 from ..context import ContextManager, ContextCompressor
 from ..models import EvolveResult
+from ..models.tool import Tool, ToolExecutionType
+from ..registry import ToolRegistry
 from ..tools import ToolExecutorRegistry
-from .base import Agent, AgentResult, MetaAgentInput, StepCallback
-from .evolve_meta import EvolveMetaAgent
+from ..utils.parsing import extract_json_from_llm_output
+from .base import Agent, AgentResult, StepCallback
+from .tool_execution import (
+    execute_tool,
+    find_skill_tool,
+    ensure_bash_available,
+    inject_skill_into_system_prompt,
+    format_tool_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +35,8 @@ logger = logging.getLogger(__name__)
 class EvolveAgent(Agent):
     """Evolve Agent — 自主进化智能体
 
-    EvolveMetaAgent 自己持有完整上下文，通过 function calling 直接调用工具。
-    EvolveAgent 只做外层包装：处理 ask_user/delegate 等特殊输出格式。
+    通过 function calling 直接调用工具，持有完整对话上下文。
+    自主循环：思考 → 调用工具 → 观察结果 → 继续或完成。
     """
 
     name = "evolve"
@@ -53,70 +63,222 @@ class EvolveAgent(Agent):
         self._tool_map = tool_map_cache or {}
         self._on_step = on_step
         self._compressor = compressor
-
-        self._evolve = EvolveMetaAgent(
-            llm_client=llm_client,
-            context_manager=context_manager,
-            executor_registry=executor_registry,
-            tool_registry=tool_registry,
-            openai_tools=openai_tools_cache,
-            tool_map=tool_map_cache,
-            expanded_tools=expanded_tools_cache,
-            on_step=on_step,
-            compressor=compressor,
-        )
+        self._cancel_event: asyncio.Event | None = None
 
     async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
         """执行自主进化"""
-        # 动态注入 on_step 回调和 cancel_event（构造时可能为 None，运行时从 kwargs 传入）
         on_step = kwargs.get("on_step")
         cancel_event = kwargs.get("cancel_event")
         compressor = kwargs.get("compressor")
         if on_step:
             self._on_step = on_step
-            self._evolve._on_step = on_step
         if cancel_event:
-            self._evolve._cancel_event = cancel_event
+            self._cancel_event = cancel_event
         if compressor:
             self._compressor = compressor
-            self._evolve._compressor = compressor
 
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
 
-        evolve_input = MetaAgentInput(
-            user_message=user_input,
-            history=history,
-            context={
-                "tools": self._expanded_tools,
-            },
+        # 确保 bash 工具可用（SKILL 工具需要）
+        openai_tools, tool_map = ensure_bash_available(
+            self._openai_tools, self._tool_map, self.registry
         )
 
-        evolve_output = await self._evolve.run(evolve_input)
+        # 构建初始消息
+        messages = self.context.build_evolve_messages(
+            user_input=user_input,
+            tools=self._expanded_tools,
+            history=history,
+        )
 
-        # 处理特殊输出格式
-        if evolve_output.output_type == "evolve_result":
-            evolve_result: EvolveResult = evolve_output.output
-            if evolve_result.action == "ask_user":
-                final_answer = self._format_ask_user(evolve_result)
-            elif evolve_result.action == "delegate":
-                final_answer = self._format_delegate(evolve_result)
-            else:
-                final_answer = evolve_result.direct_answer or str(evolve_result)
-        else:
-            final_answer = str(evolve_output.output)
+        self.llm.meta_agent_name = self.name
 
+        iteration = 0
+        total_tokens = 0
+        last_prompt_tokens = 0
+
+        while iteration < 10:
+            # 检查取消信号
+            if self._cancel_event and self._cancel_event.is_set():
+                logger.info("Evolve loop cancelled by user")
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                final_answer = "已取消"
+                return AgentResult(
+                    final_answer=final_answer,
+                    success=False,
+                    total_tokens=total_tokens,
+                    last_prompt_tokens=last_prompt_tokens,
+                    trace_id=trace_id,
+                    total_duration_ms=latency_ms,
+                )
+
+            iteration += 1
+
+            # 压缩历史中的旧 tool_result（保留最近 keep_recent_results 轮完整）
+            if self._compressor:
+                messages = self._compressor.compress_old_results(messages, iteration)
+
+            response = await self.llm.chat(
+                messages=messages,
+                tools=openai_tools,
+                tool_choice="auto",
+                temperature=0.3,
+            )
+
+            choice = response.choices[0]
+            assistant_message = choice.message
+
+            if hasattr(response, "usage") and response.usage:
+                total_tokens += response.usage.total_tokens
+                last_prompt_tokens = response.usage.prompt_tokens
+
+            # 追加 assistant 消息
+            assistant_dict: dict[str, Any] = {
+                "role": "assistant",
+                "content": assistant_message.content or "",
+            }
+            if hasattr(assistant_message, "tool_calls") and assistant_message.tool_calls:
+                assistant_dict["tool_calls"] = assistant_message.tool_calls
+            messages.append(assistant_dict)
+
+            # 终止条件：LLM 不返回 tool_calls
+            if not assistant_message.tool_calls:
+                content = assistant_message.content or ""
+
+                # 尝试解析为 EvolveResult（ask_user/delegate 等特殊输出）
+                evolve_result = self._try_parse_evolve_result(content)
+
+                if evolve_result and evolve_result.action in ("ask_user", "delegate"):
+                    if evolve_result.action == "ask_user":
+                        final_answer = self._format_ask_user(evolve_result)
+                    elif evolve_result.action == "delegate":
+                        final_answer = self._format_delegate(evolve_result)
+                    else:
+                        final_answer = evolve_result.direct_answer or str(evolve_result)
+                else:
+                    final_answer = content.strip() if content.strip() else "抱歉，无法生成回答"
+
+                total_duration_ms = int((time.perf_counter() - start_time) * 1000)
+                return AgentResult(
+                    final_answer=final_answer,
+                    success=True,
+                    total_tokens=total_tokens,
+                    last_prompt_tokens=last_prompt_tokens,
+                    trace_id=trace_id,
+                    total_duration_ms=total_duration_ms,
+                )
+
+            # 执行工具调用
+            for tool_call in assistant_message.tool_calls:
+                tool_name = tool_call.function.name
+                try:
+                    tool_input = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    tool_input = {"raw": tool_call.function.arguments}
+
+                # SKILL 工具渐进式披露：将 SKILL.md 注入系统提示词
+                skill_tool = find_skill_tool(tool_name, tool_map, self.registry)
+                if skill_tool:
+                    skill_md = self.context._load_skill_md(
+                        skill_tool.dependencies.get("skill_dir_name", skill_tool.name)
+                    ) or ""
+                    if skill_md:
+                        logger.info("Injecting SKILL.md into system prompt: %s (progressive disclosure)", tool_name)
+                        self._emit_step(iteration, event="skill_load", tool_name=tool_name, detail=tool_name)
+                        messages = inject_skill_into_system_prompt(messages, tool_name, skill_md)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": f"已加载技能 {tool_name} 的用法指南到系统提示词。请仔细阅读系统提示词中「技能指南: {tool_name}」的 Usage 部分，严格按照 Usage 给出的命令格式，使用 execute_bash 执行。",
+                        })
+                    else:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": f"技能 {tool_name} 的 SKILL.md 未找到。",
+                        })
+                    continue
+
+                # 记录 LLM 生成的工具调用命令
+                if tool_name == "execute_bash":
+                    command = tool_input.get("command", tool_input.get("code", ""))
+                    logger.info("LLM generated command [%s]: %s", tool_name, command)
+                    self._emit_step(iteration, event="tool_call", tool_name=tool_name, command=command)
+                else:
+                    logger.info("LLM generated tool call [%s]: %s", tool_name, json.dumps(tool_input, ensure_ascii=False))
+                    self._emit_step(iteration, event="tool_call", tool_name=tool_name)
+
+                tool_result = await execute_tool(
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    tool_map=tool_map,
+                    registry=self.registry,
+                    executor_registry=self.executor_registry,
+                    expanded_tools=self._expanded_tools,
+                )
+
+                # 回调：工具执行结果
+                result_summary = tool_result[:200] if len(tool_result) > 200 else tool_result
+                self._emit_step(iteration, event="tool_result", tool_name=tool_name, result_summary=result_summary)
+
+                # 上下文压缩：大结果预写临时文件 + 预生成摘要
+                if self._compressor and len(tool_result) > self._compressor.config.result_threshold:
+                    await self._compressor.compress_result(tool_name, tool_call.id, tool_result)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": tool_result,
+                })
+
+        # 达到最大迭代次数
         total_duration_ms = int((time.perf_counter() - start_time) * 1000)
-
         return AgentResult(
-            final_answer=final_answer,
-            success=evolve_output.success,
-            meta_traces=[evolve_output],
-            total_tokens=evolve_output.total_tokens,
-            last_prompt_tokens=evolve_output.last_prompt_tokens,
+            final_answer="达到最大工具调用迭代次数，请简化您的问题。",
+            success=False,
+            total_tokens=total_tokens,
+            last_prompt_tokens=last_prompt_tokens,
             trace_id=trace_id,
             total_duration_ms=total_duration_ms,
         )
+
+    # --- 内部方法 ---
+
+    def _try_parse_evolve_result(self, content: str) -> EvolveResult | None:
+        """尝试解析为 EvolveResult，用于识别 ask_user/delegate 等特殊输出"""
+        try:
+            json_str = extract_json_from_llm_output(content)
+            result_dict = json.loads(json_str)
+            if "route" in result_dict and "action" not in result_dict:
+                result_dict["action"] = result_dict.pop("route")
+            result = EvolveResult(**result_dict)
+            if result.action in ("ask_user", "delegate"):
+                return result
+            return None
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+    def _emit_step(
+        self,
+        iteration: int,
+        event: str,
+        tool_name: str = "",
+        command: str = "",
+        result_summary: str = "",
+        detail: str = "",
+    ) -> None:
+        """触发步骤回调"""
+        if self._on_step:
+            self._on_step({
+                "iteration": iteration,
+                "max_iterations": 10,
+                "event": event,
+                "tool_name": tool_name,
+                "command": command,
+                "result_summary": result_summary,
+                "detail": detail,
+            })
 
     @staticmethod
     def _format_ask_user(result: EvolveResult) -> str:

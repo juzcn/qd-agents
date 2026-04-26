@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ..config.loader import ContextCompressionConfig
+from ..config.models import ContextCompressionConfig
 from ..llm import LLMClient
 
 logger = logging.getLogger(__name__)

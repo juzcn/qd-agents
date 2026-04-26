@@ -13,7 +13,7 @@ from .http import HTTPToolExecutor, create_http_tool
 from .cli import CLIToolExecutor, BashToolExecutor, create_cli_tool, create_bash_tool
 from .function import FunctionToolExecutor, create_function_tool
 from .mcp import MCPToolExecutor, create_mcp_tool
-from qd_agents.registry import Tool, ToolExecutionType
+from qd_agents.models.tool import Tool, ToolExecutionType
 
 
 logger = logging.getLogger(__name__)

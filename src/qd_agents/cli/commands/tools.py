@@ -12,8 +12,10 @@ from rich.console import Console
 from rich.table import Table
 
 from qd_agents.config import load_config, load_runtime_config, save_runtime_config
-from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
+from qd_agents.registry import ToolRegistry
+from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 from qd_agents.tools.builtins import echo
+from qd_agents.cli.utils.credentials import env_var_to_tool_name
 
 
 def list_tools(
@@ -118,7 +120,7 @@ def init_tools(
         },
         execution=ToolExecutionConfig(
             type=ToolExecutionType.FUNCTION,
-            module="qd_agents.tools.builtin_search",
+            module="qd_agents.tools.search",
             function="serper_search",
         ),
         metadata=ToolMetadata(
@@ -159,7 +161,7 @@ def init_tools(
         },
         execution=ToolExecutionConfig(
             type=ToolExecutionType.FUNCTION,
-            module="qd_agents.tools.builtin_search",
+            module="qd_agents.tools.search",
             function="tavily_search",
         ),
         metadata=ToolMetadata(
@@ -339,12 +341,10 @@ def _cleanup_credentials(
     base_dir: Optional[Path],
 ) -> None:
     """清理工具对应的 credentials 配置（runtime.json）"""
-    from qd_agents.cli.commands.skills import _env_var_to_tool_name
-
     runtime_config = load_runtime_config(base_dir=base_dir)
     removed = []
     for env_var in tool.execution.env:
-        tool_name = _env_var_to_tool_name(env_var)
+        tool_name = env_var_to_tool_name(env_var)
         if runtime_config.tools_credentials.tools and tool_name in runtime_config.tools_credentials.tools:
             del runtime_config.tools_credentials.tools[tool_name]
             removed.append(f"{env_var} (tools_credentials.{tool_name})")

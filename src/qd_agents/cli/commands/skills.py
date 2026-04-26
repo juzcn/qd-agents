@@ -17,7 +17,9 @@ from rich.console import Console
 
 from qd_agents.config import load_config, load_runtime_config, save_runtime_config
 from qd_agents.cli.managers import setup_configuration
-from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
+from qd_agents.registry import ToolRegistry
+from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
+from qd_agents.cli.utils.credentials import env_var_to_tool_name
 
 
 logger = logging.getLogger(__name__)
@@ -59,25 +61,6 @@ def _get_skills_dir(base_dir: Optional[Path] = None) -> Path:
     return Path("tools") / SKILLS_DIR_NAME
 
 
-# 环境变量名到 tools_credentials 中工具名的映射
-_ENV_TO_TOOL_NAME_MAP: dict[str, str] = {
-    "BAIDU_API_KEY": "baidu_search",
-    "SERPER_API_KEY": "serper_search",
-    "TAVILY_API_KEY": "tavily_search",
-}
-
-
-def _env_var_to_tool_name(env_var: str) -> str:
-    """将环境变量名转换为 tools_credentials 中的工具名。"""
-    if env_var in _ENV_TO_TOOL_NAME_MAP:
-        return _ENV_TO_TOOL_NAME_MAP[env_var]
-
-    if env_var.endswith("_API_KEY"):
-        return env_var[:-len("_API_KEY")].lower()
-
-    return env_var.lower()
-
-
 def skill_add(
     console: Console,
     skill_name: str,
@@ -87,7 +70,7 @@ def skill_add(
     """
     添加 skill 工具
 
-    使用 AddSkillMetaAgent（LLM）分析 SKILL.md，识别参数定义和工具依赖。
+    使用 AddSkillAnalyzer（LLM）分析 SKILL.md，识别参数定义和工具依赖。
     所有 skill 统一注册为 ToolExecutionType.SKILL 类型。
     """
     skills_dir = _get_skills_dir(base_dir)
@@ -117,12 +100,12 @@ def skill_add(
     # 加载配置并设置会话日志
     config = setup_configuration(console, base_dir=base_dir, config_file=config_file)
 
-    # --- 使用 AddSkillMetaAgent 分析 SKILL.md ---
+    # --- 使用 AddSkillAnalyzer 分析 SKILL.md ---
     console.print(f"  [dim]正在分析 SKILL.md（识别参数和工具依赖）...[/]")
-    add_skill_result = _run_add_skill_agent(skill_dir, config, base_dir, console)
+    add_skill_result = _run_add_skill_analyzer(skill_dir, config, base_dir, console)
 
     if add_skill_result is None:
-        console.print(f"  [yellow]AddSkillMetaAgent 不可用，使用默认依赖[/]")
+        console.print(f"  [yellow]AddSkillAnalyzer 不可用，使用默认依赖[/]")
         tool_deps = []
     elif not add_skill_result.success:
         console.print(f"[red][ERROR][/] AddSkill 分析失败: {add_skill_result.failure_reason}[/]")
@@ -143,7 +126,7 @@ def skill_add(
     if env_vars:
         runtime_config = load_runtime_config(base_dir=base_dir)
         for var in env_vars:
-            tool_name = _env_var_to_tool_name(var)
+            tool_name = env_var_to_tool_name(var)
             api_key_value = runtime_config.tools_credentials.get_api_key(tool_name)
             if api_key_value:
                 env[var] = api_key_value
@@ -199,26 +182,25 @@ def skill_add(
         console.print(f"  所需环境变量: {', '.join(env_vars)}")
 
 
-def _run_add_skill_agent(
+def _run_add_skill_analyzer(
     skill_dir: Path,
     config: Any,
     base_dir: Optional[Path] = None,
     console: Console | None = None,
 ) -> Any:
-    """运行 AddSkillMetaAgent 分析 SKILL.md，返回 AddSkillResult 或 None
+    """运行 AddSkillAnalyzer 分析 SKILL.md，返回 AddSkillResult 或 None
 
-    像 chat 一样完整初始化：启动 MCP server、创建 LLMClient、运行元Agent、输出日志、关闭资源。
+    像 chat 一样完整初始化：启动 MCP server、创建 LLMClient、运行分析器、输出日志、关闭资源。
     """
     import asyncio
 
     try:
-        from qd_agents.agent.add_skill_meta import AddSkillMetaAgent
-        from qd_agents.agent.base import MetaAgentInput
+        from qd_agents.agent.add_skill import AddSkillAnalyzer
         from qd_agents.cli.managers import LLMClientManager
         from qd_agents.context import ContextManager
         from qd_agents.prompts import PromptLoader
     except ImportError as e:
-        logger.warning("AddSkillMetaAgent 依赖不可用: %s", e)
+        logger.warning("AddSkillAnalyzer 依赖不可用: %s", e)
         return None
 
     async def _run():
@@ -248,23 +230,14 @@ def _run_add_skill_agent(
             # 4. 收集所有已注册工具（含 MCP subtools）
             all_tools = tool_registry.list_all()
 
-            # 5. 创建并运行 AddSkillMetaAgent
-            agent = AddSkillMetaAgent(
+            # 5. 创建并运行 AddSkillAnalyzer
+            analyzer = AddSkillAnalyzer(
                 llm_client=llm_manager.llm_client,
                 context_manager=context_manager,
             )
 
-            meta_input = MetaAgentInput(
-                user_message="分析 SKILL.md",
-                history=[],
-                context={
-                    "skill_md": skill_md_content,
-                    "tools": all_tools,
-                },
-            )
-
-            output = await agent.run(meta_input)
-            return output.output
+            result = await analyzer.analyze(skill_md=skill_md_content, tools=all_tools)
+            return result
 
         finally:
             # 6. 关闭资源（MCP server 等）
@@ -273,5 +246,5 @@ def _run_add_skill_agent(
     try:
         return asyncio.run(_run())
     except Exception as e:
-        logger.warning("AddSkillMetaAgent 执行失败: %s", e)
+        logger.warning("AddSkillAnalyzer 执行失败: %s", e)
         return None
