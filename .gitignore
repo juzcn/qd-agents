@@ -42,6 +42,13 @@ test_*.py
 *.tmp
 *.log
 
+# SQLite WAL files
+*.db-shm
+*.db-wal
+
+# Context compression temp files
+data/tmp/
+
 # Data directory (runtime generated) - now tracked by git
 # data/
 
