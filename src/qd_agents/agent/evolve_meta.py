@@ -11,6 +11,7 @@ EvolveMetaAgent 是一个真正的自主 agent：
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -47,6 +48,7 @@ class EvolveMetaAgent(MetaAgent):
         temperature: float = 0.3,
         max_iterations: int = 10,
         on_step: StepCallback | None = None,
+        cancel_event: asyncio.Event | None = None,
     ):
         self.llm = llm_client
         self.context = context_manager
@@ -58,6 +60,7 @@ class EvolveMetaAgent(MetaAgent):
         self.temperature = temperature
         self.max_iterations = max_iterations
         self._on_step = on_step
+        self._cancel_event = cancel_event
 
     async def run(self, input: MetaAgentInput) -> MetaAgentOutput:
         """
@@ -94,6 +97,21 @@ class EvolveMetaAgent(MetaAgent):
         total_tokens = 0
 
         while iteration < self.max_iterations:
+            # 检查取消信号
+            if self._cancel_event and self._cancel_event.is_set():
+                logger.info("Evolve loop cancelled by user")
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                return MetaAgentOutput(
+                    output="已取消",
+                    output_type="text",
+                    success=False,
+                    messages=messages,
+                    model=self.llm.current_model,
+                    total_tokens=total_tokens,
+                    latency_ms=latency_ms,
+                    iterations=iteration,
+                )
+
             iteration += 1
 
             response = await self.llm.chat(

@@ -6,6 +6,8 @@
 
 import asyncio
 import json
+import sys
+import threading
 from pathlib import Path
 from typing import Optional, Any, Dict, List
 
@@ -245,6 +247,7 @@ class ChatCommandHandler:
         # 显示当前 Agent
         agent_name = self.llm_manager.agent.current_agent_name
         self.console.print(f"\n[green]使用 Agent: {agent_name}[/]")
+        self.console.print("[dim]按 Esc 取消执行[/]")
 
         # 构造步骤回调，实时输出中间过程
         def on_step(step_info: dict) -> None:
@@ -274,7 +277,43 @@ class ChatCommandHandler:
                 if summary:
                     self.console.print(f"       [dim]→ {summary}[/]")
 
-        result = await self.llm_manager.agent.process(user_input=user_input, on_step=on_step)
+        # Escape 键监听：后台线程检测按键，设置 cancel_event
+        agent = self.llm_manager.agent
+
+        def _esc_listener():
+            """后台线程：监听 Escape 键"""
+            if sys.platform == "win32":
+                import msvcrt
+                while not _esc_done.is_set():
+                    if msvcrt.kbhit() and msvcrt.getch() == b'\x1b':
+                        if agent._cancel_event:
+                            agent._cancel_event.set()
+                        self.console.print("\n[bold red]正在取消...[/]")
+                        break
+                    _esc_done.wait(0.1)
+            else:
+                import select
+                while not _esc_done.is_set():
+                    if select.select([sys.stdin], [], [], 0.1)[0]:
+                        ch = sys.stdin.read(1)
+                        if ch == '\x1b':
+                            if agent._cancel_event:
+                                agent._cancel_event.set()
+                            self.console.print("\n[bold red]正在取消...[/]")
+                            break
+                    _esc_done.wait(0.1)
+
+        _esc_done = threading.Event()
+
+        # 启动 Escape 监听线程
+        esc_thread = threading.Thread(target=_esc_listener, daemon=True)
+        esc_thread.start()
+
+        try:
+            result = await self.llm_manager.agent.process(user_input=user_input, on_step=on_step)
+        finally:
+            _esc_done.set()
+            esc_thread.join(timeout=0.5)
 
         self.console.print(f"\n[bold green]助手[/]: {result.final_answer}\n")
         self.console.print(f"[dim]耗时: {result.total_duration_ms}ms[/]", style="dim")
