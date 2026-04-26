@@ -65,11 +65,14 @@ class EvolveAgent(Agent):
 
     async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
         """执行自主进化"""
-        # 动态注入 on_step 回调（构造时可能为 None，运行时从 kwargs 传入）
+        # 动态注入 on_step 回调和 cancel_event（构造时可能为 None，运行时从 kwargs 传入）
         on_step = kwargs.get("on_step")
+        cancel_event = kwargs.get("cancel_event")
         if on_step:
             self._on_step = on_step
             self._evolve._on_step = on_step
+        if cancel_event:
+            self._evolve._cancel_event = cancel_event
 
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()

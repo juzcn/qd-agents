@@ -84,6 +84,9 @@ class QDAgent:
         self._openai_tools_cache: list[dict[str, Any]] | None = None
         self._tool_map_cache: dict[str, Tool] = {}
 
+        # 取消信号（Escape 键设置，EvolveMetaAgent 循环中检查）
+        self._cancel_event: asyncio.Event | None = None
+
     def _setup_retry_and_circuit_breaker(self) -> None:
         """配置重试和熔断器"""
         self.retry_config = RetryConfig(
@@ -225,6 +228,9 @@ class QDAgent:
         trace_id = str(uuid.uuid4())
         logger.info("Processing user input (trace_id: %s): %s", trace_id, user_input[:100])
 
+        # 创建取消信号
+        self._cancel_event = asyncio.Event()
+
         # 添加用户输入到历史
         self.add_to_history("user", user_input)
 
@@ -248,6 +254,7 @@ class QDAgent:
                 history=conversation_history,
                 trace_id=trace_id,
                 on_step=on_step,
+                cancel_event=self._cancel_event,
             )
 
             # 添加到历史
