@@ -167,10 +167,14 @@ class CodePlanAgent(Agent):
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
+        # 汇总所有 MetaAgentOutput 的 total_tokens
+        total_tokens = sum(t.total_tokens for t in meta_traces if hasattr(t, "total_tokens"))
+
         return AgentResult(
             final_answer=final_answer,
             success=True,
             meta_traces=meta_traces,
+            total_tokens=total_tokens,
             total_duration_ms=latency_ms,
         )
 

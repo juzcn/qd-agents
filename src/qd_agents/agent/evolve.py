@@ -13,7 +13,7 @@ from typing import Any
 
 from ..llm import LLMClient
 from ..registry import ToolRegistry
-from ..context import ContextManager
+from ..context import ContextManager, ContextCompressor
 from ..models import EvolveResult
 from ..tools import ToolExecutorRegistry
 from .base import Agent, AgentResult, MetaAgentInput, StepCallback
@@ -41,6 +41,7 @@ class EvolveAgent(Agent):
         expanded_tools_cache: list | None = None,
         openai_tools_cache: list[dict[str, Any]] | None = None,
         tool_map_cache: dict[str, Any] | None = None,
+        compressor: ContextCompressor | None = None,
         on_step: StepCallback | None = None,
     ):
         self.llm = llm_client
@@ -51,6 +52,7 @@ class EvolveAgent(Agent):
         self._openai_tools = openai_tools_cache or []
         self._tool_map = tool_map_cache or {}
         self._on_step = on_step
+        self._compressor = compressor
 
         self._evolve = EvolveMetaAgent(
             llm_client=llm_client,
@@ -61,6 +63,7 @@ class EvolveAgent(Agent):
             tool_map=tool_map_cache,
             expanded_tools=expanded_tools_cache,
             on_step=on_step,
+            compressor=compressor,
         )
 
     async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
@@ -68,11 +71,15 @@ class EvolveAgent(Agent):
         # 动态注入 on_step 回调和 cancel_event（构造时可能为 None，运行时从 kwargs 传入）
         on_step = kwargs.get("on_step")
         cancel_event = kwargs.get("cancel_event")
+        compressor = kwargs.get("compressor")
         if on_step:
             self._on_step = on_step
             self._evolve._on_step = on_step
         if cancel_event:
             self._evolve._cancel_event = cancel_event
+        if compressor:
+            self._compressor = compressor
+            self._evolve._compressor = compressor
 
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
@@ -105,6 +112,8 @@ class EvolveAgent(Agent):
             final_answer=final_answer,
             success=evolve_output.success,
             meta_traces=[evolve_output],
+            total_tokens=evolve_output.total_tokens,
+            last_prompt_tokens=evolve_output.last_prompt_tokens,
             trace_id=trace_id,
             total_duration_ms=total_duration_ms,
         )

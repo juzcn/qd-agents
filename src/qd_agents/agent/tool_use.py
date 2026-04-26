@@ -107,6 +107,7 @@ class ToolUseAgent(Agent):
             final_answer=meta_output.output,
             success=meta_output.success,
             meta_traces=[meta_output],
+            total_tokens=meta_output.total_tokens,
             trace_id=trace_id,
             total_duration_ms=total_duration_ms,
         )

@@ -67,6 +67,15 @@ class ToolRegistryConfig(BaseModel):
     hybrid_search: bool = True
 
 
+class ContextCompressionConfig(BaseModel):
+    """上下文压缩配置"""
+    enabled: bool = True
+    result_threshold: int = 2000      # 工具结果超过此字符数才触发压缩
+    summary_max_length: int = 500     # 摘要最大字符数
+    temp_dir: str = "data/tmp"        # 临时文件存储目录
+    keep_recent_results: int = 1      # 保留最近N轮完整结果不压缩
+
+
 class ExecutionConfig(BaseModel):
     """执行引擎配置"""
     default_timeout: int = 30000
@@ -176,6 +185,7 @@ class Config(BaseSettings):
     search: SearchConfig = Field(default_factory=SearchConfig)
     tool_registry: ToolRegistryConfig | None = None
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    context_compression: ContextCompressionConfig = Field(default_factory=ContextCompressionConfig)
     prompts: PromptsConfig | None = None
 
     storage: StorageConfig | None = None

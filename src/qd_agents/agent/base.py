@@ -39,6 +39,7 @@ class MetaAgentOutput:
     messages: list[dict] = field(default_factory=list)
     model: str = ""
     total_tokens: int = 0
+    last_prompt_tokens: int = 0
     latency_ms: int = 0
     iterations: int = 1
 
@@ -55,8 +56,10 @@ class AgentResult:
     meta_traces: list[MetaAgentOutput] = field(default_factory=list)
     working_memory: dict = field(default_factory=dict)
     interaction_log: list[dict] = field(default_factory=list)
-    trace_id: str = ""
+    total_tokens: int = 0
+    last_prompt_tokens: int = 0
     total_duration_ms: int = 0
+    trace_id: str = ""
 
 
 # --- 抽象基类 ---
