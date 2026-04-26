@@ -18,7 +18,7 @@ import time
 from typing import Any
 
 from ..llm import LLMClient
-from ..context import ContextManager
+from ..context import ContextManager, ContextCompressor
 from ..models import EvolveResult, AskUserInfo, DelegateInfo
 from ..registry import Tool, ToolExecutionType
 from ..tools import ToolExecutorRegistry
@@ -49,6 +49,7 @@ class EvolveMetaAgent(MetaAgent):
         max_iterations: int = 10,
         on_step: StepCallback | None = None,
         cancel_event: asyncio.Event | None = None,
+        compressor: ContextCompressor | None = None,
     ):
         self.llm = llm_client
         self.context = context_manager
@@ -61,6 +62,7 @@ class EvolveMetaAgent(MetaAgent):
         self.max_iterations = max_iterations
         self._on_step = on_step
         self._cancel_event = cancel_event
+        self._compressor = compressor
 
     async def run(self, input: MetaAgentInput) -> MetaAgentOutput:
         """
@@ -95,6 +97,7 @@ class EvolveMetaAgent(MetaAgent):
 
         iteration = 0
         total_tokens = 0
+        last_prompt_tokens = 0
 
         while iteration < self.max_iterations:
             # 检查取消信号
@@ -108,11 +111,16 @@ class EvolveMetaAgent(MetaAgent):
                     messages=messages,
                     model=self.llm.current_model,
                     total_tokens=total_tokens,
+                    last_prompt_tokens=last_prompt_tokens,
                     latency_ms=latency_ms,
                     iterations=iteration,
                 )
 
             iteration += 1
+
+            # 压缩历史中的旧 tool_result（保留最近 keep_recent_results 轮完整）
+            if self._compressor:
+                messages = self._compressor.compress_old_results(messages, iteration)
 
             response = await self.llm.chat(
                 messages=messages,
@@ -126,6 +134,7 @@ class EvolveMetaAgent(MetaAgent):
 
             if hasattr(response, "usage") and response.usage:
                 total_tokens += response.usage.total_tokens
+                last_prompt_tokens = response.usage.prompt_tokens
 
             # 追加 assistant 消息
             assistant_dict: dict[str, Any] = {
@@ -152,6 +161,7 @@ class EvolveMetaAgent(MetaAgent):
                         messages=messages,
                         model=self.llm.current_model,
                         total_tokens=total_tokens,
+                        last_prompt_tokens=last_prompt_tokens,
                         latency_ms=latency_ms,
                         iterations=iteration,
                     )
@@ -165,6 +175,7 @@ class EvolveMetaAgent(MetaAgent):
                     messages=messages,
                     model=self.llm.current_model,
                     total_tokens=total_tokens,
+                    last_prompt_tokens=last_prompt_tokens,
                     latency_ms=latency_ms,
                     iterations=iteration,
                 )
@@ -187,8 +198,6 @@ class EvolveMetaAgent(MetaAgent):
                         logger.info("Injecting SKILL.md into system prompt: %s (progressive disclosure)", tool_name)
                         self._emit_step(iteration, event="skill_load", tool_name=tool_name, detail=tool_name)
                         messages = self._inject_skill_into_system_prompt(messages, tool_name, skill_md)
-                        # 同步增量日志缓存，避免重新输出全部系统提示词
-                        self.llm._last_system_prompts[self.llm.meta_agent_name] = messages[0]["content"]
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
@@ -217,6 +226,11 @@ class EvolveMetaAgent(MetaAgent):
                 result_summary = tool_result[:200] if len(tool_result) > 200 else tool_result
                 self._emit_step(iteration, event="tool_result", tool_name=tool_name, result_summary=result_summary)
 
+                # 上下文压缩：大结果预写临时文件 + 预生成摘要
+                # 本轮仍展示完整结果，下一轮 compress_old_results 会替换为摘要
+                if self._compressor and len(tool_result) > self._compressor.config.result_threshold:
+                    await self._compressor.compress_result(tool_name, tool_call.id, tool_result)
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
@@ -232,6 +246,7 @@ class EvolveMetaAgent(MetaAgent):
             messages=messages,
             model=self.llm.current_model,
             total_tokens=total_tokens,
+            last_prompt_tokens=last_prompt_tokens,
             latency_ms=latency_ms,
             iterations=iteration,
         )

@@ -158,19 +158,10 @@ class LLMClient:
         """
         meta_name = self._meta_agent_name or "unknown"
 
-        # 检测系统提示词是否变化（按 MetaAgent 分别跟踪）
-        current_system = ""
+        # 更新系统提示词缓存（SKILL 注入时 evolve_meta.py 已单独 log）
         if messages and messages[0].get("role") == "system":
-            current_system = messages[0].get("content", "")
-
-        last_system = self._last_system_prompts.get(meta_name, "")
-        if current_system != last_system:
-            # 系统提示词变化，重置增量计数，重新记录全部消息
-            self._last_system_prompts[meta_name] = current_system
-            self._update_logged_message_count(0)
-            logged_count = 0
-        else:
-            logged_count = self._get_logged_message_count()
+            self._last_system_prompts[meta_name] = messages[0].get("content", "")
+        logged_count = self._get_logged_message_count()
 
         new_msg_count = len(messages) - logged_count
         prefix = "stream, " if is_stream else ""

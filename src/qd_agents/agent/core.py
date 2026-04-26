@@ -22,7 +22,7 @@ from ..execution import ExecutionEngine
 from ..tools import ToolExecutorRegistry
 from ..tools.executors.mcp import MCPToolExecutor
 from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig, BackoffStrategy
-from ..context import ContextManager
+from ..context import ContextManager, ContextCompressor
 from .base import Agent, AgentResult, StepCallback
 from .mcp_service import MCPService
 from .tool_service import ToolService
@@ -87,6 +87,9 @@ class QDAgent:
         # 取消信号（Escape 键设置，EvolveMetaAgent 循环中检查）
         self._cancel_event: asyncio.Event | None = None
 
+        # 上下文压缩器（Evolve Agent 长程迭代时压缩工具结果）
+        self._compressor: ContextCompressor | None = None
+
     def _setup_retry_and_circuit_breaker(self) -> None:
         """配置重试和熔断器"""
         self.retry_config = RetryConfig(
@@ -126,6 +129,15 @@ class QDAgent:
 
         # 缓存展开后的工具列表
         await self._cache_expanded_tools()
+
+        # 创建上下文压缩器
+        if self.config.context_compression and self.config.context_compression.enabled:
+            self._compressor = ContextCompressor(
+                config=self.config.context_compression,
+                llm_client=self.llm,
+                base_dir=self.base_dir,
+            )
+            logger.info("Context compressor initialized (threshold: %d chars)", self.config.context_compression.result_threshold)
 
         # 将工具注册到执行引擎（用于 Code-Plan 模式）
         await self._register_tools_to_execution_engine()
@@ -189,6 +201,7 @@ class QDAgent:
             expanded_tools_cache=self._expanded_tools_cache,
             openai_tools_cache=self._openai_tools_cache,
             tool_map_cache=self._tool_map_cache,
+            compressor=self._compressor,
         )
         self._agents[evolve_agent.name] = evolve_agent
         logger.info("Registered agent: %s", evolve_agent.name)
@@ -255,6 +268,7 @@ class QDAgent:
                 trace_id=trace_id,
                 on_step=on_step,
                 cancel_event=self._cancel_event,
+                compressor=self._compressor,
             )
 
             # 添加到历史
@@ -300,6 +314,8 @@ class QDAgent:
         """关闭智能体（委托给 MCPService 关闭连接）"""
         logger.info("Closing QDAgent...")
         await self._mcp_service.close()
+        if self._compressor:
+            self._compressor.cleanup_temp_files()
         logger.info("QDAgent closed")
 
     async def _register_builtin_tools(self) -> None:

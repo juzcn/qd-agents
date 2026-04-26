@@ -317,6 +317,9 @@ class ChatCommandHandler:
 
         self.console.print(f"\n[bold green]助手[/]: {result.final_answer}\n")
         self.console.print(f"[dim]耗时: {result.total_duration_ms}ms[/]", style="dim")
+        if result.total_tokens:
+            prompt_info = f" (末轮prompt: {result.last_prompt_tokens:,})" if result.last_prompt_tokens else ""
+            self.console.print(f"[dim]Token: {result.total_tokens:,}{prompt_info}[/]", style="dim")
         return True
 
     async def _handle_agent_command(self):
