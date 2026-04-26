@@ -4,10 +4,11 @@
 
 ## 特性
 
-- **Agent/元Agent 架构** - 双层架构，元Agent是原子LLM调用单元，Agent是任务处理单元
-- **三阶段智能路由** - Code-Plan模式采用Judge→ToolCalling/Coding三阶段路由
+- **Evolve 自主进化 Agent** - 自主思考、决策、行动，发现缺失工具时自动安装使用，成功后注册到工具箱
+- **SKILL 渐进式披露** - Evolve Agent 按需加载 SKILL.md，不预加载全部技能指南
+- **步骤回调** - Evolve Agent 执行过程实时输出到终端，用户可观察中间步骤
+- **上下文压缩** - 长程迭代时自动压缩旧工具结果，保留摘要+文件指针
 - **多 LLM 提供商支持** - NVIDIA、讯飞星辰等
-- **可配置模型列表** - 为每个提供商配置多个模型
 - **自动模型发现** - NVIDIA 等提供商支持动态发现模型
 - **模型评分选择** - 基于系列优先级和参数大小智能选择模型
 - **Fallback 机制** - 模型失败时自动切换到下一个
@@ -15,18 +16,13 @@
 - **Tool Registry** - SQLite 存储的工具注册中心
 - **多种工具执行** - 支持 HTTP/CLI/Function/MCP/Bash/Skill 6种工具类型
 - **MCP 服务器管理** - 通过命令行注册 MCP 服务器，自动发现和展开子工具
-- **异步代码执行** - 支持顶层 await 语法，自动包装为异步函数执行
 - **重试与熔断** - 4 种退避策略 + 熔断器模式
 - **CLI 界面** - 简洁的命令行交互
 - **内置搜索工具** - 支持 Tavily、Serper 搜索引擎
-- **Add-Skill 元Agent** - 用 LLM 分析 SKILL.md，自动识别参数和工具依赖
+- **AddSkill 分析器** - 用 LLM 分析 SKILL.md，自动识别参数和工具依赖
 - **运行时配置分离** - 静态配置(config.json)与运行时配置(runtime.json)分离存储
 - **详细日志记录** - LLM 请求/响应完整日志，支持 DEBUG 级别
 - **实时日志刷新** - ImmediateFlushFileHandler 确保日志实时写入磁盘
-- **Agent 切换** - 支持 tool-use、code-plan、evolve 三种 Agent，可通过命令行或聊天命令切换
-- **Evolve 自主进化 Agent** - 自主思考、决策、行动，发现缺失工具时自动安装使用，成功后注册到工具箱
-- **SKILL 渐进式披露** - Evolve Agent 按需加载 SKILL.md，不预加载全部技能指南
-- **步骤回调** - Evolve Agent 执行过程实时输出到终端，用户可观察中间步骤
 - **工具箱管理 CLI** - `tools add/skill add/mcp add/list/remove` 命令管理工具注册
 
 ## 安装
@@ -165,7 +161,6 @@ cp config.json.template config.json
 uv run qd-agents --help            # 查看帮助
 uv run qd-agents --version         # 查看版本
 uv run qd-agents --list-models     # 列出所有提供商的可用模型
-uv run qd-agents -a code-plan      # 指定启动 Agent（tool-use / code-plan）
 uv run qd-agents -c config.json    # 指定配置文件路径
 uv run qd-agents -d /path/to/dir  # 指定基础目录
 ```
@@ -269,12 +264,8 @@ metadata:
 ### 启动交互式聊天
 
 ```bash
-# 默认启动（使用 tool-use Agent）
+# 默认启动（使用 Evolve Agent）
 uv run qd-agents
-
-# 指定 Agent 启动
-uv run qd-agents -a tool-use
-uv run qd-agents -a code-plan
 ```
 
 ### 聊天命令
@@ -284,107 +275,98 @@ uv run qd-agents -a code-plan
 - `/model` - 显示当前模型
 - `/models` - 列出并切换可用模型
 - `/tools` - 列出可用工具
-- `/agent` - 显示/切换 Agent
-- `/quit` 或 `/q` - 退出程序
+- `/quit` - 退出程序
 
 ## 项目结构
 
 ```
 qd-agents/
 ├── src/qd_agents/
-│   ├── config/          # 配置管理（JSON + 运行时配置分离）
-│   ├── llm/             # LLM 客户端 + 消息格式化 + 模型评分
-│   ├── models/          # 共享数据模型
-│   │   ├── tool.py      # Tool/ToolExecutionConfig/ToolMetadata
-│   │   ├── judge.py     # JudgeResult
-│   │   ├── execution.py # ExecutionResult/ExecutionStep
-│   │   └── add_skill.py # AddSkillResult
-│   ├── registry/        # Tool Registry（注册/查询/搜索）
-│   ├── prompts/         # 提示词模板
-│   │   └── templates/
-│   │       ├── tool_use.j2   # 工具调用系统提示词
-│   │       ├── judge.j2      # 路由判断系统提示词
-│   │       ├── coding.j2     # 代码生成系统提示词
-│   │       └── add_skill.j2  # 技能分析系统提示词
-│   ├── context/         # 上下文管理器
-│   ├── tools/           # 工具执行器 + 内置工具 + MCP 管理器
-│   ├── execution/       # 执行引擎
-│   ├── agent/           # Agent 核心
-│   │   ├── base.py      # MetaAgent/Agent 基类和数据模型
-│   │   ├── core.py      # QDAgent 容器（Agent注册/切换/委托）
+│   ├── agent/           # Agent 体系
+│   │   ├── base.py       # Agent 基类 + 数据模型
+│   │   ├── core.py       # QDAgent 容器（资源管理）
+│   │   ├── evolve.py     # EvolveAgent（自主循环核心）
+│   │   ├── tool_execution.py  # 工具执行辅助函数
+│   │   └── add_skill.py # AddSkillAnalyzer（SKILL.md 分析）
+│   ├── services/         # 服务类
 │   │   ├── mcp_service.py  # MCP 服务管理（连接/展开/关闭）
-│   │   ├── tool_service.py # 工具服务（注册/缓存/执行器）
-│   │   ├── judge_meta.py   # JudgeMetaAgent
-│   │   ├── tool_calling_meta.py  # ToolCallingMetaAgent
-│   │   ├── coding_meta.py  # CodingMetaAgent
-│   │   ├── add_skill_meta.py # AddSkillMetaAgent
-│   │   ├── tool_use.py   # ToolUseAgent
-│   │   └── code_plan.py  # CodePlanAgent
-│   ├── utils/           # 工具函数
-│   │   ├── retry.py     # 重试与熔断
-│   │   ├── logging.py   # 日志配置
-│   │   └── parsing.py   # LLM 输出 JSON 解析
-│   └── cli/             # CLI 界面
-├── tools/               # 工具资源目录
-│   ├── mcp/             # MCP 服务器配置和子项目
-│   └── skills/          # SKILL 工具目录（由 qd-agents 管理）
+│   │   └── tool_service.py # 工具服务（注册/缓存构建）
+│   ├── cli/              # CLI 界面
+│   │   ├── app.py        # Typer 应用配置
+│   │   ├── main.py       # 入口 + prompt 样式
+│   │   ├── commands/     # chat / tools / mcp / skills / models / version
+│   │   ├── managers/     # configuration / llm_client
+│   │   └── utils/        # formatting / credentials
+│   ├── config/           # 配置管理
+│   │   ├── models.py     # Pydantic 配置模型
+│   │   └── loader.py    # JSON 加载/保存逻辑
+│   ├── context/          # 上下文管理器
+│   │   ├── manager.py   # ContextManager
+│   │   └── compressor.py # ContextCompressor（工具结果压缩）
+│   ├── llm/              # LLM 客户端 + 评分 + 格式化
+│   │   ├── client.py     # LLMClient（多模型 Fallback）
+│   │   ├── scoring.py    # 模型评分与选择
+│   │   └── formatters.py # 消息格式化与日志
+│   ├── models/           # Pydantic 数据模型
+│   │   ├── tool.py       # Tool / ToolExecutionConfig / ToolMetadata
+│   │   ├── evolve.py     # EvolveResult / AskUserInfo / DelegateInfo
+│   │   ├── execution.py  # ExecutionResult / ExecutionStep / ExecutionStatus
+│   │   └── add_skill.py  # AddSkillResult
+│   ├── prompts/          # Jinja2 模板加载
+│   │   └── templates/    # evolve.j2 / add_skill.j2
+│   ├── registry/         # 工具注册中心（SQLite）
+│   │   └── registry.py   # ToolRegistry
+│   ├── tools/            # 工具执行器 + 内置工具
+│   │   ├── builtins.py   # echo 等基础工具
+│   │   ├── search.py     # Serper、Tavily 搜索工具
+│   │   └── executors/    # base / function / http / cli / bash / mcp / factories
+│   └── utils/            # retry / circuit_breaker / logging / parsing
+├── tools/                # 工具资源目录
+│   ├── mcp/              # MCP 服务器配置和子项目
+│   └── skills/           # SKILL 工具目录（由 qd-agents 管理）
 │       └── <skill>/
 │           ├── SKILL.md
 │           └── scripts/
-├── skills/              # Claude Code skills（非 qd-agents SKILL 工具）
-├── data/                # 数据目录（自动创建）
-│   └── tools.db         # Tool Registry 数据库
-├── config.json          # 静态系统配置
-├── config.json.template # 配置模板
-├── runtime.json         # 运行时配置（工具凭证）
-├── pyproject.toml       # 项目配置
+├── data/                  # 数据目录（自动创建）
+│   └── tools.db          # Tool Registry 数据库
+├── config.json            # 静态系统配置
+├── config.json.template   # 配置模板
+├── runtime.json           # 运行时配置（工具凭证）
+├── pyproject.toml         # 项目配置
 └── README.md
 ```
 
 ## 核心模块
 
-### Agent 体系架构
+### Agent 体系
 
-系统采用双层 Agent 架构：
+系统采用单层 Agent 架构：
 
-**元Agent（MetaAgent）**：原子 LLM 调用单元
-- 一个系统提示词 + 一种上下文构建 + 一种处理逻辑
-- 类型：单轮（Judge、Coding、AddSkill）或多轮 Tool Calling（ToolCalling）
-
-**Agent**：任务处理单元
-- 简单 Agent：包装单个元Agent（ToolUseAgent）
-- 编排型 Agent：协调多个元Agent（CodePlanAgent）
-
-**当前实现的元Agent**：
-| 元Agent | 类型 | 功能 | 提示词模板 |
-|---------|------|------|------------|
-| JudgeMetaAgent | 单轮 | 路由判断（direct/tool_use/coding） | judge.j2 |
-| ToolCallingMetaAgent | 多轮 | 工具调用循环 | tool_use.j2 |
-| CodingMetaAgent | 单轮 | 复杂工具编排（代码生成+执行） | coding.j2 |
-| AddSkillMetaAgent | 单轮 | 分析 SKILL.md，识别参数和依赖 | add_skill.j2 |
-
-### Code-Plan 模式
-
-三阶段智能路由：
+**EvolveAgent**：唯一的 Agent，直接持有完整对话上下文，通过 function calling 调用工具：
 ```
-用户输入 → JudgeMetaAgent（路由判断）
-           ├─ direct → 直接回答
-           ├─ tool_use → ToolCallingMetaAgent
-           └─ coding → CodingMetaAgent（代码生成+沙盒执行）
+用户输入 → EvolveAgent（自主循环）
+             ├─ LLM 返回 tool_calls → 执行工具 → 观察结果 → 继续循环
+             ├─ LLM 返回 SKILL 工具 → 渐进式披露：注入 SKILL.md → LLM 按 Usage 执行
+             ├─ LLM 不返回 tool_calls → 输出最终答案
+             └─ 达到 max_iterations → 终止
 ```
+
+**AddSkillAnalyzer**：调用大模型的工具类（不是 Agent），用于分析 SKILL.md 内容，识别技能的参数定义和工具依赖。
+
+**QDAgent**：资源管理容器，管理工具注册、MCP 连接、上下文压缩等资源，将用户输入委托给 EvolveAgent 执行。
 
 ### 配置管理 (config/)
 
-- JSON 配置文件（config.json + runtime.json 分离）
-- 环境变量插值
-- Pydantic 类型验证
+- `config/models.py` — Pydantic 配置模型定义
+- `config/loader.py` — JSON 文件加载/保存逻辑
+- 环境变量插值（`QD_` 前缀 + `__` 嵌套分隔符）
 - 运行时配置自动迁移
 
 ### LLM 客户端 (llm/)
 
-- NVIDIA NIM API 集成（OpenAI 兼容）
+- OpenAI 兼容 API（AsyncOpenAI）
 - 自动模型发现（`/v1/models`）
-- Top 5 模型评分选择
+- Top K 模型评分选择
 - 自动 Fallback 机制
 - 消息格式化与日志（`llm/formatters.py`）
 
@@ -403,26 +385,24 @@ qd-agents/
 - 分阶段消息构建（system_prompt + 历史 + 当前用户输入）
 - SKILL.md 自动注入（SKILL 类型工具在提示词中注入 SKILL.md 正文）
 - 提示词缓存（按工具集合缓存系统提示词）
-- 支持三阶段路由模式的上下文构建
+- 上下文压缩（长程迭代时压缩旧工具结果）
 
 ### 数据模型 (models/)
 
 共享 Pydantic 数据模型，供多个模块引用：
 - `Tool` / `ToolExecutionConfig` / `ToolMetadata` — 工具定义和执行配置
-- `JudgeResult` — 路由判断结果（route, reasoning, tool_list）
+- `EvolveResult` / `AskUserInfo` / `DelegateInfo` — Evolve 特殊输出结果
 - `ExecutionStatus` / `ExecutionStep` / `ExecutionResult` — 执行轨迹模型
 - `AddSkillResult` — 技能分析结果
 
-### 执行引擎 (execution/)
+### 服务层 (services/)
 
-- Python 代码沙盒执行
-- 异步代码支持（顶层 await）
-- 工具函数注入（extra_globals）
-- 安全限制：禁止危险模块和函数
+- `MCPService` — MCP 服务器连接管理、工具展开、资源清理
+- `ToolService` — 工具缓存构建、内置工具注册
 
 ### Tool Registry (registry/)
 
-- SQLite 存储
+- SQLite 存储（WAL 模式）
 - 工具注册/检索/更新/删除
 - 关键词搜索
 
@@ -441,17 +421,7 @@ qd-agents/
 
 **内置工具**：
 - `tools/builtins.py` — echo 等基础工具
-- `tools/builtin_search.py` — Serper、Tavily 搜索工具
-
-**MCP 管理**：
-- `tools/mcp_manager.py` — MCP 服务器连接、工具发现和注册
-- MCP 工具自动展开：连接 MCP 服务器后，将每个子工具作为独立工具加载到可用工具列表
-
-**Skill 管理**：
-- `tools/skills/` — Skill 工具目录
-- 通过 `qd-agents tools skill add` 命令注册 Skill
-- Skill 支持环境变量和命令依赖声明
-- AddSkillMetaAgent 自动分析 SKILL.md 识别参数和工具依赖
+- `tools/search.py` — Serper、Tavily 搜索工具
 
 ### 重试与熔断 (utils/retry.py)
 
@@ -495,10 +465,6 @@ uv run mypy src/qd_agents
 ```bash
 uv run pytest
 ```
-
-## 需求文档
-
-详细设计文档请参考 [REQUIREMENTS.md](REQUIREMENTS.md)。
 
 ## 许可证
 

@@ -1,8 +1,7 @@
 """
-Agent/MetaAgent 基类和数据模型
+Agent 基类和数据模型
 
-元Agent（MetaAgent）：原子 LLM 调用单元，一个系统提示词 + 一种上下文构建 + 一种处理逻辑(含终止条件)。
-Agent：从用户输入到最终回答的完整任务处理单元，可以是单个元Agent的简单包装，也可以是多个元Agent+引擎的编排协作。
+Agent：从用户输入到最终回答的完整任务处理单元。
 """
 from __future__ import annotations
 
@@ -17,12 +16,12 @@ from typing import Any, Callable
 StepCallback = Callable[[dict[str, Any]], None]
 
 
-# --- 元Agent 数据模型 ---
+# --- 消息数据模型 ---
 
 
 @dataclass
 class MetaAgentInput:
-    """元Agent 输入"""
+    """消息输入"""
 
     user_message: str
     history: list[dict]
@@ -31,10 +30,10 @@ class MetaAgentInput:
 
 @dataclass
 class MetaAgentOutput:
-    """元Agent 输出"""
+    """消息输出"""
 
     output: Any
-    output_type: str  # "text" | "tool_list" | "plan" | "code" | "answer"
+    output_type: str  # "text" | "evolve_result" | "add_skill_result"
     success: bool
     messages: list[dict] = field(default_factory=list)
     model: str = ""
@@ -62,16 +61,7 @@ class AgentResult:
     trace_id: str = ""
 
 
-# --- 抽象基类 ---
-
-
-class MetaAgent(ABC):
-    """元Agent：原子 LLM 调用单元"""
-
-    name: str
-
-    @abstractmethod
-    async def run(self, input: MetaAgentInput) -> MetaAgentOutput: ...
+# --- Agent 抽象基类 ---
 
 
 class Agent(ABC):

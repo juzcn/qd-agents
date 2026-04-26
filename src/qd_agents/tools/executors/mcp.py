@@ -22,7 +22,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 from .base import ToolExecutor
-from qd_agents.registry import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
+from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 
 
 logger = logging.getLogger(__name__)

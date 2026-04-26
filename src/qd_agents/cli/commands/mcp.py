@@ -13,7 +13,8 @@ import typer
 from rich.console import Console
 
 from qd_agents.config import load_config
-from qd_agents.registry import ToolRegistry, Tool, ToolExecutionConfig, ToolMetadata
+from qd_agents.registry import ToolRegistry
+from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata
 from qd_agents.tools.executors import create_mcp_tool, extract_mcp_servers_config
 
 

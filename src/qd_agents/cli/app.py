@@ -173,7 +173,6 @@ def main(
     ctx: typer.Context,
     list_models: bool = typer.Option(False, "--list-models", help="列出可用模型"),
     version: bool = typer.Option(False, "--version", help="显示版本信息"),
-    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="指定 Agent: tool-use"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
 ):
@@ -205,4 +204,4 @@ def main(
 
     # 如果没有任何选项被指定，执行默认操作（聊天）
     if not options_executed:
-        asyncio.run(chat_async(console, base_dir, config_file, None, None, agent))
+        asyncio.run(chat_async(console, base_dir, config_file, None, None))

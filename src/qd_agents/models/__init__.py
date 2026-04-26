@@ -1,6 +1,6 @@
 from .execution import ExecutionResult, ExecutionStatus, ExecutionStep
 from .evolve import EvolveResult, AskUserInfo, DelegateInfo
-from .judge import JudgeResult
+from .add_skill import AddSkillResult
 from .tool import (
     Tool,
     ToolExecutionConfig,
@@ -16,7 +16,7 @@ __all__ = [
     "AskUserInfo",
     "DelegateInfo",
     "EvolveResult",
-    "JudgeResult",
+    "AddSkillResult",
     "Tool",
     "ToolExecutionConfig",
     "ToolExecutionType",

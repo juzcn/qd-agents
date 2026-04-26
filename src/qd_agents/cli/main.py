@@ -25,7 +25,6 @@ class ChatCommandCompleter(Completer):
         "/model": "显示当前模型",
         "/models": "列出并切换可用模式",
         "/tools": "列出可用工具",
-        "/agent": "显示/切换 Agent",
     }
 
     def get_completions(self, document, complete_event):

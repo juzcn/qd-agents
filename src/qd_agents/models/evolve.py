@@ -1,7 +1,7 @@
 """
 Evolve 自主进化Agent 数据模型
 
-EvolveMetaAgent 直接通过 function calling 调用工具，
+EvolveAgent 直接通过 function calling 调用工具，
 EvolveResult 只用于 ask_user 和 delegate 两种特殊输出。
 """
 from __future__ import annotations
