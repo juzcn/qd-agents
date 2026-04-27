@@ -29,8 +29,8 @@ class MemoryService:
 
         # 嵌入引擎
         model_path = config.model_path
-        if model_path is None:
-            model_path = Path(config.embedding_model)
+        if model_path is None or model_path.is_dir():
+            model_path = (model_path or Path(".")) / config.embedding_model
         self._embedder = Embedder(model_path, vec_dim=config.vec_dim)
 
         # 存储层
@@ -108,4 +108,5 @@ class MemoryService:
         return self._store.count()
 
     def close(self) -> None:
+        self._embedder.close()
         self._store.close()

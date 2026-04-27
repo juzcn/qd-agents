@@ -11,7 +11,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from .commands import chat_async, list_models_async, list_tools, init_tools, add_tool, remove_tools, show_version, mcp_add, skill_add
+from .commands import chat_async, list_models_async, list_tools, init_tools, add_tool, remove_tools, show_version, mcp_add, skill_add, recall_memories, recall_memory
 
 
 # 创建 Typer 应用实例
@@ -56,6 +56,17 @@ skill_app = typer.Typer(
 
 # 将 skill 子命令组添加到 tools 子命令组
 tools_app.add_typer(skill_app)
+
+# 创建 memory 子命令组
+memory_app = typer.Typer(
+    name="memory",
+    help="长期记忆管理命令",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
+# 将 memory 子命令组添加到主应用
+app.add_typer(memory_app)
 
 # tools list 命令
 @tools_app.command("list", help="列出已注册的工具")
@@ -166,6 +177,30 @@ def skill_add_command(
         console.print("[red][ERROR][/] Skill 名称不能为空")
         return
     skill_add(console, skill_name, base_dir, config_file)
+
+
+# memory list 命令
+@memory_app.command("list", help="显示所有永久记忆")
+def memory_list(
+    asc: bool = typer.Option(False, "--asc", help="按时间正序输出（默认倒序）"),
+    interval: Optional[str] = typer.Option(None, "--interval", "-i", help="时间区间（如 1d, 3h, today, 04-25~04-27）"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="按 session ID 筛选"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """显示所有永久记忆"""
+    recall_memories(console, base_dir, config_file, asc=asc, interval=interval, session=session)
+
+
+# memory recall 命令
+@memory_app.command("recall", help="语义召回永久记忆")
+def memory_recall(
+    query: str = typer.Argument(..., help="查询语句"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """语义召回永久记忆"""
+    recall_memory(console, query, base_dir, config_file)
 
 
 @app.callback(invoke_without_command=True)

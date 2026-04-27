@@ -8,6 +8,7 @@ from .tools import list_tools, init_tools, add_tool, remove_tools
 from .version import show_version
 from .mcp import mcp_add
 from .skills import skill_add
+from .memory import recall_memories, recall_memory
 
 __all__ = [
     "ChatCommandHandler",
@@ -19,4 +20,6 @@ __all__ = [
     "show_version",
     "mcp_add",
     "skill_add",
+    "recall_memories",
+    "recall_memory",
 ]
