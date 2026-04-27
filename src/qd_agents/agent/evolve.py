@@ -52,6 +52,7 @@ class EvolveAgent(Agent):
         openai_tools_cache: list[dict[str, Any]] | None = None,
         tool_map_cache: dict[str, Any] | None = None,
         compressor: ContextCompressor | None = None,
+        max_iterations: int | None = None,
         on_step: StepCallback | None = None,
     ):
         self.llm = llm_client
@@ -61,6 +62,7 @@ class EvolveAgent(Agent):
         self._expanded_tools = expanded_tools_cache or []
         self._openai_tools = openai_tools_cache or []
         self._tool_map = tool_map_cache or {}
+        self._max_iterations = max_iterations or 10
         self._on_step = on_step
         self._compressor = compressor
         self._cancel_event: asyncio.Event | None = None
@@ -98,7 +100,7 @@ class EvolveAgent(Agent):
         total_tokens = 0
         last_prompt_tokens = 0
 
-        while iteration < 10:
+        while iteration < self._max_iterations:
             # 检查取消信号
             if self._cancel_event and self._cancel_event.is_set():
                 logger.info("Evolve loop cancelled by user")
@@ -272,7 +274,7 @@ class EvolveAgent(Agent):
         if self._on_step:
             self._on_step({
                 "iteration": iteration,
-                "max_iterations": 10,
+                "max_iterations": self._max_iterations,
                 "event": event,
                 "tool_name": tool_name,
                 "command": command,

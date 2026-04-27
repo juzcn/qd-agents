@@ -148,7 +148,7 @@ class ChatCommandHandler:
 
             # 如果配置了模型列表，直接添加
             if other_config.models:
-                for model_name in other_config.models:
+                for model_name in other_config.get_model_names():
                     all_models.append({
                         "provider": other_provider,
                         "model": model_name,

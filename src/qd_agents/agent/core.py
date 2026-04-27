@@ -139,6 +139,7 @@ class QDAgent:
             openai_tools_cache=self._openai_tools_cache,
             tool_map_cache=self._tool_map_cache,
             compressor=self._compressor,
+            max_iterations=self.config.execution.max_iterations,
         )
         logger.info("EvolveAgent created")
 

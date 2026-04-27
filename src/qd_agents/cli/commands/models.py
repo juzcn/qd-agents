@@ -49,7 +49,7 @@ async def list_models_async(
         # 如果配置了模型列表，直接显示
         if provider_config.models and not provider_config.auto_discover:
             console.print("\n[bold]已配置的模型:[/]")
-            for model_name in provider_config.models:
+            for model_name in provider_config.get_model_names():
                 console.print(f"  - [cyan]{provider_name}/{model_name}[/]")
             continue
 

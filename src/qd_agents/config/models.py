@@ -8,19 +8,45 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import Self
+
+
+class ModelSpecConfig(BaseModel):
+    """模型规格配置 — 对应 config.json 中 models 列表的对象条目"""
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="ignore",
+    )
+
+    name: str
+    context_length: int | None = Field(None, alias="contextWindow")
+    max_output_tokens: int | None = Field(None, alias="maxTokens")
+    reasoning: bool | None = None
+    input: list[str] | None = None
+    capabilities: list[str] | None = None
 
 
 class LLMProviderConfig(BaseModel):
     """LLM 提供商配置"""
     api_key: str
     base_url: str = "https://integrate.api.nvidia.com/v1"
-    models: list[str] = Field(default_factory=list)
+    models: list[str | ModelSpecConfig] = Field(default_factory=list)
     timeout: int = 120000
     max_retries: int = 3
     auto_discover: bool = True
+
+    def get_model_names(self) -> list[str]:
+        """提取所有模型名称（兼容 str 和 ModelSpecConfig 两种格式）"""
+        return [m if isinstance(m, str) else m.name for m in self.models]
+
+    def get_model_spec(self, model_name: str) -> ModelSpecConfig | None:
+        """获取指定模型的规格配置"""
+        for m in self.models:
+            if isinstance(m, ModelSpecConfig) and m.name == model_name:
+                return m
+        return None
 
 
 class SearchProviderConfig(BaseModel):
@@ -74,6 +100,7 @@ class ExecutionConfig(BaseModel):
     default_timeout: int = 30000
     per_tool_timeout: dict[str, int] = Field(default_factory=dict)
     max_attempts: int = 3
+    max_iterations: int = 10
     backoff_strategy: str = "exponential_with_jitter"
     initial_delay_ms: int = 1000
     max_delay_ms: int = 30000

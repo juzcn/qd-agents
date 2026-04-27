@@ -73,7 +73,7 @@ class LLMClientManager:
 
         self.console.print(f"[dim]正在连接 {self.provider_config.base_url}...[/]")
 
-        model_names = self.provider_config.models.copy() if self.provider_config.models else []
+        model_names = self.provider_config.get_model_names()
         if model:
             model_names = [model]
 
