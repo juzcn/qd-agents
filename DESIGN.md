@@ -15,7 +15,8 @@ QDAgent（资源管理器 + EvolveAgent 容器）
    ├─ MCPService（MCP 连接管理）
    ├─ ToolService（工具缓存构建）
    ├─ ContextCompressor（上下文压缩）
-   └─ EvolveAgent（自主循环 + function calling + SKILL渐进式披露 + 工具进化）
+   ├─ MemoryService（长期记忆：QA 存储 + 语义召回）
+   └─ EvolveAgent（自主循环 + function calling + SKILL渐进式披露 + 工具进化 + recall_memory）
 ```
 
 **单层架构**：
@@ -290,6 +291,11 @@ src/qd_agents/
 │   ├── add_skill.py # AddSkillResult
 │   └── execution.py # ExecutionResult / ExecutionStep / ExecutionStatus
 ├── prompts/         # Jinja2 模板加载
+├── memory/          # 长期记忆系统
+│   ├── store.py     # MemoryStore — SQLite + sqlite-vec 读写
+│   ├── embedder.py  # Embedder — llama-cpp-python GGUF 嵌入
+│   ├── recall.py    # RecallService — 向量 + 关键词混合检索（RRF 融合）
+│   └── service.py   # MemoryService — 统一入口（save + recall）
 ├── registry/        # 工具注册中心（SQLite）
 ├── tools/           # 工具执行器 + 内置工具
 │   ├── executors/   # base / function / http / cli / bash / mcp / factories
@@ -305,11 +311,81 @@ src/qd_agents/
 
 ---
 
-## 13. 未实现功能
+## 13. 长期记忆系统
+
+### 13.1 设计理念
+
+- **LLM 自判断召回**：`recall_memory` 注册为工具，LLM 自主决定是否调用，无需关键词规则或额外判断逻辑
+- **session 边界去重**：召回时排除当前 session_id，从源头避免与当前上下文重复
+- **时间倒序排列**：召回结果按时间倒序，越新的越优先
+
+### 13.2 数据模型
+
+存储在独立数据库 `data/memory.db`（与 `tools.db` 分库）：
+
+```sql
+CREATE TABLE memories (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,       -- 所属会话 ID
+    question TEXT NOT NULL,         -- 用户问题
+    answer TEXT NOT NULL,           -- 模型回答
+    tags TEXT NOT NULL DEFAULT '[]',
+    source TEXT NOT NULL DEFAULT '',  -- evolve / skill / manual
+    model TEXT NOT NULL DEFAULT '',
+    token_count INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE VIRTUAL TABLE memory_vec USING vec0(
+    id TEXT PRIMARY KEY,
+    question_vec float[1024]        -- BGE-M3 输出维度
+);
+```
+
+### 13.3 核心流程
+
+**写入**（QA 完成后自动触发）：
+```
+用户问题 + 模型回答 → Embedder.embed(question) → question_vec → MemoryStore.save()
+```
+
+**召回**（LLM 调用 `recall_memory` 工具时触发）：
+```
+LLM 判断需要历史信息 → 调用 recall_memory(query) → Embedder.embed(query) → query_vec
+→ RecallService.search(query_vec, query_text, exclude_session=current_session_id)
+→ 向量召回 + 关键词召回 → RRF 融合 → 按时间倒序 → 截断 max_recall_chars → 返回
+```
+
+### 13.4 配置项（`config.json` → `memory`）
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| db_path | data/memory.db | 记忆数据库路径 |
+| embedding_model | hf_KimChen_bge-m3-q4_k_m.gguf | GGUF 嵌入模型 |
+| model_path | . | 模型文件路径 |
+| vec_dim | 1024 | 嵌入向量维度 |
+| top_k | 5 | 向量召回 top_k |
+| similarity_threshold | 0.7 | 相似度阈值 |
+| hybrid_search | true | 是否启用混合检索 |
+| auto_save | true | QA 完成后自动写入 |
+| max_recall_chars | 2000 | 召回结果最大字符数 |
+| max_recall_results | 5 | 一次最多返回多少条结果 |
+
+### 13.5 依赖
+
+| 库 | 用途 |
+|---|---|
+| sqlite-vec | SQLite 向量扩展（vec0 虚拟表 + KNN 查询） |
+| llama-cpp-python | GGUF 模型嵌入（BGE-M3 Q4 量化，417MB） |
+
+---
+
+## 14. 未实现功能
 
 | 功能 | 状态 |
 |------|------|
-| 向量检索（sqlite-vec） | 配置预留，未实现 |
+| 向量检索（sqlite-vec） | ✅ 已实现（memory 模块） |
 | 工具版本管理 | 数据模型已定义，功能未实现 |
 | 流式输出 | 未实现 |
 | 渐进式披露 L2/L3 | 未实现 |

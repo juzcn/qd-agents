@@ -20,6 +20,8 @@ dependencies = [
     "mcp-server-fetch>=2025.1.17",
     "pyyaml>=6.0.3",
     "markitdown[all]>=0.1.5",
+    "sqlite-vec>=0.1.9",
+    "llama-cpp-python>=0.3.0",
 ]
 
 [dependency-groups]
@@ -28,13 +30,11 @@ dev = [
     "pytest>=8.0.0",
     "types-pyyaml>=6.0.12.20260408",
 ]
-llama-cpp = [
-    "llama-cpp-python>=0.3.0",
-]
 
 [tool.uv]
 package = true
 index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+extra-index-url = ["https://abetlen.github.io/llama-cpp-python/whl/cpu"]
 
 [project.scripts]
 qd-agents = "qd_agents.cli:run"

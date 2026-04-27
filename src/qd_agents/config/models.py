@@ -75,6 +75,20 @@ class LLMConfig(BaseModel):
     tool_threshold: int = 50
 
 
+class MemoryConfig(BaseModel):
+    """长期记忆配置"""
+    db_path: Path = Path("data/memory.db")
+    embedding_model: str = "hf_KimChen_bge-m3-q4_k_m.gguf"
+    model_path: Path | None = None
+    vec_dim: int = 1024
+    top_k: int = 5
+    similarity_threshold: float = 0.7
+    hybrid_search: bool = True
+    auto_save: bool = True
+    max_recall_chars: int = 2000
+    max_recall_results: int = 5
+
+
 class ToolRegistryConfig(BaseModel):
     """Tool Registry 配置"""
     db_path: Path
@@ -192,6 +206,7 @@ class Config(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     tool_registry: ToolRegistryConfig | None = None
+    memory: MemoryConfig | None = None
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     prompts: PromptsConfig | None = None
     storage: StorageConfig | None = None
@@ -209,6 +224,10 @@ class Config(BaseSettings):
         return cls(
             tool_registry=ToolRegistryConfig(
                 db_path=data_dir / "tools.db",
+                model_path=model_path if model_path.exists() else None,
+            ),
+            memory=MemoryConfig(
+                db_path=data_dir / "memory.db",
                 model_path=model_path if model_path.exists() else None,
             ),
             prompts=PromptsConfig(
