@@ -120,6 +120,14 @@
 
 **何时不调用**：当前对话上下文中已有足够信息时，不需要调用。简单寒暄、确认等场景也不需要。
 
+你也可以通过 `execute_bash` 调用以下 CLI 命令管理记忆：
+
+- `qd-agents memory list` — 列出所有记忆（默认时间倒序）
+  - `--asc` — 按时间正序输出
+  - `--interval 1d` — 最近1天（支持：1d/3h/30m/2w, today/yesterday/this_week/this_month, 04-25~04-27, "2026-04-25 10:00~2026-04-27 14:30"）
+  - `--session <id>` — 按 session ID 筛选
+- `qd-agents memory recall <查询语句>` — 语义召回相关记忆（向量+关键词混合检索）
+
 ## 可用工具
 
 {% if tools %}

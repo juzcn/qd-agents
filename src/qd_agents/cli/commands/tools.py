@@ -223,6 +223,44 @@ def init_tools(
     registry.register(bash_tool)
     registered_tools.append(bash_tool.name)
 
+    # 记忆管理工具
+    memory_list_tool = create_bash_tool(
+        name="memory_list",
+        description="列出长期记忆，支持时间区间、session 筛选",
+        shell_command="qd-agents memory list {args}",
+        parameters={
+            "type": "object",
+            "properties": {
+                "args": {
+                    "type": "string",
+                    "description": "可选参数：--asc（正序）、--interval（时间区间如 1d/today/04-25~04-27）、--session（session ID）",
+                },
+            },
+            "required": [],
+        },
+        category="memory",
+        tags=["memory", "list", "cli"],
+    )
+    registry.register(memory_list_tool)
+    registered_tools.append(memory_list_tool.name)
+
+    memory_recall_tool = create_bash_tool(
+        name="memory_recall",
+        description="语义召回长期记忆，输入查询语句返回相关历史对话",
+        shell_command="qd-agents memory recall {query}",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "用于语义检索的查询语句"},
+            },
+            "required": ["query"],
+        },
+        category="memory",
+        tags=["memory", "recall", "cli"],
+    )
+    registry.register(memory_recall_tool)
+    registered_tools.append(memory_recall_tool.name)
+
 
     # 获取所有工具对象并显示类型
     all_tools = registry.list_all()
