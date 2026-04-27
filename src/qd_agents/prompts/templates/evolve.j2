@@ -27,12 +27,14 @@
 
 当你需要安装新工具时，使用 `uv add <package>` 安装到虚拟环境中，或用 `uvx <tool>` 临时运行。
 
-## Bash执行注意事项
+## Bash执行注意事项（强制规则，不可违反）
 
-- 使用 `python` 而不是 `python3`
-- Skill 脚本路径：使用 `tools/skills/` 而不是 `skills/`
-- 调用 Python 脚本时 JSON 参数必须用双引号包裹，内部双引号用转义：`python tools/skills/xxx/scripts/xxx.py "{\"query\":\"xxx\"}"`
+- **必须**使用 `python` 而不是 `python3`
+- **必须**使用 `tools/skills/` 路径而不是 `skills/`
+- **必须**用双引号包裹 JSON 参数，内部双引号用转义：`python tools/skills/xxx/scripts/xxx.py "{\"query\":\"xxx\"}"`
 - 优先使用 `python -m <module>` 而非 `uvx <module>`，项目虚拟环境已包含所需依赖，无需额外创建环境
+
+**警告**：SKILL.md 中的 Usage 示例可能使用 `python3`、`skills/` 路径、或单引号包裹 JSON——这些是 Linux 风格写法，在当前 Windows 环境下**不可用**。你必须将 SKILL.md 中的命令适配为上述格式后再执行。
 
 ## 自主行动原则
 
@@ -120,7 +122,7 @@
 ... 还有 {{ tools|length - 30 }} 个工具
 {% endif %}
 
-**重要**：Skill 类型的工具（如 self-improvement、markdown-converter、baidu-search）需要先通过 function calling 调用工具名来获取用法指南，然后根据指南使用 `execute_bash` 执行。不要直接用 `execute_bash` 猜测脚本路径和参数。
+**重要**：Skill 类型的工具没有参数，调用时传空对象 `{}` 即可。首次调用 Skill 工具只是获取用法指南（系统会自动注入 SKILL.md 到系统提示词），**不是真正执行**。收到用法指南后，**必须**将 SKILL.md 中的命令按照「Bash执行注意事项」的规则适配后，使用 `execute_bash` 执行。**禁止**直接复制 SKILL.md 中的命令执行。**禁止**用 `execute_bash` 猜测脚本路径和参数。
 {% else %}
 暂无可用工具
 {% endif %}

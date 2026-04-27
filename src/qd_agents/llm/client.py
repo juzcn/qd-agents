@@ -142,8 +142,27 @@ class LLMClient:
             "Qwen/Qwen2.5-72B-Instruct",
         ]
 
+    def reset_log_count(self, messages: list[dict[str, Any]] | None = None) -> None:
+        """重置增量日志计数（新轮次开始时调用）
+
+        首次调用（无 system prompt 缓存）时设为0，输出完整 prompt。
+        后续调用时设为 len(messages)-1，只输出当前用户输入。
+        """
+        meta_name = self._meta_agent_name or "unknown"
+        is_first_call = meta_name not in self._last_system_prompts
+
+        if messages and messages[0].get("role") == "system":
+            self._last_system_prompts[meta_name] = messages[0].get("content", "")
+
+        if is_first_call:
+            # 首次：输出完整 prompt（包括 system prompt）
+            self._update_logged_message_count(0)
+        else:
+            # 后续：只输出最后一条（当前用户输入）
+            count = max(0, len(messages) - 1) if messages else 0
+            self._update_logged_message_count(count)
+
     def _failover_to_next_model(self) -> bool:
-        """切换到下一个模型"""
         if self._current_model_index + 1 < len(self._model_names):
             self._current_model_index += 1
             logger.warning("Failing over to model: %s", self.current_model)
@@ -153,14 +172,31 @@ class LLMClient:
     def _log_prompt(self, messages: list[dict[str, Any]], is_stream: bool = False) -> None:
         """记录 LLM 输入消息（增量日志）
 
-        按 MetaAgent 分别跟踪系统提示词变化。当某个 MetaAgent 的系统提示词
-        发生变化时，重置该 MetaAgent 的增量计数并重新记录全部消息。
+        只输出自上次记录以来的新增消息。
+        SKILL 注入导致 system prompt 变化时，只输出 appended 的差异部分。
         """
         meta_name = self._meta_agent_name or "unknown"
 
-        # 更新系统提示词缓存（SKILL 注入时 evolve_meta.py 已单独 log）
+        # 检测系统提示词变化 → 只输出 appended 差异，不重置计数
         if messages and messages[0].get("role") == "system":
-            self._last_system_prompts[meta_name] = messages[0].get("content", "")
+            current_system = messages[0].get("content", "")
+            last_system = self._last_system_prompts.get(meta_name)
+            if current_system != last_system and last_system is not None:
+                # system prompt 有追加内容（如 SKILL 注入），输出差异
+                if current_system.startswith(last_system):
+                    appended = current_system[len(last_system):]
+                    logger.info(
+                        "LLM Prompt (MetaAgent: %s) [system prompt appended %d chars]:\n%s",
+                        meta_name, len(appended), appended,
+                    )
+                else:
+                    # 完全不同的 system prompt，输出全文
+                    logger.info(
+                        "LLM Prompt (MetaAgent: %s) [system prompt changed]:\n%s",
+                        meta_name, current_system,
+                    )
+            self._last_system_prompts[meta_name] = current_system
+
         logged_count = self._get_logged_message_count()
 
         new_msg_count = len(messages) - logged_count
