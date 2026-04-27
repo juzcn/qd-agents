@@ -1,32 +1,32 @@
 {
-  "system": {
-    "name": "qd-agents",
-    "version": "1.0.0",
-    "environment": "development"
-  },
   "llm": {
-    "default_provider": "xunfei",
-    "default_model": "astron-code-latest",
+    "default_provider": "nvidia",
     "providers": {
       "nvidia": {
         "api_key": "your_nvidia_api_key_here",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "models": [],
-        "auto_discover": true,
         "timeout": 120000,
-        "max_retries": 3
+        "max_retries": 3,
+        "auto_discover": true
       },
       "xunfei": {
         "api_key": "your_xunfei_api_key_here",
         "base_url": "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
-        "models": ["astron-code-latest"],
-        "auto_discover": false,
+        "models": [
+          {
+            "name": "astron-code-latest",
+            "reasoning": false,
+            "input": ["text"],
+            "contextWindow": 92160,
+            "maxTokens": 32768
+          }
+        ],
         "timeout": 120000,
-        "max_retries": 3
+        "max_retries": 3,
+        "auto_discover": false
       }
-    },
-    "tool_threshold": 50,
-    "mode": "code-plan"
+    }
   },
   "search": {
     "serper": {
@@ -34,73 +34,51 @@
     },
     "tavily": {
       "api_key": "your_tavily_api_key_here"
-    },
-    "baidu": {
-      "api_key_1": "your_baidu_api_key_1_here",
-      "api_key_2": "your_baidu_api_key_2_here"
     }
   },
   "tool_registry": {
-    "db_path": "data/tools.db",
-    "sqlite_vec_enabled": true,
-    "embedding_model": "hf_KimChen_bge-m3-q4_k_m.gguf",
-    "model_path": "",
-    "top_k": 10,
-    "similarity_threshold": 0.7,
-    "hybrid_search": true
+    "db_path": "data/tools.db"
   },
   "execution": {
     "default_timeout": 30000,
     "per_tool_timeout": {},
     "max_attempts": 3,
+    "max_iterations": 10,
     "backoff_strategy": "exponential_with_jitter",
     "initial_delay_ms": 1000,
     "max_delay_ms": 30000,
     "circuit_breaker_enabled": true,
     "circuit_breaker_error_rate": 0.5,
     "circuit_breaker_min_requests": 10,
-    "circuit_breaker_half_open_timeout": 30000,
-    "code_exec_allowed_modules": ["math", "datetime", "json", "re", "collections", "itertools"],
-    "code_exec_blocked_builtins": ["eval", "exec", "__import__", "open"],
-    "code_exec_timeout": 30000
+    "circuit_breaker_half_open_timeout": 30000
+  },
+  "context_compression": {
+    "enabled": true,
+    "result_threshold": 2000,
+    "summary_max_length": 500,
+    "temp_dir": "data/tmp",
+    "keep_recent_results": 1
   },
   "prompts": {
-    "template_dir": "src/qd_agents/prompts/templates",
-    "default_language": "zh-CN",
-    "cache_enabled": true,
-    "cache_ttl": 3600
+    "templates_dir": "src/qd_agents/prompts/templates"
+  },
+  "storage": {
+    "db_path": "data/tools.db"
   },
   "observability": {
     "log_level": "DEBUG",
     "log_output": ["file"],
     "log_session_dir": ".",
-    "log_external_api": false,
     "log_rotation": "daily",
     "log_retention_days": 30,
+    "log_external_api": false,
+    "log_immediate_flush": true,
     "tracing_enabled": true,
     "tracing_exporter": "otlp",
     "tracing_endpoint": "",
     "tracing_sample_rate": 1.0,
     "metrics_enabled": true,
     "metrics_exporter": "prometheus",
-    "metrics_port": 9090,
-    "log_immediate_flush": true
-  },
-  "storage": {
-    "data_dir": "data",
-    "traces_dir": "data/traces",
-    "audit_dir": "data/audit",
-    "trace_retention_days": 30,
-    "audit_retention_days": 90
-  },
-  "security": {
-    "require_confirmation_for": ["destructive", "readwrite"],
-    "audit_log_enabled": true,
-    "sensitive_fields": ["api_key", "password", "secret"]
-  },
-  "versioning": {
-    "default_version_strategy": "latest_active",
-    "deprecation_warning_days": 30,
-    "auto_migrate": false
+    "metrics_port": 9090
   }
 }
