@@ -24,6 +24,12 @@ def _dict_to_config(data: dict[str, Any], base_dir: Path | None = None) -> Confi
     data.pop('tools_credentials', None)
 
     # 转换 Path 字段
+    if 'memory' in data and data['memory']:
+        mem = data['memory']
+        mem['db_path'] = base_dir / mem['db_path'] if mem.get('db_path') else None
+        if mem.get('model_path'):
+            mem['model_path'] = base_dir / mem['model_path']
+
     if 'tool_registry' in data and data['tool_registry']:
         tr = data['tool_registry']
         tr['db_path'] = base_dir / tr['db_path'] if tr.get('db_path') else None
