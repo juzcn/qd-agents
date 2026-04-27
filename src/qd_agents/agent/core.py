@@ -10,7 +10,7 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import Config
 from ..llm import LLMClient
@@ -24,6 +24,9 @@ from ..context import ContextManager
 from ..services import MCPService, ToolService
 from .base import Agent, AgentResult, StepCallback
 from .evolve import EvolveAgent
+
+if TYPE_CHECKING:
+    from ..memory.service import MemoryService
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +80,10 @@ class QDAgent:
         # 取消信号（Escape 键设置，EvolveAgent 循环中检查）
         self._cancel_event: asyncio.Event | None = None
 
+        # 长期记忆服务
+        self._memory_service: MemoryService | None = None
+        self._session_id: str = str(uuid.uuid4())
+
     def _setup_retry_and_circuit_breaker(self) -> None:
         """配置重试和熔断器"""
         self.retry_config = RetryConfig(
@@ -117,6 +124,9 @@ class QDAgent:
         # 缓存展开后的工具列表
         await self._cache_expanded_tools()
 
+        # 初始化长期记忆服务
+        self._init_memory_service()
+
         # 创建 EvolveAgent
         self._agent = EvolveAgent(
             llm_client=self.llm,
@@ -127,6 +137,8 @@ class QDAgent:
             openai_tools_cache=self._openai_tools_cache,
             tool_map_cache=self._tool_map_cache,
             max_iterations=self.config.execution.max_iterations,
+            memory_service=self._memory_service,
+            session_id=self._session_id,
         )
         logger.info("EvolveAgent created")
 
@@ -211,6 +223,8 @@ class QDAgent:
         """关闭智能体（委托给 MCPService 关闭连接）"""
         logger.info("Closing QDAgent...")
         await self._mcp_service.close()
+        if self._memory_service:
+            self._memory_service.close()
         logger.info("QDAgent closed")
 
     async def _register_builtin_tools(self) -> None:
@@ -238,3 +252,17 @@ class QDAgent:
     def get_history(self) -> list[dict[str, str]]:
         """获取会话历史"""
         return self.context.get_history()
+
+    def _init_memory_service(self) -> None:
+        """初始化长期记忆服务"""
+        if not self.config.memory:
+            logger.info("Memory config not set, skipping memory service init")
+            return
+
+        try:
+            from ..memory.service import MemoryService
+            self._memory_service = MemoryService(self.config.memory)
+            logger.info("Memory service initialized (db: %s)", self.config.memory.db_path)
+        except Exception as e:
+            logger.warning("Failed to initialize memory service: %s", e)
+            self._memory_service = None

@@ -11,7 +11,7 @@ import json
 import logging
 import time
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..llm import LLMClient
 from ..context import ContextManager
@@ -29,7 +29,32 @@ from .tool_execution import (
     format_tool_result,
 )
 
+if TYPE_CHECKING:
+    from ..memory.service import MemoryService
+
 logger = logging.getLogger(__name__)
+
+RECALL_MEMORY_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "recall_memory",
+        "description": (
+            "从长期记忆中召回与当前问题相关的历史对话记录。"
+            "当你需要引用之前会话中讨论过的方案、配置、决策等信息时调用。"
+            "如果当前问题不依赖历史信息，不要调用此工具。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "用于检索历史记忆的查询语句",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
 
 
 class EvolveAgent(Agent):
@@ -53,6 +78,8 @@ class EvolveAgent(Agent):
         tool_map_cache: dict[str, Any] | None = None,
         max_iterations: int | None = None,
         on_step: StepCallback | None = None,
+        memory_service: MemoryService | None = None,
+        session_id: str = "",
     ):
         self.llm = llm_client
         self.registry = tool_registry
@@ -64,6 +91,8 @@ class EvolveAgent(Agent):
         self._max_iterations = max_iterations or 10
         self._on_step = on_step
         self._cancel_event: asyncio.Event | None = None
+        self._memory_service = memory_service
+        self._session_id = session_id
 
     async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
         """执行自主进化"""
@@ -81,6 +110,12 @@ class EvolveAgent(Agent):
         openai_tools, tool_map = ensure_bash_available(
             self._openai_tools, self._tool_map, self.registry
         )
+
+        # 注入 recall_memory 工具（当记忆服务可用时）
+        if self._memory_service:
+            existing_names = {t.get("function", {}).get("name") for t in openai_tools if "function" in t}
+            if "recall_memory" not in existing_names:
+                openai_tools.append(RECALL_MEMORY_TOOL)
 
         # 构建初始消息
         messages = self.context.build_evolve_messages(
@@ -155,6 +190,10 @@ class EvolveAgent(Agent):
                     final_answer = content.strip() if content.strip() else "抱歉，无法生成回答"
 
                 total_duration_ms = int((time.perf_counter() - start_time) * 1000)
+
+                # QA 自动写入长期记忆
+                self._auto_save_memory(user_input, final_answer, total_tokens)
+
                 return AgentResult(
                     final_answer=final_answer,
                     success=True,
@@ -171,6 +210,28 @@ class EvolveAgent(Agent):
                     tool_input = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError:
                     tool_input = {"raw": tool_call.function.arguments}
+
+                # recall_memory 工具：拦截并调用记忆服务
+                if tool_name == "recall_memory" and self._memory_service:
+                    query = tool_input.get("query", "")
+                    logger.info("Recall memory: %s", query)
+                    self._emit_step(iteration, event="tool_call", tool_name=tool_name)
+                    try:
+                        records = self._memory_service.recall(
+                            query=query,
+                            exclude_session=self._session_id,
+                        )
+                        tool_result = self._memory_service.format_recall_result(records)
+                    except Exception as e:
+                        logger.exception("Recall memory failed")
+                        tool_result = f"召回记忆失败: {e}"
+                    self._emit_step(iteration, event="tool_result", tool_name=tool_name, result_summary=tool_result[:200])
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": tool_result,
+                    })
+                    continue
 
                 # SKILL 工具渐进式披露：将 SKILL.md 注入系统提示词
                 skill_tool = find_skill_tool(tool_name, tool_map, self.registry)
@@ -235,6 +296,23 @@ class EvolveAgent(Agent):
         )
 
     # --- 内部方法 ---
+
+    def _auto_save_memory(self, question: str, answer: str, token_count: int = 0) -> None:
+        """QA 完成后自动写入长期记忆"""
+        if not self._memory_service:
+            return
+        try:
+            self._memory_service.save(
+                question=question,
+                answer=answer,
+                session_id=self._session_id,
+                source="evolve",
+                model=self.llm.current_model,
+                token_count=token_count,
+            )
+            logger.info("Auto-saved QA to memory (session=%s)", self._session_id[:8] if self._session_id else "?")
+        except Exception:
+            logger.exception("Auto-save memory failed")
 
     def _try_parse_evolve_result(self, content: str) -> EvolveResult | None:
         """尝试解析为 EvolveResult，用于识别 ask_user/delegate 等特殊输出"""
