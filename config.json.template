@@ -52,13 +52,6 @@
     "circuit_breaker_min_requests": 10,
     "circuit_breaker_half_open_timeout": 30000
   },
-  "context_compression": {
-    "enabled": true,
-    "result_threshold": 2000,
-    "summary_max_length": 500,
-    "temp_dir": "data/tmp",
-    "keep_recent_results": 1
-  },
   "prompts": {
     "templates_dir": "src/qd_agents/prompts/templates"
   },

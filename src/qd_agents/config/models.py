@@ -86,15 +86,6 @@ class ToolRegistryConfig(BaseModel):
     hybrid_search: bool = True
 
 
-class ContextCompressionConfig(BaseModel):
-    """上下文压缩配置"""
-    enabled: bool = True
-    result_threshold: int = 2000
-    summary_max_length: int = 500
-    temp_dir: str = "data/tmp"
-    keep_recent_results: int = 1
-
-
 class ExecutionConfig(BaseModel):
     """执行引擎配置"""
     default_timeout: int = 30000
@@ -174,7 +165,6 @@ class ObservabilityConfig(BaseModel):
     metrics_enabled: bool = True
     metrics_exporter: str = "prometheus"
     metrics_port: int = 9090
-    log_file_path: Path = Path(".")
 
 
 class SystemConfig(BaseModel):
@@ -203,7 +193,6 @@ class Config(BaseSettings):
     search: SearchConfig = Field(default_factory=SearchConfig)
     tool_registry: ToolRegistryConfig | None = None
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
-    context_compression: ContextCompressionConfig = Field(default_factory=ContextCompressionConfig)
     prompts: PromptsConfig | None = None
     storage: StorageConfig | None = None
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)

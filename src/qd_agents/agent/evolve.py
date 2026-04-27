@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 from ..llm import LLMClient
-from ..context import ContextManager, ContextCompressor
+from ..context import ContextManager
 from ..models import EvolveResult
 from ..models.tool import Tool, ToolExecutionType
 from ..registry import ToolRegistry
@@ -51,7 +51,6 @@ class EvolveAgent(Agent):
         expanded_tools_cache: list | None = None,
         openai_tools_cache: list[dict[str, Any]] | None = None,
         tool_map_cache: dict[str, Any] | None = None,
-        compressor: ContextCompressor | None = None,
         max_iterations: int | None = None,
         on_step: StepCallback | None = None,
     ):
@@ -64,20 +63,16 @@ class EvolveAgent(Agent):
         self._tool_map = tool_map_cache or {}
         self._max_iterations = max_iterations or 10
         self._on_step = on_step
-        self._compressor = compressor
         self._cancel_event: asyncio.Event | None = None
 
     async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
         """执行自主进化"""
         on_step = kwargs.get("on_step")
         cancel_event = kwargs.get("cancel_event")
-        compressor = kwargs.get("compressor")
         if on_step:
             self._on_step = on_step
         if cancel_event:
             self._cancel_event = cancel_event
-        if compressor:
-            self._compressor = compressor
 
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
@@ -94,7 +89,9 @@ class EvolveAgent(Agent):
             history=history,
         )
 
+        # 重置增量日志计数：当前 messages 全部已构建，后续只输出增量
         self.llm.meta_agent_name = self.name
+        self.llm.reset_log_count(messages)
 
         iteration = 0
         total_tokens = 0
@@ -116,10 +113,6 @@ class EvolveAgent(Agent):
                 )
 
             iteration += 1
-
-            # 压缩历史中的旧 tool_result（保留最近 keep_recent_results 轮完整）
-            if self._compressor:
-                messages = self._compressor.compress_old_results(messages, iteration)
 
             response = await self.llm.chat(
                 messages=messages,
@@ -223,10 +216,6 @@ class EvolveAgent(Agent):
                 # 回调：工具执行结果
                 result_summary = tool_result[:200] if len(tool_result) > 200 else tool_result
                 self._emit_step(iteration, event="tool_result", tool_name=tool_name, result_summary=result_summary)
-
-                # 上下文压缩：大结果预写临时文件 + 预生成摘要
-                if self._compressor and len(tool_result) > self._compressor.config.result_threshold:
-                    await self._compressor.compress_result(tool_name, tool_call.id, tool_result)
 
                 messages.append({
                     "role": "tool",

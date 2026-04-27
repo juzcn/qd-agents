@@ -20,7 +20,7 @@ from ..prompts import PromptLoader
 from ..tools import ToolExecutorRegistry
 from ..tools.executors.mcp import MCPToolExecutor
 from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig, BackoffStrategy
-from ..context import ContextManager, ContextCompressor
+from ..context import ContextManager
 from ..services import MCPService, ToolService
 from .base import Agent, AgentResult, StepCallback
 from .evolve import EvolveAgent
@@ -77,9 +77,6 @@ class QDAgent:
         # 取消信号（Escape 键设置，EvolveAgent 循环中检查）
         self._cancel_event: asyncio.Event | None = None
 
-        # 上下文压缩器（EvolveAgent 长程迭代时压缩工具结果）
-        self._compressor: ContextCompressor | None = None
-
     def _setup_retry_and_circuit_breaker(self) -> None:
         """配置重试和熔断器"""
         self.retry_config = RetryConfig(
@@ -120,15 +117,6 @@ class QDAgent:
         # 缓存展开后的工具列表
         await self._cache_expanded_tools()
 
-        # 创建上下文压缩器
-        if self.config.context_compression and self.config.context_compression.enabled:
-            self._compressor = ContextCompressor(
-                config=self.config.context_compression,
-                llm_client=self.llm,
-                base_dir=self.base_dir,
-            )
-            logger.info("Context compressor initialized (threshold: %d chars)", self.config.context_compression.result_threshold)
-
         # 创建 EvolveAgent
         self._agent = EvolveAgent(
             llm_client=self.llm,
@@ -138,7 +126,6 @@ class QDAgent:
             expanded_tools_cache=self._expanded_tools_cache,
             openai_tools_cache=self._openai_tools_cache,
             tool_map_cache=self._tool_map_cache,
-            compressor=self._compressor,
             max_iterations=self.config.execution.max_iterations,
         )
         logger.info("EvolveAgent created")
@@ -163,22 +150,12 @@ class QDAgent:
         # 创建取消信号
         self._cancel_event = asyncio.Event()
 
-        # 添加用户输入到历史
-        self.add_to_history("user", user_input)
-
         try:
             if self._agent is None:
                 raise ValueError("Agent not initialized")
 
-            # 获取历史（不包含当前这条用户输入，因为 Agent 内部会处理）
-            history = self.context.get_history()
-            conversation_history = []
-            if history:
-                for msg in history[:-1]:
-                    conversation_history.append({
-                        "role": msg["role"],
-                        "content": msg["content"],
-                    })
+            # 获取当前历史（执行前的 Q&A 对）
+            conversation_history = self.context.get_history()
 
             # 委托给 EvolveAgent
             result = await self._agent.execute(
@@ -187,10 +164,10 @@ class QDAgent:
                 trace_id=trace_id,
                 on_step=on_step,
                 cancel_event=self._cancel_event,
-                compressor=self._compressor,
             )
 
-            # 添加到历史
+            # 执行后记录本轮 Q&A 对（中间过程不进入历史）
+            self.add_to_history("user", user_input)
             self.add_to_history("assistant", result.final_answer)
 
             return result
@@ -198,6 +175,7 @@ class QDAgent:
         except Exception as e:
             logger.exception("Processing failed")
             error_msg = f"抱歉，处理失败: {e}"
+            self.add_to_history("user", user_input)
             self.add_to_history("assistant", error_msg)
 
             return AgentResult(
@@ -233,8 +211,6 @@ class QDAgent:
         """关闭智能体（委托给 MCPService 关闭连接）"""
         logger.info("Closing QDAgent...")
         await self._mcp_service.close()
-        if self._compressor:
-            self._compressor.cleanup_temp_files()
         logger.info("QDAgent closed")
 
     async def _register_builtin_tools(self) -> None:
