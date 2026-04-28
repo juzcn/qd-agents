@@ -26,6 +26,7 @@ from qd_agents.prompts import PromptLoader
 from qd_agents.context import ContextManager
 from qd_agents.config import Config
 from qd_agents.llm import LLMClient
+from qd_agents.cli.utils.registry import get_tool_registry
 
 
 class ChatCommandHandler:
@@ -339,9 +340,7 @@ async def chat_async(
 
 
     # 3. 初始化工具和上下文
-    tool_registry = ToolRegistry(
-        db_path=config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    )
+    tool_registry = get_tool_registry(config)
 
 
     prompt_loader = (
