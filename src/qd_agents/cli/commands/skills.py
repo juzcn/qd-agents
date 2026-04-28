@@ -18,7 +18,7 @@ from rich.console import Console
 
 from qd_agents.config import load_config, load_runtime_config, save_runtime_config
 from qd_agents.cli.managers import setup_configuration
-from qd_agents.registry import ToolRegistry
+from qd_agents.cli.utils.registry import get_tool_registry
 from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 from qd_agents.cli.utils.credentials import env_var_to_tool_name
 
@@ -159,8 +159,7 @@ def skill_add(
             console.print("  [dim]runtime.json 已更新[/]")
 
     # 注册工具到数据库
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
+    registry = get_tool_registry(config)
 
     tool = Tool(
         id=f"skill.{name}",
@@ -223,8 +222,7 @@ def _run_add_skill_analyzer(
         skill_md_content = skill_md_path.read_text(encoding="utf-8")
 
         # 2. 初始化工具注册表和上下文
-        db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-        tool_registry = ToolRegistry(db_path=db_path)
+        tool_registry = get_tool_registry(config)
 
         prompt_loader = None
         if config.prompts and config.prompts.template_dir:

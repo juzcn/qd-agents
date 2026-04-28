@@ -1,6 +1,4 @@
-"""
-CLI 工具模块
-"""
+"""CLI 工具模块"""
 
 from .formatting import (
     print_success,
@@ -10,6 +8,7 @@ from .formatting import (
     print_dim,
     print_bold,
 )
+from .registry import get_tool_registry
 
 __all__ = [
     "print_success",
@@ -18,4 +17,5 @@ __all__ = [
     "print_info",
     "print_dim",
     "print_bold",
+    "get_tool_registry",
 ]

@@ -15,9 +15,9 @@ import typer
 from rich.console import Console
 
 from qd_agents.config import load_config
-from qd_agents.registry import ToolRegistry
 from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata
 from qd_agents.tools.executors import create_mcp_tool, extract_mcp_servers_config
+from qd_agents.cli.utils.registry import get_tool_registry
 
 
 logger = logging.getLogger(__name__)
@@ -210,8 +210,7 @@ async def mcp_add_async(
 
     config = load_config(base_dir=base_dir, config_file=config_file)
 
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
+    registry = get_tool_registry(config)
 
     # 解析 args 参数
     parsed_args: list[str] = []

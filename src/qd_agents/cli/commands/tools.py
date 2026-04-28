@@ -22,6 +22,7 @@ from qd_agents.registry import ToolRegistry
 from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 from qd_agents.tools.executors import create_bash_tool, create_mcp_tool, extract_mcp_servers_config
 from qd_agents.cli.utils.credentials import env_var_to_tool_name
+from qd_agents.cli.utils.registry import get_tool_registry
 from qd_agents.cli.commands.mcp import _detect_package_version
 from qd_agents.models.url_analyze import UrlAnalyzeResult
 from qd_agents import __version__
@@ -51,8 +52,7 @@ def list_tools(
     """
     config = load_config(base_dir=base_dir, config_file=config_file)
 
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
+    registry = get_tool_registry(config)
 
     tools = registry.list_all()
 
@@ -108,8 +108,7 @@ def init_tools(
     if config.storage:
         config.storage.data_dir.mkdir(parents=True, exist_ok=True)
 
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
+    registry = get_tool_registry(config)
 
     # 1. 只清除 builtin + default 类别的工具（保留用户添加的工具）
     deleted = registry.delete_by_scopes(["builtin", "default"])
@@ -362,8 +361,7 @@ def remove_tools(
         keep_credentials: 是否保留工具凭证配置
     """
     config = load_config(base_dir=base_dir, config_file=config_file)
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
+    registry = get_tool_registry(config)
 
     # 查找工具：先按 ID 查找，再按名称查找
     tool = registry.get(tool_identifier) or registry.get_by_name(tool_identifier)
@@ -527,8 +525,7 @@ def update_check(
 ) -> None:
     """检查 default 类别 MCP 工具是否有新版本"""
     config = load_config(base_dir=base_dir, config_file=config_file)
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
+    registry = get_tool_registry(config)
 
     # 只检查 default 类别的 MCP 工具
     default_tools = [t for t in registry.list_all() if t.scope == "default"]
@@ -570,8 +567,7 @@ def update_tools(
 ) -> None:
     """更新 default 类别 MCP 工具到最新版本"""
     config = load_config(base_dir=base_dir, config_file=config_file)
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
+    registry = get_tool_registry(config)
 
     default_tools = [t for t in registry.list_all() if t.scope == "default"]
     if not default_tools:
@@ -655,8 +651,7 @@ def add_tool_from_url(
     from qd_agents.prompts import PromptLoader
 
     config = setup_configuration(console, base_dir=base_dir, config_file=config_file)
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
+    registry = get_tool_registry(config)
 
     # 1. 获取 URL 内容
     console.print(f"正在获取 URL 内容: {url}")
