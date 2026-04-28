@@ -1,7 +1,7 @@
 """
-CLI 和 Bash 工具执行器
+Bash 工具执行器
 
-处理命令行和shell命令执行的工具执行器。
+处理 shell 命令执行的工具执行器。
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import re
 import sys
 import os
 import subprocess
-import sys
 import locale
 from typing import Any
 
@@ -66,85 +65,7 @@ def safe_decode(bytes_data: bytes, encoding: str | None = None) -> str:
     try:
         return bytes_data.decode('latin-1')
     except UnicodeDecodeError:
-        # 最后的手段：使用错误处理
         return bytes_data.decode('utf-8', errors='replace')
-
-
-class CLIToolExecutor(ToolExecutor):
-    """CLI 工具执行器"""
-
-    def __init__(
-        self,
-        command: str,
-        args: list[str] | None = None,
-        timeout: int = 30,
-    ):
-        self.command = command
-        self.args = args or []
-        self.timeout = timeout
-
-    def _format_arg(self, arg: str, **kwargs: Any) -> str:
-        """格式化参数，替换占位符"""
-        result = arg
-        for key, value in kwargs.items():
-            placeholder = f"{{{key}}}"
-            if placeholder in result:
-                result = result.replace(placeholder, str(value))
-        return result
-
-    async def execute(self, **kwargs: Any) -> Any:
-        import shlex
-
-        # 构建命令
-        cmd_parts = [self.command]
-        cmd_parts.extend(self._format_arg(arg, **kwargs) for arg in self.args)
-
-        cmd_str = " ".join(shlex.quote(p) for p in cmd_parts)
-        logger.info("Executing CLI tool: %s", cmd_str)
-
-        # 执行命令
-        proc = await asyncio.create_subprocess_exec(
-            *cmd_parts,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=self.timeout
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise TimeoutError(f"Command timed out after {self.timeout}s")
-
-        # 始终返回包含 stdout、stderr 和 returncode 的结构化结果
-        # 这样可以保持与 OpenAI tool calling 标准的兼容性
-        stdout_str = safe_decode(stdout)
-        stderr_str = safe_decode(stderr)
-        success = proc.returncode == 0
-
-        if not success:
-            logger.warning(
-                "CLI tool execution failed (returncode=%d): %s\nstderr: %s",
-                proc.returncode, cmd_str, stderr_str[:500]
-            )
-
-        result = {
-            "stdout": stdout_str,
-            "stderr": stderr_str,
-            "returncode": proc.returncode,
-            "success": success
-        }
-
-        # 如果输出是 JSON，也提供解析后的版本
-        try:
-            result["json"] = json.loads(stdout_str)
-        except json.JSONDecodeError:
-            pass
-
-        return result
 
 
 class BashToolExecutor(ToolExecutor):
@@ -182,11 +103,7 @@ class BashToolExecutor(ToolExecutor):
 
         if self.use_exec and self.command:
             # exec 模式：直接构建 argv，不经过 shell 解析
-            # 避免 Windows 下 shell 引号转义导致 JSON 参数丢失
-            # 使用当前进程的 python 解释器（venv），确保依赖可用
             cmd_parts = [sys.executable, self.command]
-            # 将所有 kwargs 序列化为 JSON 字符串作为唯一参数
-            # 这样 LLM 可以直接传 {"query": "xxx"} 而非 {"arguments": "{\"query\": \"xxx\"}"}
             args_json = json.dumps(kwargs, ensure_ascii=False)
             cmd_parts.append(args_json)
             executed_command = " ".join(cmd_parts)
@@ -208,14 +125,12 @@ class BashToolExecutor(ToolExecutor):
             executed_command = formatted_command
 
             # Windows: 检测 python 脚本 + JSON 参数模式，自动切换为 exec 模式
-            # 避免 cmd.exe 破坏 JSON 引号
             if sys.platform == "win32" and not self.use_exec:
                 json_argv_match = re.match(
                     r'(python\d*)\s+(\S+)\s+[\'"](\{.*\})[\'"]\s*$',
                     executed_command.strip(),
                 )
                 if json_argv_match:
-                    python_exe = json_argv_match.group(1)
                     script_path = json_argv_match.group(2)
                     json_arg = json_argv_match.group(3)
                     self.use_exec = True
@@ -267,30 +182,6 @@ class BashToolExecutor(ToolExecutor):
             pass
 
         return result
-
-
-def create_cli_tool(
-    name: str,
-    description: str,
-    command: str,
-    args: list[str] | None = None,
-    parameters: dict[str, Any] | None = None,
-    timeout: int = 30,
-) -> Tool:
-    """创建 CLI 工具"""
-    return Tool(
-        id=name,
-        name=name,
-        description=description,
-        parameters=parameters or {"type": "object", "properties": {}, "required": []},
-        execution=ToolExecutionConfig(
-            type=ToolExecutionType.CLI,
-            command=command,
-            args=args or [],
-            timeout=timeout,
-        ),
-        metadata=ToolMetadata(),
-    )
 
 
 def create_bash_tool(

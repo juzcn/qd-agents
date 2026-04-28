@@ -10,31 +10,13 @@ from typing import Any, Callable
 
 from .base import ToolExecutor
 from .http import HTTPToolExecutor, create_http_tool
-from .cli import CLIToolExecutor, BashToolExecutor, create_cli_tool, create_bash_tool
+from .bash import BashToolExecutor, create_bash_tool
 from .function import FunctionToolExecutor, create_function_tool
 from .mcp import MCPToolExecutor, create_mcp_tool
 from qd_agents.models.tool import Tool, ToolExecutionType
 
 
 logger = logging.getLogger(__name__)
-
-
-class _ScriptlessSkillExecutor(ToolExecutor):
-    """无脚本 SKILL 工具的执行器。
-
-    当 LLM 试图通过 function calling 调用无脚本的 SKILL 工具时，
-    返回提示信息，引导 LLM 使用 bash 工具按 SKILL.md 中的指南执行。
-    """
-
-    def __init__(self, tool_name: str):
-        self.tool_name = tool_name
-
-    async def execute(self, **kwargs: Any) -> dict[str, Any]:
-        return {
-            "error": f"工具 {self.tool_name} 没有可执行的脚本，不能通过 function calling 调用。"
-                     f"请参考系统提示词中的技能指南，使用 execute_bash 工具执行相应的命令。",
-            "tool_name": self.tool_name,
-        }
 
 
 def create_executor(tool: Tool) -> ToolExecutor:
@@ -59,15 +41,6 @@ def create_executor(tool: Tool) -> ToolExecutor:
             timeout=exec_config.timeout,
         )
 
-    elif exec_config.type == ToolExecutionType.CLI:
-        if not exec_config.command:
-            raise ValueError("CLI tool requires command")
-        return CLIToolExecutor(
-            command=exec_config.command,
-            args=exec_config.args,
-            timeout=exec_config.timeout,
-        )
-
     elif exec_config.type == ToolExecutionType.BASH:
         if not exec_config.shell_command:
             raise ValueError("BASH tool requires shell_command")
@@ -79,7 +52,6 @@ def create_executor(tool: Tool) -> ToolExecutor:
         )
 
     elif exec_config.type == ToolExecutionType.FUNCTION:
-        # 函数工具需要单独注册
         raise NotImplementedError(
             "Function tools must be registered with ToolExecutorRegistry"
         )
@@ -92,14 +64,13 @@ def create_executor(tool: Tool) -> ToolExecutor:
             transport=exec_config.transport or "stdio",
             command=exec_config.command,
             args=exec_config.args,
-            url=exec_config.endpoint,  # 复用 endpoint 作为 URL
+            url=exec_config.endpoint,
             headers=exec_config.headers,
             timeout=exec_config.timeout,
-            tool_name=exec_config.tool,  # 如果指定了具体工具名
+            tool_name=exec_config.tool,
         )
 
     elif exec_config.type == ToolExecutionType.SKILL:
-        # 有脚本的 SKILL 工具：用 exec 模式直接构建 argv，不经过 shell 解析
         if exec_config.command:
             return BashToolExecutor(
                 shell_command=exec_config.shell_command or "",
@@ -109,9 +80,9 @@ def create_executor(tool: Tool) -> ToolExecutor:
                 use_exec=True,
                 command=exec_config.command,
             )
-        # 无脚本的 SKILL 工具：依赖 tool_deps 中声明的工具（如 execute_bash）来执行
-        # LLM 通过 SKILL.md 指南 + 依赖工具完成操作，此工具本身不可直接执行
-        return _ScriptlessSkillExecutor(tool_name=tool.name)
+        raise NotImplementedError(
+            f"Scriptless SKILL tool '{tool.name}' must be executed via the SKILL.md injection path in evolve.py"
+        )
 
     else:
         raise ValueError(f"Unknown tool type: {exec_config.type}")

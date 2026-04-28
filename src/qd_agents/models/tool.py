@@ -23,7 +23,6 @@ class ToolVersionStatus(str, Enum):
 class ToolExecutionType(str, Enum):
     """工具执行类型"""
     FUNCTION = "function"
-    CLI = "cli"
     HTTP = "http"
     MCP = "mcp"
     BASH = "bash"
