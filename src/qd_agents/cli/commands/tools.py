@@ -7,6 +7,7 @@
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -23,10 +24,11 @@ from qd_agents.tools.executors import create_bash_tool, create_mcp_tool, extract
 from qd_agents.cli.utils.credentials import env_var_to_tool_name
 from qd_agents.cli.commands.mcp import _detect_package_version
 from qd_agents.models.url_analyze import UrlAnalyzeResult
+from qd_agents import __version__
 
 
 # 默认 MCP 工具名列表（用于迁移去重）
-DEFAULT_MCP_NAMES = {"filesystem", "fetch", "serper-search"}
+DEFAULT_MCP_NAMES = {"filesystem", "fetch", "serper-search", "github-api"}
 
 # 内置工具名列表（用于迁移去重）
 BUILTIN_TOOL_NAMES = {"execute_bash", "memory_list", "memory_recall"}
@@ -140,6 +142,7 @@ def init_tools(
         },
         scope="builtin",
         tags=["bash", "shell", "command", "core"],
+        version=__version__,
     )
     bash_tool.id = "builtin.execute_bash"
     registry.register(bash_tool)
@@ -162,6 +165,7 @@ def init_tools(
         },
         scope="builtin",
         tags=["memory", "list", "cli"],
+        version=__version__,
     )
     memory_list_tool.id = "builtin.memory_list"
     registry.register(memory_list_tool)
@@ -181,6 +185,7 @@ def init_tools(
         },
         scope="builtin",
         tags=["memory", "recall", "cli"],
+        version=__version__,
     )
     memory_recall_tool.id = "builtin.memory_recall"
     registry.register(memory_recall_tool)
@@ -189,26 +194,51 @@ def init_tools(
     # ==================== 默认 MCP 工具 (default) ====================
     # 从包内 defaults/ 目录读取配置，注册为 default 类别
 
+    runtime_config = load_runtime_config(base_dir=base_dir)
     defaults_dir = Path(__file__).parent.parent.parent / "tools" / "defaults"
 
     for json_file in sorted(defaults_dir.glob("*.json")):
-        server_name = json_file.stem  # filesystem, fetch, serper-search
+        server_name = json_file.stem  # filesystem, fetch, serper-search, github-api
         try:
             with open(json_file, "r", encoding="utf-8") as f:
                 json_config = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
-            console.print(f"[red][ERROR][/] 读取默认 MCP 配置失败: {json_file.name}: {e}")
+            console.print(f"[red][ERROR][/] 读取默认配置失败: {json_file.name}: {e}")
+            continue
+
+        # 跳过非 MCP 格式的配置（如 HTTP 工具）
+        if "mcpServers" not in json_config:
             continue
 
         servers, config_server_name = extract_mcp_servers_config(json_config)
         if not servers or not config_server_name:
-            console.print(f"[yellow][WARN][/] 跳过无效配置: {json_file.name}[/]")
+            console.print(f"[yellow][WARN][/] 跳过无效 MCP 配置: {json_file.name}")
             continue
 
         server_config = servers[config_server_name]
         final_command = server_config.get("command")
         final_args = server_config.get("args", [])
-        final_env = server_config.get("env") or {}
+
+        # 构建 env：合并 JSON 配置中的 env dict + 从 runtime.json 加载凭证
+        json_env = server_config.get("env") or {}
+        # 如果 env 是列表格式（如 ["SERPER_API_KEY"]），转换为 dict 并从 runtime.json 加载值
+        if isinstance(json_env, list):
+            final_env: dict[str, str] = {}
+            for env_var in json_env:
+                tool_name = env_var_to_tool_name(env_var)
+                api_key = runtime_config.tools_credentials.get_api_key(tool_name)
+                if api_key:
+                    final_env[env_var] = api_key
+                    console.print(f"  [dim]{env_var}[/]: 从 runtime.json 加载")
+                else:
+                    final_env[env_var] = os.environ.get(env_var, "")
+                    if final_env[env_var]:
+                        console.print(f"  [dim]{env_var}[/]: 从环境变量加载")
+                    else:
+                        console.print(f"  [yellow]{env_var}[/]: 未配置，工具可能无法启动")
+        else:
+            final_env = dict(json_env)
+
         final_env["__mcp_config__"] = json.dumps(json_config, ensure_ascii=False)
 
         # 检测版本和安装源
@@ -245,6 +275,54 @@ def init_tools(
         registered_tools.append(tool.name)
         console.print(f"[dim]  注册默认 MCP: {server_name} ({config_server_name})[/]")
 
+    # ==================== 默认 HTTP 工具 (default) ====================
+
+    # github-api — GitHub REST API 客户端
+    github_token = runtime_config.tools_credentials.get_api_key("github") or os.environ.get("GITHUB_TOKEN", "")
+    github_headers: dict[str, str] = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if github_token:
+        github_headers["Authorization"] = f"Bearer {github_token}"
+    github_env: dict[str, str] = {}
+    if github_token:
+        github_env["GITHUB_TOKEN"] = github_token
+
+    github_api_tool = Tool(
+        id="default.github-api",
+        name="github-api",
+        description="GitHub REST API 客户端，访问仓库内容、搜索代码等",
+        parameters={
+            "type": "object",
+            "properties": {
+                "endpoint": {"type": "string", "description": "API 端点路径，如 /repos/{owner}/{repo}/contents/{path}"},
+                "method": {"type": "string", "description": "HTTP 方法", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "default": "GET"},
+                "params": {"type": "object", "description": "查询参数"},
+                "body": {"type": "object", "description": "请求体 (JSON)"},
+            },
+            "required": ["endpoint"],
+        },
+        execution=ToolExecutionConfig(
+            type=ToolExecutionType.HTTP,
+            endpoint="https://api.github.com",
+            method="GET",
+            headers=github_headers,
+            env=github_env,
+            timeout=30,
+        ),
+        scope="default",
+        metadata=ToolMetadata(
+            tags=["github", "api", "default"],
+        ),
+    )
+    registry.register(github_api_tool)
+    registered_tools.append(github_api_tool.name)
+    if github_token:
+        console.print("[dim]  注册默认 HTTP: github-api (token 已配置)[/dim]")
+    else:
+        console.print("[dim]  注册默认 HTTP: github-api (未配置 token，API 限额受限)[/dim]")
+
     # ==================== 显示结果 ====================
     all_tools = registry.list_all()
     builtin_count = sum(1 for t in all_tools if t.scope == "builtin")
@@ -263,64 +341,6 @@ def init_tools(
         console.print(f"  - [{style}]{tool.name}[/]({tool_type}, {scope})")
 
 
-def add_tool(
-    console: Console,
-    name: str,
-    command: str,
-    description: Optional[str] = None,
-    scope: str = "user",
-    base_dir: Optional[Path] = None,
-    config_file: Optional[Path] = None,
-) -> None:
-    """注册 CLI/Bash 工具到工具箱
-
-    Args:
-        console: Rich 控制台对象
-        name: 工具名称
-        command: 命令模板（可用 {args} 作为参数占位符）
-        description: 工具描述
-        category: 工具分类
-        base_dir: 基础目录
-        config_file: 配置文件路径
-    """
-    config = load_config(base_dir=base_dir, config_file=config_file)
-    db_path = config.tool_registry.db_path if config.tool_registry else Path("data/tools.db")
-    registry = ToolRegistry(db_path=db_path)
-
-    # 检查是否已存在
-    existing = registry.get_by_name(name)
-    if existing:
-        console.print(f"[yellow]工具 {name} 已存在 (ID: {existing.id})，将更新[/]")
-
-    tool_desc = description or f"CLI tool: {name}"
-    tool_id = f"cli.{name}"
-
-    tool = Tool(
-        id=tool_id,
-        name=name,
-        description=tool_desc,
-        parameters={
-            "type": "object",
-            "properties": {
-                "args": {"type": "string", "description": f"传递给 {name} 的参数"},
-            },
-            "required": [],
-        },
-        execution=ToolExecutionConfig(
-            type=ToolExecutionType.BASH,
-            shell_command=command,
-            shell="bash",
-        ),
-        scope=scope,
-        metadata=ToolMetadata(
-            tags=["cli", name, "learned"],
-        ),
-    )
-
-    registry.register(tool)
-    console.print(f"[green][OK][/] 已注册工具: {name} ({tool_id})")
-    console.print(f"  命令模板: {command}")
-    console.print(f"  属性: {scope}")
 
 
 def remove_tools(
@@ -393,6 +413,83 @@ def _cleanup_credentials(
         save_runtime_config(runtime_config, base_dir=base_dir)
         for item in removed:
             console.print(f"  [dim]已清理凭证配置: {item}[/]")
+
+
+def _fetch_github_version(url: str) -> str | None:
+    """从 GitHub 项目的配置文件中提取版本号
+
+    支持 pyproject.toml、package.json、setup.py 等常见配置文件。
+    将 GitHub 页面 URL 转换为 raw 内容 URL 后获取。
+
+    Returns:
+        版本号字符串，如 "1.2.3"；无法提取时返回 None
+    """
+    import httpx
+
+    # 从 URL 中提取 owner/repo
+    # 支持: https://github.com/owner/repo, https://github.com/owner/repo/...
+    match = re.match(r"https://github\.com/([^/]+/[^/]+)", url)
+    if not match:
+        return None
+
+    repo_path = match.group(1).rstrip("/")
+
+    # 按优先级尝试的配置文件列表
+    config_files = [
+        ("pyproject.toml", _extract_version_from_pyproject),
+        ("package.json", _extract_version_from_package_json),
+        ("setup.py", _extract_version_from_setup_py),
+    ]
+
+    for filename, extractor in config_files:
+        raw_url = f"https://raw.githubusercontent.com/{repo_path}/HEAD/{filename}"
+        try:
+            resp = httpx.get(raw_url, follow_redirects=True, timeout=10)
+            if resp.status_code == 200:
+                version = extractor(resp.text)
+                if version:
+                    return version
+        except httpx.HTTPError:
+            continue
+
+    return None
+
+
+def _extract_version_from_pyproject(content: str) -> str | None:
+    """从 pyproject.toml 内容中提取版本号"""
+    # version = "1.2.3" (动态版本声明)
+    match = re.search(r'^version\s*=\s*"(\d+\.\d+(?:\.\d+)?)"', content, re.MULTILINE)
+    if match:
+        return match.group(1)
+
+    # [project] 下的 version = "1.2.3"
+    match = re.search(r'\[project\].*?\n.*?version\s*=\s*"(\d+\.\d+(?:\.\d+)?)"', content, re.DOTALL)
+    if match:
+        return match.group(1)
+
+    return None
+
+
+def _extract_version_from_package_json(content: str) -> str | None:
+    """从 package.json 内容中提取版本号"""
+    try:
+        data = json.loads(content)
+        version = data.get("version")
+        if version and re.match(r"\d+\.\d+(?:\.\d+)?", version):
+            return version
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
+def _extract_version_from_setup_py(content: str) -> str | None:
+    """从 setup.py 内容中提取版本号"""
+    # version="1.2.3" 或 version='1.2.3'
+    match = re.search(r'version\s*=\s*["\'](\d+\.\d+(?:\.\d+)?)["\']', content)
+    if match:
+        return match.group(1)
+
+    return None
 
 
 def _get_latest_version(command: str, install_source: str) -> str | None:
@@ -640,6 +737,13 @@ def add_tool_from_url(
     if not result:
         return
 
+    # 版本号 fallback：LLM 未提取到版本且 URL 为 GitHub 项目时，从配置文件获取
+    if not result.version and "github.com" in url:
+        gh_version = _fetch_github_version(url)
+        if gh_version:
+            result.version = gh_version
+            console.print(f"  [dim]从 GitHub 配置文件获取版本: {gh_version}[/]")
+
     # 4. 写入 env_vars 到 runtime.json（在 asyncio 之外，避免 input() 阻塞事件循环）
     if result.env_vars:
         _save_env_vars_to_runtime(console, result.env_vars, base_dir)
@@ -825,11 +929,136 @@ async def _register_skill_from_url(
         ),
         dependencies={"skill_type": skill_type},
         source_path=url,
+        local_path=result.name,
     )
     registry.register(tool)
     console.print(f"[green][OK][/] 已注册 skill: {result.name} (type={skill_type})")
     if result.env_vars:
         console.print(f"  所需环境变量: {', '.join(result.env_vars.keys())}")
+
+
+def _github_headers(base_dir: Optional[Path] = None) -> dict[str, str]:
+    """构建 GitHub API 请求头（支持 GITHUB_TOKEN 避免速率限制）
+
+    优先级：环境变量 GITHUB_TOKEN > 环境变量 GITHUB_TOKEN_CLASSIC > runtime.json tools_credentials.github
+    """
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN_CLASSIC")
+    if not token:
+        try:
+            runtime_config = load_runtime_config(base_dir=base_dir)
+            token = runtime_config.tools_credentials.get_api_key("github") or ""
+        except Exception:
+            token = ""
+    headers: dict[str, str] = {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "qd-agents",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _download_github_skill_dir(
+    console: Console,
+    gh_repo_path: str,
+    skill_name: str,
+    skill_dir: Path,
+    base_dir: Optional[Path] = None,
+) -> int:
+    """通过 GitHub Contents API 下载 skill 文件夹的全部文件
+
+    Args:
+        gh_repo_path: GitHub 仓库路径，如 "tavily-ai/skills"
+        skill_name: skill 名称，如 "tavily-search"
+        skill_dir: 本地保存目录
+        base_dir: 基础目录（用于读取 runtime.json 中的 token）
+
+    Returns:
+        成功下载的文件数量
+    """
+    import httpx
+
+    headers = _github_headers(base_dir=base_dir)
+
+    # 尝试常见的 skill 目录路径
+    # skillset 仓库通常结构: skills/<name>/ 或 <name>/
+    candidate_paths = [
+        f"skills/{skill_name}",
+        skill_name,
+    ]
+
+    dir_listing = None
+    for dir_path in candidate_paths:
+        api_url = f"https://api.github.com/repos/{gh_repo_path}/contents/{dir_path}"
+        try:
+            resp = httpx.get(api_url, headers=headers, follow_redirects=True, timeout=15)
+            if resp.status_code == 200:
+                dir_listing = resp.json()
+                break
+            elif resp.status_code == 403:
+                console.print(f"    [yellow]GitHub API 403: {resp.json().get('message', 'rate limit exceeded')[:100]}[/]")
+        except httpx.HTTPError:
+            continue
+
+    if not dir_listing:
+        return 0
+
+    # 递归下载目录中的所有文件
+    return _download_github_dir_recursive(console, dir_listing, skill_dir, base_dir)
+
+
+def _download_github_dir_recursive(
+    console: Console,
+    entries: list[dict],
+    target_dir: Path,
+    base_dir: Optional[Path] = None,
+) -> int:
+    """递归下载 GitHub 目录条目
+
+    Args:
+        entries: GitHub Contents API 返回的目录条目列表
+        target_dir: 本地保存目录
+        base_dir: 基础目录（用于读取 runtime.json 中的 token）
+
+    Returns:
+        成功下载的文件数量
+    """
+    import httpx
+
+    headers = _github_headers(base_dir=base_dir)
+    downloaded = 0
+
+    for entry in entries:
+        entry_name = entry.get("name", "")
+        entry_type = entry.get("type", "")
+        download_url = entry.get("download_url", "")
+
+        if entry_type == "file" and download_url:
+            try:
+                resp = httpx.get(download_url, headers=headers, follow_redirects=True, timeout=30)
+                if resp.status_code == 200:
+                    file_path = target_dir / entry_name
+                    file_path.write_text(resp.text, encoding="utf-8")
+                    downloaded += 1
+                    console.print(f"    [dim]下载: {entry_name}[/]")
+            except httpx.HTTPError as e:
+                console.print(f"    [yellow]下载 {entry_name} 失败: {e}[/]")
+
+        elif entry_type == "dir":
+            # 递归处理子目录
+            sub_dir = target_dir / entry_name
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            api_url = entry.get("url", "")
+            if api_url:
+                try:
+                    resp = httpx.get(api_url, headers=headers, follow_redirects=True, timeout=15)
+                    if resp.status_code == 200:
+                        sub_entries = resp.json()
+                        downloaded += _download_github_dir_recursive(console, sub_entries, sub_dir, base_dir)
+                except httpx.HTTPError as e:
+                    console.print(f"    [yellow]枚举子目录 {entry_name} 失败: {e}[/]")
+
+    return downloaded
 
 
 async def _register_skillset_from_url(
@@ -842,7 +1071,11 @@ async def _register_skillset_from_url(
     *,
     llm_manager: "LLMClientManager",
 ) -> None:
-    """注册 skillset 中的所有 skill"""
+    """注册 skillset 中的所有 skill
+
+    对于 GitHub 仓库，使用 GitHub Contents API 下载每个 skill 文件夹的全部文件；
+    对于非 GitHub URL，仅下载 SKILL.md。
+    """
     import httpx
 
     if not result.skills:
@@ -852,6 +1085,10 @@ async def _register_skillset_from_url(
     all_tools = registry.list_all()
     console.print(f"\n发现 {len(result.skills)} 个 skill，逐个安装:\n")
 
+    # 检测 GitHub 仓库路径（owner/repo），用于 API 调用
+    gh_repo_match = re.match(r"https://github\.com/([^/]+/[^/]+)", url)
+    gh_repo_path = gh_repo_match.group(1).rstrip("/") if gh_repo_match else None
+
     for skill_info in result.skills:
         console.print(f"  安装 skill: [cyan]{skill_info.name}[/]")
 
@@ -860,24 +1097,54 @@ async def _register_skillset_from_url(
             type="skill",
             name=skill_info.name,
             description=skill_info.description,
-            skill_md_content="",  # 需要下载
-            env_vars=result.env_vars,  # 子 skill 继承 skillset 的环境变量
+            skill_md_content="",
+            env_vars=result.env_vars,
             version=result.version,
             install_source=result.install_source,
         )
 
-        # 下载 SKILL.md
-        if skill_info.skill_md_url:
-            try:
-                resp = httpx.get(skill_info.skill_md_url, follow_redirects=True, timeout=30)
-                resp.raise_for_status()
-                skill_result.skill_md_content = resp.text
-            except httpx.HTTPError as e:
-                console.print(f"    [red]下载 SKILL.md 失败: {e}[/]")
-                continue
+        # 下载 skill 文件夹内容
+        skill_dir = Path("tools/skills") / skill_info.name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+
+        if gh_repo_path:
+            # GitHub 仓库：用 API 下载整个文件夹
+            downloaded = _download_github_skill_dir(console, gh_repo_path, skill_info.name, skill_dir, base_dir)
+            if not downloaded:
+                console.print(f"    [yellow]GitHub API 下载失败，回退到 SKILL.md 单文件下载[/]")
+                if skill_info.skill_md_url:
+                    try:
+                        resp = httpx.get(skill_info.skill_md_url, follow_redirects=True, timeout=30)
+                        resp.raise_for_status()
+                        skill_result.skill_md_content = resp.text
+                        (skill_dir / "SKILL.md").write_text(resp.text, encoding="utf-8")
+                    except httpx.HTTPError as e:
+                        console.print(f"    [red]下载 SKILL.md 失败: {e}[/]")
+                        continue
+                else:
+                    console.print(f"    [yellow]没有 SKILL.md URL，跳过[/]")
+                    continue
+            else:
+                # 从已下载的文件中读取 SKILL.md 内容
+                skill_md_path = skill_dir / "SKILL.md"
+                if skill_md_path.exists():
+                    skill_result.skill_md_content = skill_md_path.read_text(encoding="utf-8")
+                else:
+                    console.print(f"    [yellow]下载的文件夹中没有 SKILL.md，跳过[/]")
+                    continue
         else:
-            console.print(f"    [yellow]没有 SKILL.md URL，跳过[/]")
-            continue
+            # 非 GitHub URL：仅下载 SKILL.md
+            if skill_info.skill_md_url:
+                try:
+                    resp = httpx.get(skill_info.skill_md_url, follow_redirects=True, timeout=30)
+                    resp.raise_for_status()
+                    skill_result.skill_md_content = resp.text
+                except httpx.HTTPError as e:
+                    console.print(f"    [red]下载 SKILL.md 失败: {e}[/]")
+                    continue
+            else:
+                console.print(f"    [yellow]没有 SKILL.md URL，跳过[/]")
+                continue
 
         await _register_skill_from_url(
             console, registry, skill_result, url, base_dir, config_file,

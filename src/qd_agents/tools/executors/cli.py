@@ -302,6 +302,7 @@ def create_bash_tool(
     timeout: int = 30,
     scope: str = "user",
     tags: list[str] | None = None,
+    version: str | None = None,
 ) -> Tool:
     """创建 Bash 工具"""
     if tags is None:
@@ -321,5 +322,6 @@ def create_bash_tool(
         scope=scope,
         metadata=ToolMetadata(
             tags=tags,
+            version=version,
         ),
     )

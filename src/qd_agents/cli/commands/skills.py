@@ -9,6 +9,7 @@ Skills 管理命令
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -97,6 +98,13 @@ def skill_add(
     name = meta.get("name", skill_name)
     description = meta.get("description", f"Skill: {skill_name}")
 
+    # 提取版本号：优先从 frontmatter 的 version 字段，其次从目录名（如 name-1.0.0）
+    skill_version = meta.get("version")
+    if not skill_version:
+        version_match = re.search(r"-(\d+\.\d+(?:\.\d+)?)$", skill_name)
+        if version_match:
+            skill_version = version_match.group(1)
+
     # 加载配置并设置会话日志
     config = setup_configuration(console, base_dir=base_dir, config_file=config_file)
 
@@ -170,12 +178,14 @@ def skill_add(
         scope="user",
         metadata=ToolMetadata(
             tags=["skill", name],
+            version=skill_version,
         ),
         dependencies={
             "skill_type": skill_type,
             "tool_deps": tool_deps,
         },
         source_path=skill_name,
+        local_path=skill_name,
     )
 
     tool_id = registry.register(tool)
