@@ -382,6 +382,7 @@ def create_mcp_tool(
     env: dict[str, str] | None = None,
     timeout: int = 30,
     parameters: dict[str, Any] | None = None,
+    source_path: str | None = None,
 ) -> Tool:
     """创建 MCP 工具"""
     return Tool(
@@ -410,4 +411,5 @@ def create_mcp_tool(
             category="mcp",
             tags=["mcp", server],
         ),
+        source_path=source_path or server,
     )

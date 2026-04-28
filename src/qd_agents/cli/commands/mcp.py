@@ -193,6 +193,7 @@ async def mcp_add_async(
             },
             "required": ["tool_name", "arguments"],
         },
+        source_path=str(json_file) if json_file else final_server,
     )
 
     # 注册工具

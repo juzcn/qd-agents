@@ -107,12 +107,15 @@ def skill_add(
     if add_skill_result is None:
         console.print(f"  [yellow]AddSkillAnalyzer 不可用，使用默认依赖[/]")
         tool_deps = []
+        skill_type = "tool_manual"
     elif not add_skill_result.success:
         console.print(f"[red][ERROR][/] AddSkill 分析失败: {add_skill_result.failure_reason}[/]")
         return
     else:
         tool_deps = add_skill_result.tool_deps
+        skill_type = add_skill_result.skill_type
         console.print(f"  [green]AddSkill 分析完成[/]")
+        console.print(f"    技能类型: {skill_type}")
         console.print(f"    工具依赖: {', '.join(tool_deps) if tool_deps else '无'}")
 
     # 处理 API key（仅对有脚本的 skill）
@@ -169,9 +172,10 @@ def skill_add(
             tags=["skill", name],
         ),
         dependencies={
-            "skill_dir_name": skill_name,
+            "skill_type": skill_type,
             "tool_deps": tool_deps,
         },
+        source_path=skill_name,
     )
 
     tool_id = registry.register(tool)
