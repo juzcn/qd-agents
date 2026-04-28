@@ -77,7 +77,6 @@ def tools_list(
     skill: bool = typer.Option(False, "--skill", help="只列出 Skill 工具"),
     function: bool = typer.Option(False, "--function", help="只列出 Function 工具"),
     bash: bool = typer.Option(False, "--bash", help="只列出 Bash 工具"),
-    cli: bool = typer.Option(False, "--cli", help="只列出 CLI 工具"),
     http: bool = typer.Option(False, "--http", help="只列出 HTTP 工具"),
 ):
     """列出已注册的工具"""
@@ -90,8 +89,6 @@ def tools_list(
         type_filter.append("function")
     if bash:
         type_filter.append("bash")
-    if cli:
-        type_filter.append("cli")
     if http:
         type_filter.append("http")
     list_tools(console, base_dir, config_file, type_filter=type_filter or None)
