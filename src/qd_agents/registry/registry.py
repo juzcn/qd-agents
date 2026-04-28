@@ -49,6 +49,7 @@ class ToolRegistry:
                 security_tags TEXT NOT NULL,
                 metadata_json TEXT NOT NULL,
                 dependencies_json TEXT NOT NULL,
+                source_path TEXT DEFAULT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -65,6 +66,14 @@ class ToolRegistry:
         """)
 
         conn.commit()
+
+        # 迁移：为旧数据库添加 source_path 列
+        try:
+            conn.execute("ALTER TABLE tools ADD COLUMN source_path TEXT DEFAULT NULL")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # 列已存在
+
         return conn
 
     def register(self, tool: Tool) -> str:
@@ -75,9 +84,9 @@ class ToolRegistry:
             self._conn.execute("""
                 INSERT OR REPLACE INTO tools (
                     id, name, description, parameters_json, execution_json,
-                    security_tags, metadata_json, dependencies_json,
+                    security_tags, metadata_json, dependencies_json, source_path,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 tool.id,
                 tool.name,
@@ -87,6 +96,7 @@ class ToolRegistry:
                 json.dumps(tool.security, ensure_ascii=False),
                 tool.metadata.model_dump_json(ensure_ascii=False),
                 json.dumps(tool.dependencies, ensure_ascii=False),
+                tool.source_path,
                 tool.created_at.isoformat(),
                 tool.updated_at.isoformat(),
             ))
@@ -183,6 +193,7 @@ class ToolRegistry:
             security=json.loads(row["security_tags"]),
             metadata=ToolMetadata.model_validate_json(row["metadata_json"]),
             dependencies=json.loads(row["dependencies_json"]),
+            source_path=row["source_path"] if "source_path" in row.keys() else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )

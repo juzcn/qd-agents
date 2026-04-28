@@ -72,6 +72,10 @@ class Tool(BaseModel):
     security: list[str] = Field(default_factory=list)
     metadata: ToolMetadata = Field(default_factory=ToolMetadata)
     dependencies: dict[str, Any] = Field(default_factory=dict)
+    source_path: str | None = Field(
+        default=None,
+        description="工具源路径（如 skill 目录名 markdown-converter-1.0.0、mcp JSON 文件路径或 server 名），避免和 name 混淆",
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -85,6 +89,21 @@ class Tool(BaseModel):
                 "required": [],
             }
         return v
+
+    def to_minimal_openai_function(self) -> dict[str, Any]:
+        """转换为最小化 OpenAI Function Calling 格式（仅 name + description，空 parameters）"""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            },
+        }
 
     def to_openai_function(self) -> dict[str, Any]:
         """转换为 OpenAI Function Calling 格式"""

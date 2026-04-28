@@ -93,6 +93,7 @@ class EvolveAgent(Agent):
         self._cancel_event: asyncio.Event | None = None
         self._memory_service = memory_service
         self._session_id = session_id
+        self._disclosed_tools: set[str] = set()  # 已披露 schema 的工具名
 
     async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
         """执行自主进化"""
@@ -116,6 +117,10 @@ class EvolveAgent(Agent):
             existing_names = {t.get("function", {}).get("name") for t in openai_tools if "function" in t}
             if "recall_memory" not in existing_names:
                 openai_tools.append(RECALL_MEMORY_TOOL)
+
+        # 渐进式 schema 披露：初始只给 name + description（空 parameters）
+        # execute_bash 和 recall_memory 作为元工具，始终给完整 schema
+        minimal_tools = self._build_minimal_openai_tools(openai_tools, tool_map)
 
         # 构建初始消息
         messages = self.context.build_evolve_messages(
@@ -151,7 +156,7 @@ class EvolveAgent(Agent):
 
             response = await self.llm.chat(
                 messages=messages,
-                tools=openai_tools,
+                tools=minimal_tools,
                 tool_choice="auto",
                 temperature=0.3,
             )
@@ -237,7 +242,7 @@ class EvolveAgent(Agent):
                 skill_tool = find_skill_tool(tool_name, tool_map, self.registry)
                 if skill_tool:
                     skill_md = self.context._load_skill_md(
-                        skill_tool.dependencies.get("skill_dir_name", skill_tool.name)
+                        skill_tool.source_path or skill_tool.name
                     ) or ""
                     if skill_md:
                         logger.info("Injecting SKILL.md into system prompt: %s (progressive disclosure)", tool_name)
@@ -255,6 +260,29 @@ class EvolveAgent(Agent):
                             "content": f"技能 {tool_name} 的 SKILL.md 未找到。",
                         })
                     continue
+
+                # 渐进式 schema 披露：首次调用时通过 tool result 返回完整参数定义
+                if tool_name not in self._disclosed_tools and tool_name in tool_map:
+                    tool_obj = tool_map[tool_name]
+                    # SKILL 工具已有自己的披露机制，跳过
+                    if tool_obj.execution.type != ToolExecutionType.SKILL:
+                        self._disclosed_tools.add(tool_name)
+                        logger.info("Disclosing tool schema via tool result: %s (progressive disclosure)", tool_name)
+                        self._emit_step(iteration, event="schema_load", tool_name=tool_name, detail=tool_name)
+                        # 更新 minimal_tools 中该工具为完整 schema
+                        minimal_tools = self._replace_tool_in_list(minimal_tools, tool_obj.to_openai_function())
+                        # 将完整 schema 作为 tool result 返回，LLM 下一轮基于此重新调用
+                        schema_str = json.dumps(tool_obj.parameters, ensure_ascii=False, indent=2)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": (
+                                f"工具 {tool_name} 的参数定义如下，请严格按照参数定义重新调用：\n\n"
+                                f"描述: {tool_obj.description}\n\n"
+                                f"参数 Schema:\n```json\n{schema_str}\n```"
+                            ),
+                        })
+                        continue
 
                 # 记录 LLM 生成的工具调用命令
                 if tool_name == "execute_bash":
@@ -296,6 +324,40 @@ class EvolveAgent(Agent):
         )
 
     # --- 内部方法 ---
+
+    # 始终给完整 schema 的工具（元工具 / 内置工具）
+    _FULL_SCHEMA_TOOLS = frozenset({"execute_bash", "recall_memory"})
+
+    def _build_minimal_openai_tools(
+        self,
+        openai_tools: list[dict[str, Any]],
+        tool_map: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """构建最小化工具列表：大部分工具只给 name + description，元工具给完整 schema"""
+        minimal: list[dict[str, Any]] = []
+        for t in openai_tools:
+            func_info = t.get("function", {})
+            name = func_info.get("name", "")
+            if name in self._FULL_SCHEMA_TOOLS:
+                minimal.append(t)
+            elif name in tool_map:
+                minimal.append(tool_map[name].to_minimal_openai_function())
+            else:
+                minimal.append(t)
+        return minimal
+
+    @staticmethod
+    def _replace_tool_in_list(
+        tools: list[dict[str, Any]],
+        full_tool: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """替换工具列表中对应工具为完整 schema 版本"""
+        target_name = full_tool.get("function", {}).get("name", "")
+        for i, t in enumerate(tools):
+            if t.get("function", {}).get("name") == target_name:
+                tools[i] = full_tool
+                break
+        return tools
 
     def _auto_save_memory(self, question: str, answer: str, token_count: int = 0) -> None:
         """QA 完成后自动写入长期记忆"""
