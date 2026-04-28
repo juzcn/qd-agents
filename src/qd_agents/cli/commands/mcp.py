@@ -50,31 +50,63 @@ def _detect_package_version(command: str, args: list[str]) -> tuple[str | None, 
     # 尝试获取已安装版本
     try:
         if command in ("npx", "npm"):
-            # npm list 输出格式: @scope/package@1.2.3
-            result = subprocess.run(
-                ["npm", "list", "-g", install_source, "--depth=0", "--json"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                deps = data.get("dependencies", {})
-                if install_source in deps:
-                    version = deps[install_source].get("version")
+            version = _npm_detect_version(install_source)
         elif command in ("uvx", "pip"):
-            # pip show 输出格式: Version: 1.2.3
-            result = subprocess.run(
-                ["pip", "show", install_source],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    if line.startswith("Version:"):
-                        version = line.split(":", 1)[1].strip()
-                        break
+            version = _pip_detect_version(install_source)
     except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
         pass
 
     return version, install_source
+
+
+def _npm_detect_version(package: str) -> str | None:
+    """npm 包版本检测：npm list -g → npm view"""
+    # 1. 尝试 npm list -g（本地已安装）
+    result = subprocess.run(
+        ["npm", "list", "-g", package, "--depth=0", "--json"],
+        capture_output=True, text=True, timeout=10, shell=True,
+    )
+    if result.returncode == 0:
+        try:
+            data = json.loads(result.stdout)
+            deps = data.get("dependencies", {})
+            if package in deps:
+                return deps[package].get("version")
+        except json.JSONDecodeError:
+            pass
+    # 2. 尝试 npm view（远程查询最新版本）
+    result = subprocess.run(
+        ["npm", "view", package, "version"],
+        capture_output=True, text=True, timeout=10, shell=True,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return None
+
+
+def _pip_detect_version(package: str) -> str | None:
+    """pip/uvx 包版本检测：uv pip show → pip index versions"""
+    # 1. 尝试 uv pip show（当前 venv 已安装）
+    result = subprocess.run(
+        ["uv", "pip", "show", package],
+        capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            if line.startswith("Version:"):
+                return line.split(":", 1)[1].strip()
+    # 2. 尝试 pip index versions（PyPI 远程查询）
+    result = subprocess.run(
+        ["pip", "index", "versions", package],
+        capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode == 0:
+        # 输出格式: package (X.Y.Z)\nAvailable versions: ...
+        first_line = result.stdout.strip().splitlines()[0]
+        match = re.search(r"\(([^)]+)\)", first_line)
+        if match:
+            return match.group(1)
+    return None
 
 
 async def mcp_add_async(

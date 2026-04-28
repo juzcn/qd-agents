@@ -243,7 +243,7 @@ class EvolveAgent(Agent):
                 if skill_tool:
                     skill_type = skill_tool.dependencies.get("skill_type", "tool_manual")
                     skill_md = self.context._load_skill_md(
-                        skill_tool.source_path or skill_tool.name
+                        skill_tool.local_path or skill_tool.name
                     ) or ""
                     self._emit_step(iteration, event="skill_load", tool_name=tool_name, detail=tool_name)
                     if skill_md:

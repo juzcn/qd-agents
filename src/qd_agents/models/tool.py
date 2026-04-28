@@ -75,7 +75,11 @@ class Tool(BaseModel):
     dependencies: dict[str, Any] = Field(default_factory=dict)
     source_path: str | None = Field(
         default=None,
-        description="工具源路径（如 skill 目录名 markdown-converter-1.0.0、mcp JSON 文件路径或 server 名），避免和 name 混淆",
+        description="工具来源路径（如 GitHub URL、MCP JSON 文件路径或 server 名）",
+    )
+    local_path: str | None = Field(
+        default=None,
+        description="工具本地目录名（如 skill 在 tools/skills/ 下的文件夹名），与 name 可能不同",
     )
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

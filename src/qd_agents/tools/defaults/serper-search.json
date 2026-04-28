@@ -1,8 +1,9 @@
 {
   "mcpServers": {
     "serper-search": {
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/mcp-server-serper-search"]
+      "command": "uvx",
+      "args": ["serper-mcp-server"],
+      "env": ["SERPER_API_KEY"]
     }
   }
 }

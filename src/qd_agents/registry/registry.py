@@ -75,6 +75,23 @@ class ToolRegistry:
         except sqlite3.OperationalError:
             pass  # 列已存在
 
+        # 迁移：为旧数据库添加 local_path 列
+        try:
+            conn.execute("ALTER TABLE tools ADD COLUMN local_path TEXT DEFAULT NULL")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # 列已存在
+
+        # 回填：skill 类型工具的 local_path 设为 name
+        try:
+            conn.execute(
+                "UPDATE tools SET local_path = name WHERE local_path IS NULL "
+                "AND execution_json LIKE '%\"type\":\"skill\"%'"
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
         return conn
 
     def register(self, tool: Tool) -> str:
@@ -86,8 +103,8 @@ class ToolRegistry:
                 INSERT OR REPLACE INTO tools (
                     id, name, description, parameters_json, execution_json,
                     scope, security_tags, metadata_json, dependencies_json, source_path,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    local_path, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 tool.id,
                 tool.name,
@@ -99,6 +116,7 @@ class ToolRegistry:
                 tool.metadata.model_dump_json(ensure_ascii=False),
                 json.dumps(tool.dependencies, ensure_ascii=False),
                 tool.source_path,
+                tool.local_path,
                 tool.created_at.isoformat(),
                 tool.updated_at.isoformat(),
             ))
@@ -209,6 +227,7 @@ class ToolRegistry:
             metadata=ToolMetadata.model_validate_json(row["metadata_json"]),
             dependencies=json.loads(row["dependencies_json"]),
             source_path=row["source_path"] if "source_path" in row.keys() else None,
+            local_path=row["local_path"] if "local_path" in row.keys() else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
