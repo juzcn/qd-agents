@@ -4,7 +4,7 @@ CLI 命令模块
 
 from .chat import ChatCommandHandler, chat_async
 from .models import list_models_async
-from .tools import list_tools, init_tools, add_tool, remove_tools
+from .tools import list_tools, init_tools, add_tool, add_tool_from_url, remove_tools, update_check, update_tools
 from .version import show_version
 from .mcp import mcp_add
 from .skills import skill_add
@@ -16,7 +16,11 @@ __all__ = [
     "list_models_async",
     "list_tools",
     "init_tools",
+    "add_tool",
+    "add_tool_from_url",
     "remove_tools",
+    "update_check",
+    "update_tools",
     "show_version",
     "mcp_add",
     "skill_add",

@@ -46,6 +46,7 @@ class ToolRegistry:
                 description TEXT NOT NULL,
                 parameters_json TEXT NOT NULL,
                 execution_json TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT 'user',
                 security_tags TEXT NOT NULL,
                 metadata_json TEXT NOT NULL,
                 dependencies_json TEXT NOT NULL,
@@ -56,8 +57,8 @@ class ToolRegistry:
         """)
 
         conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_tools_category
-            ON tools (json_extract(metadata_json, '$.category'))
+            CREATE INDEX IF NOT EXISTS idx_tools_scope
+            ON tools (scope)
         """)
 
         conn.execute("""
@@ -84,15 +85,16 @@ class ToolRegistry:
             self._conn.execute("""
                 INSERT OR REPLACE INTO tools (
                     id, name, description, parameters_json, execution_json,
-                    security_tags, metadata_json, dependencies_json, source_path,
+                    scope, security_tags, metadata_json, dependencies_json, source_path,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 tool.id,
                 tool.name,
                 tool.description,
                 json.dumps(tool.parameters, ensure_ascii=False),
                 tool.execution.model_dump_json(ensure_ascii=False),
+                tool.scope,
                 json.dumps(tool.security, ensure_ascii=False),
                 tool.metadata.model_dump_json(ensure_ascii=False),
                 json.dumps(tool.dependencies, ensure_ascii=False),
@@ -135,9 +137,21 @@ class ToolRegistry:
             cursor = self._conn.execute("DELETE FROM tools")
             return cursor.rowcount > 0
 
+    def delete_by_scopes(self, scopes: list[str]) -> int:
+        """按属性删除工具，返回删除数量"""
+        if not scopes:
+            return 0
+        placeholders = ",".join("?" for _ in scopes)
+        with self._conn:
+            cursor = self._conn.execute(
+                f"DELETE FROM tools WHERE scope IN ({placeholders})",
+                scopes,
+            )
+            return cursor.rowcount
+
     def list_all(
         self,
-        category: str | None = None,
+        scope: str | None = None,
         version_status: ToolVersionStatus | None = None,
         limit: int | None = None,
     ) -> list[Tool]:
@@ -145,9 +159,9 @@ class ToolRegistry:
         query = "SELECT * FROM tools WHERE 1=1"
         params: list[Any] = []
 
-        if category:
-            query += " AND json_extract(metadata_json, '$.category') = ?"
-            params.append(category)
+        if scope:
+            query += " AND scope = ?"
+            params.append(scope)
 
         if version_status:
             query += " AND json_extract(metadata_json, '$.version_status') = ?"
@@ -190,6 +204,7 @@ class ToolRegistry:
             description=row["description"],
             parameters=json.loads(row["parameters_json"]),
             execution=ToolExecutionConfig.model_validate_json(row["execution_json"]),
+            scope=row["scope"] if "scope" in row.keys() else "user",
             security=json.loads(row["security_tags"]),
             metadata=ToolMetadata.model_validate_json(row["metadata_json"]),
             dependencies=json.loads(row["dependencies_json"]),

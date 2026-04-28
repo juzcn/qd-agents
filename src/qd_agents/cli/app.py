@@ -11,7 +11,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from .commands import chat_async, list_models_async, list_tools, init_tools, add_tool, remove_tools, show_version, mcp_add, skill_add, recall_memories, recall_memory
+from .commands import chat_async, list_models_async, list_tools, init_tools, add_tool, add_tool_from_url, remove_tools, update_check, update_tools, show_version, mcp_add, skill_add, recall_memories, recall_memory
 
 
 # 创建 Typer 应用实例
@@ -112,12 +112,12 @@ def tools_add_command(
     name: str = typer.Argument(..., help="工具名称"),
     command: str = typer.Option(..., "--command", "-c", help="命令模板，可用 {args} 作为参数占位符"),
     description: Optional[str] = typer.Option(None, "--description", "-d", help="工具描述"),
-    category: str = typer.Option("cli", "--category", "-t", help="工具分类"),
+    scope: str = typer.Option("user", "--scope", "-t", help="工具属性: builtin, default, user"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
     config_file: Optional[Path] = typer.Option(None, "--config", help="配置文件路径"),
 ):
     """注册 CLI/Bash 工具到工具箱"""
-    add_tool(console, name, command, description, category, base_dir, config_file)
+    add_tool(console, name, command, description, scope, base_dir, config_file)
 
 
 # mcp add 命令
@@ -153,6 +153,17 @@ def mcp_add_command(
     mcp_add(console, name, server, transport, command, args, url, config_file, base_dir, json_file)
 
 
+# tools add-url 命令
+@tools_app.command("add-url", help="从 URL 自动安装工具（支持 pypi/mcp/skill/skillset）")
+def tools_add_url_command(
+    url: str = typer.Argument(..., help="工具 URL（pypi/MCP/skill/skillset）"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """从 URL 自动安装工具"""
+    add_tool_from_url(console, url, base_dir, config_file)
+
+
 # tools remove 命令
 @tools_app.command("remove", help="移除已注册的工具")
 def tools_remove_command(
@@ -163,6 +174,26 @@ def tools_remove_command(
 ):
     """移除已注册的工具（支持所有类型）"""
     remove_tools(console, tool_identifier, base_dir, config_file, keep_credentials)
+
+
+# tools update-check 命令
+@tools_app.command("update-check", help="检查默认 MCP 工具版本更新")
+def tools_update_check(
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """检查默认 MCP 工具版本更新"""
+    update_check(console, base_dir, config_file)
+
+
+# tools update 命令
+@tools_app.command("update", help="更新默认 MCP 工具到最新版本")
+def tools_update(
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """更新默认 MCP 工具到最新版本"""
+    update_tools(console, base_dir, config_file)
 
 
 # skill add 命令

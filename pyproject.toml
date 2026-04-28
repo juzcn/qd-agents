@@ -22,6 +22,7 @@ dependencies = [
     "markitdown[all]>=0.1.5",
     "sqlite-vec>=0.1.9",
     "llama-cpp-python>=0.3.0",
+    "html2text>=2025.4.15",
 ]
 
 [dependency-groups]

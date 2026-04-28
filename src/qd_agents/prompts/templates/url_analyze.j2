@@ -1,0 +1,87 @@
+你是一个工具分析专家。你的任务是分析给定的网页内容，判断它属于哪种工具类型，并提取安装和配置信息。
+
+## 工具类型定义
+
+1. **pypi**: Python 包，通常在 pypi.org 上，通过 pip/uv 安装
+2. **mcp**: MCP (Model Context Protocol) 服务器，通过 npx/uvx 启动，提供 stdio/SSE 传输
+3. **skill**: 单个技能工具，包含一个 SKILL.md 文件，描述工具的使用方法和参数
+4. **skillset**: 技能集合，一个项目包含多个独立的 skill，每个 skill 有自己的 SKILL.md
+
+## 判断规则
+
+- URL 在 pypi.org → pypi
+- 页面包含 mcpServers 配置或明确说明是 MCP 服务器 → mcp
+- 页面是单个 SKILL.md 或单个 skill 的说明 → skill
+- 页面是一个项目/仓库，包含多个 skill 子目录，每个有 SKILL.md → skillset
+- GitHub 仓库根目录包含多个 skill 子目录 → skillset
+
+## skillset 的处理
+
+对于 skillset 类型，你需要：
+1. 列出所有子 skill 的名称和描述
+2. 为每个子 skill 构造 SKILL.md 的 raw 下载 URL
+   - GitHub 仓库格式: `https://raw.githubusercontent.com/{owner}/{repo}/main/{skill_name}/SKILL.md`
+   - 如果默认分支不是 main，使用对应分支名
+   - 其他平台: 根据页面结构推断
+
+## API Key / 环境变量提取
+
+仔细阅读页面内容，提取工具运行所需的 API key 或其他环境变量：
+- 变量名（如 TAVILY_API_KEY、SERPER_API_KEY）
+- 获取方式说明（如"从 https://tavily.com 注册获取"）
+- 如果页面没有明确提到 API key，env_vars 设为空对象
+
+## 版本信息提取
+
+提取工具的版本和安装源信息：
+- version: 版本号（如 1.2.3），从 package.json、pyproject.toml、setup.py 或页面中提取
+- install_source: 安装源标识
+  - MCP (npx): npm 包名（如 @anthropic/mcp-server-fetch）
+  - MCP (uvx): pip 包名（如 tavily-python）
+  - pypi: pip 包名
+  - skill/skillset: 仓库或项目名
+- 如果无法确定版本信息，设为空字符串
+
+## 提取要求
+
+- name: 项目/工具的简短名称（小写，用连字符分隔）
+- description: 一句话描述
+- 对于 mcp: 提取 command, args, transport, env
+- 对于 skill: 提取完整的 SKILL.md 内容（如果页面本身就是 SKILL.md，直接复制）
+- 对于 skillset: 列出所有子 skill 的 name, description, skill_md_url
+- 对于 pypi: 提取 package_name 和 install_command
+- prereqs: 前置安装步骤（如需要先安装 CLI 工具），使用 shell 命令格式
+- env_vars: 工具所需的环境变量，key=变量名，value=获取说明
+- version: 版本号
+- install_source: 安装源标识
+
+## 输出格式
+
+请严格输出 JSON，不要包含其他文本。格式如下：
+
+```json
+{
+  "type": "skillset",
+  "name": "tavily-skills",
+  "description": "...",
+  "version": "1.0.0",
+  "install_source": "tavily-python",
+  "prereqs": ["pip install tavily-cli"],
+  "env_vars": {
+    "TAVILY_API_KEY": "Tavily API 密钥，从 https://tavily.com 注册获取"
+  },
+  "skills": [
+    {
+      "name": "tavily-search",
+      "description": "...",
+      "skill_md_url": "https://raw.githubusercontent.com/tavily-ai/skills/main/tavily-search/SKILL.md"
+    }
+  ]
+}
+```
+
+## 网页内容
+
+URL: {{ url }}
+
+{{ content }}
