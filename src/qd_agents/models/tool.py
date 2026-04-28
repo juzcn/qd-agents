@@ -51,9 +51,9 @@ class ToolExecutionConfig(BaseModel):
 
 class ToolMetadata(BaseModel):
     """工具元数据"""
-    category: str = "utilities"
     tags: list[str] = Field(default_factory=list)
-    version: str = "1.0.0"
+    version: str | None = None
+    install_source: str | None = None
     version_status: ToolVersionStatus = ToolVersionStatus.ACTIVE
     changelog: str = ""
     deprecated_since: str | None = None
@@ -69,6 +69,7 @@ class Tool(BaseModel):
     description: str
     parameters: dict[str, Any] = Field(default_factory=dict)
     execution: ToolExecutionConfig
+    scope: str = "user"
     security: list[str] = Field(default_factory=list)
     metadata: ToolMetadata = Field(default_factory=ToolMetadata)
     dependencies: dict[str, Any] = Field(default_factory=dict)
@@ -121,7 +122,7 @@ class Tool(BaseModel):
         parts = [
             self.name,
             self.description,
-            self.metadata.category,
+            self.scope,
             " ".join(self.metadata.tags),
         ]
         return " ".join(filter(None, parts))

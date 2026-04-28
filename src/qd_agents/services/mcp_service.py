@@ -192,8 +192,8 @@ class MCPService:
                 description=mcp_tool.description if hasattr(mcp_tool, 'description') else f"MCP tool: {mcp_tool_name}",
                 parameters=parameters,
                 execution=exec_config,
+                scope="user",
                 metadata=ToolMetadata(
-                    category="mcp",
                     tags=[mcp_tool_name, 'mcp-subtool', server_key],
                 ),
             )

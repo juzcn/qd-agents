@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "serper-search": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-serper-search"]
+    }
+  }
+}

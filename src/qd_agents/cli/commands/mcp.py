@@ -6,6 +6,8 @@ MCP 服务器管理命令
 import asyncio
 import json
 import logging
+import re
+import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -19,6 +21,60 @@ from qd_agents.tools.executors import create_mcp_tool, extract_mcp_servers_confi
 
 
 logger = logging.getLogger(__name__)
+
+
+def _detect_package_version(command: str, args: list[str]) -> tuple[str | None, str | None]:
+    """检测 MCP 工具包的版本和安装源
+
+    Returns:
+        (version, install_source) — 版本号和安装源（如 npm/pip 包名）
+    """
+    install_source = None
+    version = None
+
+    # 从 args 中提取包名
+    if command in ("npx", "npm") and args:
+        # npx -y @scope/package → 提取 @scope/package
+        filtered = [a for a in args if a not in ("-y", "--yes", "--")]
+        if filtered:
+            install_source = filtered[0]
+    elif command in ("uvx", "pip") and args:
+        # uvx package-name → 提取 package-name
+        filtered = [a for a in args if not a.startswith("-")]
+        if filtered:
+            install_source = filtered[0]
+
+    if not install_source:
+        return None, None
+
+    # 尝试获取已安装版本
+    try:
+        if command in ("npx", "npm"):
+            # npm list 输出格式: @scope/package@1.2.3
+            result = subprocess.run(
+                ["npm", "list", "-g", install_source, "--depth=0", "--json"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                deps = data.get("dependencies", {})
+                if install_source in deps:
+                    version = deps[install_source].get("version")
+        elif command in ("uvx", "pip"):
+            # pip show 输出格式: Version: 1.2.3
+            result = subprocess.run(
+                ["pip", "show", install_source],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if line.startswith("Version:"):
+                        version = line.split(":", 1)[1].strip()
+                        break
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        pass
+
+    return version, install_source
 
 
 async def mcp_add_async(
@@ -175,6 +231,11 @@ async def mcp_add_async(
 
         logger.debug(f"Final parsed args: {parsed_args}")
 
+    # 检测版本和安装源
+    version, install_source = None, None
+    if final_command and parsed_args:
+        version, install_source = _detect_package_version(final_command, parsed_args)
+
     # 创建 MCP 工具
     tool = create_mcp_tool(
         name=final_name,
@@ -194,6 +255,8 @@ async def mcp_add_async(
             "required": ["tool_name", "arguments"],
         },
         source_path=str(json_file) if json_file else final_server,
+        version=version,
+        install_source=install_source,
     )
 
     # 注册工具
@@ -208,6 +271,10 @@ async def mcp_add_async(
         console.print(f"  参数: {parsed_args}")
     if final_url:
         console.print(f"  URL: {final_url}")
+    if install_source:
+        console.print(f"  安装源: {install_source}")
+    if version:
+        console.print(f"  版本: {version}")
 
 
 def mcp_add(

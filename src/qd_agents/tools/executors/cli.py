@@ -300,7 +300,7 @@ def create_bash_tool(
     parameters: dict[str, Any] | None = None,
     shell: str = "bash",
     timeout: int = 30,
-    category: str = "shell",
+    scope: str = "user",
     tags: list[str] | None = None,
 ) -> Tool:
     """创建 Bash 工具"""
@@ -318,8 +318,8 @@ def create_bash_tool(
             shell=shell,
             timeout=timeout,
         ),
+        scope=scope,
         metadata=ToolMetadata(
-            category=category,
             tags=tags,
         ),
     )

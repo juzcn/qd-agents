@@ -167,8 +167,8 @@ def skill_add(
             type=ToolExecutionType.SKILL,
             env=env,
         ),
+        scope="user",
         metadata=ToolMetadata(
-            category="skills",
             tags=["skill", name],
         ),
         dependencies={
