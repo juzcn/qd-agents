@@ -238,21 +238,32 @@ class EvolveAgent(Agent):
                     })
                     continue
 
-                # SKILL 工具渐进式披露：将 SKILL.md 注入系统提示词
+                # SKILL 工具渐进式披露：根据 skill_type 选择注入方式
                 skill_tool = find_skill_tool(tool_name, tool_map, self.registry)
                 if skill_tool:
+                    skill_type = skill_tool.dependencies.get("skill_type", "tool_manual")
                     skill_md = self.context._load_skill_md(
                         skill_tool.source_path or skill_tool.name
                     ) or ""
+                    self._emit_step(iteration, event="skill_load", tool_name=tool_name, detail=tool_name)
                     if skill_md:
-                        logger.info("Injecting SKILL.md into system prompt: %s (progressive disclosure)", tool_name)
-                        self._emit_step(iteration, event="skill_load", tool_name=tool_name, detail=tool_name)
-                        messages = inject_skill_into_system_prompt(messages, tool_name, skill_md)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": f"已加载技能 {tool_name} 的用法指南到系统提示词。请仔细阅读系统提示词中「技能指南: {tool_name}」的 Usage 部分，严格按照 Usage 给出的命令格式，使用 execute_bash 执行。",
-                        })
+                        if skill_type == "prompt":
+                            # 行为指南/提示词：注入系统提示词（全局生效）
+                            logger.info("Injecting SKILL.md into system prompt (prompt type): %s", tool_name)
+                            messages = inject_skill_into_system_prompt(messages, tool_name, skill_md)
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": f"已加载技能 {tool_name} 的行为指南到系统提示词。请在后续所有决策中遵循该指南。",
+                            })
+                        else:
+                            # 纯工具说明书：注入当前上下文（tool result）
+                            logger.info("Injecting SKILL.md into tool result (tool_manual type): %s", tool_name)
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": f"已加载技能指南，请按照以下说明使用 execute_bash 执行：\n\n{skill_md}",
+                            })
                     else:
                         messages.append({
                             "role": "tool",
