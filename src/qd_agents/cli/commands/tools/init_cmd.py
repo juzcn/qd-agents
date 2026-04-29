@@ -139,7 +139,7 @@ def init_tools(
     # 从包内 defaults/ 目录读取配置，注册为 default 类别
 
     runtime_config = load_runtime_config(base_dir=base_dir)
-    defaults_dir = Path(__file__).parent.parent.parent / "tools" / "defaults"
+    defaults_dir = Path(__file__).parent.parent.parent.parent / "tools" / "defaults"
 
     for json_file in sorted(defaults_dir.glob("*.json")):
         server_name = json_file.stem  # filesystem, fetch, serper-search, github-api
