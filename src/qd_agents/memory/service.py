@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..config.models import MemoryConfig
-from .embedder import Embedder
+from .embedder import BaseEmbedder, create_embedder
 from .recall import RecallService
 from .store import MemoryRecord, MemoryStore
 
@@ -31,7 +31,13 @@ class MemoryService:
         model_path = config.model_path
         if model_path is None or model_path.is_dir():
             model_path = (model_path or Path(".")) / config.embedding_model
-        self._embedder = Embedder(model_path, vec_dim=config.vec_dim)
+        self._embedder: BaseEmbedder = create_embedder(
+            backend=config.embedding_backend,
+            model_path=model_path,
+            model_name=config.embedding_model,
+            vec_dim=config.vec_dim,
+            hf_token=config.hf_token,
+        )
 
         # 存储层
         self._store = MemoryStore(config.db_path, vec_dim=config.vec_dim)

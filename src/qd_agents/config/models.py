@@ -78,7 +78,9 @@ class LLMConfig(BaseModel):
 class MemoryConfig(BaseModel):
     """长期记忆配置"""
     db_path: Path = Path("data/memory.db")
+    embedding_backend: str = "llama_cpp"
     embedding_model: str = "hf_KimChen_bge-m3-q4_k_m.gguf"
+    hf_token: str = ""
     model_path: Path | None = None
     vec_dim: int = 1024
     top_k: int = 5
@@ -93,7 +95,9 @@ class ToolRegistryConfig(BaseModel):
     """Tool Registry 配置"""
     db_path: Path
     sqlite_vec_enabled: bool = True
+    embedding_backend: str = "llama_cpp"
     embedding_model: str = "hf_KimChen_bge-m3-q4_k_m.gguf"
+    hf_token: str = ""
     model_path: Path | None = None
     top_k: int = 10
     similarity_threshold: float = 0.7
