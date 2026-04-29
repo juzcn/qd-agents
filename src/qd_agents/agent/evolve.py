@@ -306,8 +306,7 @@ class EvolveAgent(Agent):
                 minimal.append(t)
         return minimal
 
-    @staticmethod
-    def _handle_recall_memory(
+    async def _handle_recall_memory(
         self,
         tool_call: Any,
         tool_input: dict,
