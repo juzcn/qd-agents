@@ -1,23 +1,10 @@
+"""配置管理模块
+
+公共 API：Config, RuntimeConfig, load_config, save_config, load_runtime_config, save_runtime_config
+子模型类（LLMProviderConfig 等）可从 qd_agents.config.models 直接导入。
 """
-配置管理模块
-"""
-from .models import (
-    Config,
-    RuntimeConfig,
-    LLMProviderConfig,
-    SearchProviderConfig,
-    BaiduSearchConfig,
-    SearchConfig,
-    LLMConfig,
-    ToolRegistryConfig,
-    ExecutionConfig,
-    ToolCredentialConfig,
-    ToolsCredentialsConfig,
-    PromptsConfig,
-    StorageConfig,
-    ObservabilityConfig,
-    SystemConfig,
-)
+
+from .models import Config, RuntimeConfig
 from .loader import load_config, load_runtime_config, save_config, save_runtime_config
 
 # 全局配置实例
@@ -36,29 +23,12 @@ def set_config(config: Config) -> None:
 
 
 __all__ = [
-    # 主配置类
     "Config",
     "RuntimeConfig",
-    # 加载/保存
     "load_config",
     "load_runtime_config",
     "save_config",
     "save_runtime_config",
-    # 全局配置
     "get_config",
     "set_config",
-    # 子配置模型
-    "LLMProviderConfig",
-    "SearchProviderConfig",
-    "BaiduSearchConfig",
-    "SearchConfig",
-    "LLMConfig",
-    "ToolRegistryConfig",
-    "ExecutionConfig",
-    "ToolCredentialConfig",
-    "ToolsCredentialsConfig",
-    "PromptsConfig",
-    "StorageConfig",
-    "ObservabilityConfig",
-    "SystemConfig",
 ]
