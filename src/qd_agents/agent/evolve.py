@@ -423,6 +423,7 @@ class EvolveAgent(Agent):
         }]
         return (updated_tools, msgs)
 
+    @staticmethod
     def _replace_tool_in_list(
         tools: list[dict[str, Any]],
         full_tool: dict[str, Any],
