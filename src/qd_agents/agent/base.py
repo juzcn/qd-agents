@@ -16,33 +16,6 @@ from typing import Any, Callable
 StepCallback = Callable[[dict[str, Any]], None]
 
 
-# --- 消息数据模型 ---
-
-
-@dataclass
-class MetaAgentInput:
-    """消息输入"""
-
-    user_message: str
-    history: list[dict]
-    context: dict = field(default_factory=dict)
-
-
-@dataclass
-class MetaAgentOutput:
-    """消息输出"""
-
-    output: Any
-    output_type: str  # "text" | "evolve_result" | "add_skill_result"
-    success: bool
-    messages: list[dict] = field(default_factory=list)
-    model: str = ""
-    total_tokens: int = 0
-    last_prompt_tokens: int = 0
-    latency_ms: int = 0
-    iterations: int = 1
-
-
 # --- Agent 数据模型 ---
 
 
@@ -52,7 +25,6 @@ class AgentResult:
 
     final_answer: str
     success: bool
-    meta_traces: list[MetaAgentOutput] = field(default_factory=list)
     working_memory: dict = field(default_factory=dict)
     interaction_log: list[dict] = field(default_factory=list)
     total_tokens: int = 0
