@@ -217,83 +217,32 @@ class EvolveAgent(Agent):
                     tool_input = {"raw": tool_call.function.arguments}
 
                 # recall_memory 工具：拦截并调用记忆服务
-                if tool_name == "recall_memory" and self._memory_service:
-                    query = tool_input.get("query", "")
-                    logger.info("Recall memory: %s", query)
-                    self._emit_step(iteration, event="tool_call", tool_name=tool_name)
-                    try:
-                        records = self._memory_service.recall(
-                            query=query,
-                            exclude_session=self._session_id,
-                        )
-                        tool_result = self._memory_service.format_recall_result(records)
-                    except Exception as e:
-                        logger.exception("Recall memory failed")
-                        tool_result = f"召回记忆失败: {e}"
-                    self._emit_step(iteration, event="tool_result", tool_name=tool_name, result_summary=tool_result[:200])
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": tool_result,
-                    })
+                handled = self._handle_recall_memory(
+                    tool_call, tool_input, tool_name, iteration,
+                )
+                if handled is not None:
+                    messages.extend(handled)
                     continue
 
-                # SKILL 工具渐进式披露：根据 skill_type 选择注入方式
-                skill_tool = find_skill_tool(tool_name, tool_map, self.registry)
-                if skill_tool:
-                    skill_type = skill_tool.dependencies.get("skill_type", "tool_manual")
-                    skill_md = self.context._load_skill_md(
-                        skill_tool.local_path or skill_tool.name
-                    ) or ""
-                    self._emit_step(iteration, event="skill_load", tool_name=tool_name, detail=tool_name)
-                    if skill_md:
-                        if skill_type == "prompt":
-                            # 行为指南/提示词：注入系统提示词（全局生效）
-                            logger.info("Injecting SKILL.md into system prompt (prompt type): %s", tool_name)
-                            messages = inject_skill_into_system_prompt(messages, tool_name, skill_md)
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": f"已加载技能 {tool_name} 的行为指南到系统提示词。请在后续所有决策中遵循该指南。",
-                            })
-                        else:
-                            # 纯工具说明书：注入当前上下文（tool result）
-                            logger.info("Injecting SKILL.md into tool result (tool_manual type): %s", tool_name)
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": f"已加载技能指南，请按照以下说明使用 execute_bash 执行：\n\n{skill_md}",
-                            })
-                    else:
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": f"技能 {tool_name} 的 SKILL.md 未找到。",
-                        })
+                # SKILL 工具渐进式披露
+                skill_result = self._handle_skill_disclosure(
+                    tool_call, tool_input, tool_name, tool_map, iteration,
+                )
+                if skill_result is not None:
+                    replacement_msgs, append_msgs = skill_result
+                    if replacement_msgs is not None:
+                        messages = replacement_msgs
+                    messages.extend(append_msgs)
                     continue
 
-                # 渐进式 schema 披露：首次调用时通过 tool result 返回完整参数定义
-                if tool_name not in self._disclosed_tools and tool_name in tool_map:
-                    tool_obj = tool_map[tool_name]
-                    # SKILL 工具已有自己的披露机制，跳过
-                    if tool_obj.execution.type != ToolExecutionType.SKILL:
-                        self._disclosed_tools.add(tool_name)
-                        logger.info("Disclosing tool schema via tool result: %s (progressive disclosure)", tool_name)
-                        self._emit_step(iteration, event="schema_load", tool_name=tool_name, detail=tool_name)
-                        # 更新 minimal_tools 中该工具为完整 schema
-                        minimal_tools = self._replace_tool_in_list(minimal_tools, tool_obj.to_openai_function())
-                        # 将完整 schema 作为 tool result 返回，LLM 下一轮基于此重新调用
-                        schema_str = json.dumps(tool_obj.parameters, ensure_ascii=False, indent=2)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": (
-                                f"工具 {tool_name} 的参数定义如下，请严格按照参数定义重新调用：\n\n"
-                                f"描述: {tool_obj.description}\n\n"
-                                f"参数 Schema:\n```json\n{schema_str}\n```"
-                            ),
-                        })
-                        continue
+                # 渐进式 schema 披露
+                schema_result = self._handle_schema_disclosure(
+                    tool_call, tool_name, tool_map, iteration,
+                )
+                if schema_result is not None:
+                    minimal_tools, schema_msgs = schema_result
+                    messages.extend(schema_msgs)
+                    continue
 
                 # 记录 LLM 生成的工具调用命令
                 if tool_name == "execute_bash":
@@ -358,6 +307,122 @@ class EvolveAgent(Agent):
         return minimal
 
     @staticmethod
+    def _handle_recall_memory(
+        self,
+        tool_call: Any,
+        tool_input: dict,
+        tool_name: str,
+        iteration: int,
+    ) -> list[dict] | None:
+        """拦截 recall_memory 工具调用，调用记忆服务。返回追加的消息列表，或 None 表示不处理。"""
+        if tool_name != "recall_memory" or not self._memory_service:
+            return None
+
+        query = tool_input.get("query", "")
+        logger.info("Recall memory: %s", query)
+        self._emit_step(iteration, event="tool_call", tool_name=tool_name)
+        try:
+            records = self._memory_service.recall(
+                query=query,
+                exclude_session=self._session_id,
+            )
+            tool_result = self._memory_service.format_recall_result(records)
+        except Exception as e:
+            logger.exception("Recall memory failed")
+            tool_result = f"召回记忆失败: {e}"
+        self._emit_step(iteration, event="tool_result", tool_name=tool_name, result_summary=tool_result[:200])
+        return [{
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": tool_result,
+        }]
+
+    def _handle_skill_disclosure(
+        self,
+        tool_call: Any,
+        tool_input: dict,
+        tool_name: str,
+        tool_map: dict,
+        iteration: int,
+    ) -> tuple[list[dict] | None, list[dict]] | None:
+        """SKILL 工具渐进式披露：根据 skill_type 选择注入方式。
+
+        返回 (replacement_messages, append_messages) 元组，或 None 表示不处理。
+        replacement_messages: 需要替换整个 messages 列表时非 None（prompt 类型注入系统提示词）。
+        append_messages: 需要追加到 messages 的消息列表。
+        """
+        skill_tool = find_skill_tool(tool_name, tool_map, self.registry)
+        if not skill_tool:
+            return None
+
+        skill_type = skill_tool.dependencies.get("skill_type", "tool_manual")
+        skill_md = self.context._load_skill_md(
+            skill_tool.local_path or skill_tool.name
+        ) or ""
+        self._emit_step(iteration, event="skill_load", tool_name=tool_name, detail=tool_name)
+
+        if skill_md:
+            if skill_type == "prompt":
+                logger.info("Injecting SKILL.md into system prompt (prompt type): %s", tool_name)
+                new_messages = inject_skill_into_system_prompt(messages, tool_name, skill_md)
+                append = [{
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": f"已加载技能 {tool_name} 的行为指南到系统提示词。请在后续所有决策中遵循该指南。",
+                }]
+                return (new_messages, append)
+            else:
+                logger.info("Injecting SKILL.md into tool result (tool_manual type): %s", tool_name)
+                return (None, [{
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": f"已加载技能指南，请按照以下说明使用 execute_bash 执行：\n\n{skill_md}",
+                }])
+        else:
+            return (None, [{
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": f"技能 {tool_name} 的 SKILL.md 未找到。",
+            }])
+
+    def _handle_schema_disclosure(
+        self,
+        tool_call: Any,
+        tool_name: str,
+        tool_map: dict,
+        iteration: int,
+    ) -> tuple[list, list[dict]] | None:
+        """渐进式 schema 披露：首次调用时通过 tool result 返回完整参数定义。
+
+        返回 (minimal_tools, append_messages) 元组，或 None 表示不处理。
+        """
+        if tool_name in self._disclosed_tools or tool_name not in tool_map:
+            return None
+
+        tool_obj = tool_map[tool_name]
+        # SKILL 工具已有自己的披露机制，跳过
+        if tool_obj.execution.type == ToolExecutionType.SKILL:
+            return None
+
+        self._disclosed_tools.add(tool_name)
+        logger.info("Disclosing tool schema via tool result: %s (progressive disclosure)", tool_name)
+        self._emit_step(iteration, event="schema_load", tool_name=tool_name, detail=tool_name)
+
+        # 更新 minimal_tools 中该工具为完整 schema
+        updated_tools = self._replace_tool_in_list(minimal_tools, tool_obj.to_openai_function())
+
+        schema_str = json.dumps(tool_obj.parameters, ensure_ascii=False, indent=2)
+        msgs = [{
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "content": (
+                f"工具 {tool_name} 的参数定义如下，请严格按照参数定义重新调用：\n\n"
+                f"描述: {tool_obj.description}\n\n"
+                f"参数 Schema:\n```json\n{schema_str}\n```"
+            ),
+        }]
+        return (updated_tools, msgs)
+
     def _replace_tool_in_list(
         tools: list[dict[str, Any]],
         full_tool: dict[str, Any],
