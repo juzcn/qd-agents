@@ -11,7 +11,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from .commands import chat_async, list_models_async, list_tools, init_tools, add_tool_from_url, remove_tools, update_check, update_tools, show_version, mcp_add, skill_add, recall_memories, recall_memory
+from .commands import chat_async, list_models_async, list_tools, init_tools, remove_tools, update_check, update_tools, show_version, mcp_add, skill_add, recall_memories, recall_memory
 
 
 # 创建 Typer 应用实例
@@ -94,24 +94,14 @@ def tools_list(
     list_tools(console, base_dir, config_file, type_filter=type_filter or None)
 
 # tools init 命令
-@tools_app.command("init", help="初始化内置工具")
+@tools_app.command("init", help="初始化工具箱（默认完全初始化，--keep 保留用户工具）")
 def tools_init(
+    keep: bool = typer.Option(False, "--keep", "-k", help="保留用户创建的工具（默认完全初始化）"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
 ):
-    """初始化内置工具"""
-    init_tools(console, base_dir, config_file)
-
-
-# tools add 命令（从 URL 自动安装工具）
-@tools_app.command("add", help="从 URL 自动安装工具（支持 pypi/mcp/skill/skillset）")
-def tools_add_command(
-    url: str = typer.Argument(..., help="工具 URL（pypi/MCP/skill/skillset）"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
-):
-    """从 URL 自动安装工具"""
-    add_tool_from_url(console, url, base_dir, config_file)
+    """初始化工具箱"""
+    init_tools(console, base_dir, config_file, keep_user=keep)
 
 
 # mcp add 命令

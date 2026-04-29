@@ -4,7 +4,7 @@
 
 {% if tools %}
 {% for tool in tools[:30] %}
-- **{{ tool.name }}**: {{ tool.description[:120] }}
+- **{{ tool.name }}**: {{ tool.description }}
 {% endfor %}
 {% if tools|length > 30 %}
 ... 还有 {{ tools|length - 30 }} 个工具

@@ -23,6 +23,65 @@ from ..models.tool import Tool, ToolExecutionType
 
 logger = logging.getLogger(__name__)
 
+# 工具类型显示顺序和标签
+_TYPE_ORDER = [
+    (ToolExecutionType.BASH, "bash"),
+    (ToolExecutionType.SKILL, "skill"),
+    (ToolExecutionType.HTTP, "http"),
+    (ToolExecutionType.FUNCTION, "function"),
+    (ToolExecutionType.MCP, "mcp"),
+]
+
+
+def _group_tools_by_type(tools: list[Tool]) -> dict[str, Any]:
+    """将工具列表按类型分组，MCP 工具按 server 嵌套子工具。
+
+    Returns:
+        {
+            "bash": [Tool, ...],
+            "skill": [Tool, ...],
+            "http": [Tool, ...],
+            "function": [Tool, ...],
+            "mcp_servers": [
+                {"server_name": str, "server_desc": str, "subtools": [Tool, ...]},
+                ...
+            ],
+            "non_mcp_types": [("bash", [Tool, ...]), ("skill", [Tool, ...]), ...],
+        }
+    """
+    by_type: dict[ToolExecutionType, list[Tool]] = {}
+    mcp_servers: dict[str, list[Tool]] = {}
+
+    for tool in tools:
+        t = tool.execution.type
+        if t == ToolExecutionType.MCP:
+            server = tool.execution.server or "unknown"
+            mcp_servers.setdefault(server, []).append(tool)
+        else:
+            by_type.setdefault(t, []).append(tool)
+
+    # 构建 MCP 服务器列表（server_name + subtools）
+    mcp_server_list = []
+    for server_name, subtools in mcp_servers.items():
+        # MCP 服务器描述：取第一个子工具的 source_path 或 server_name
+        server_desc = f"MCP server: {server_name}"
+        mcp_server_list.append({
+            "server_name": server_name,
+            "server_desc": server_desc,
+            "subtools": subtools,
+        })
+
+    # 构建 non-MCP 类型列表（按预定义顺序）
+    non_mcp_types = []
+    for exec_type, label in _TYPE_ORDER:
+        if exec_type != ToolExecutionType.MCP and exec_type in by_type:
+            non_mcp_types.append((label, by_type[exec_type]))
+
+    return {
+        "mcp_servers": mcp_server_list,
+        "non_mcp_types": non_mcp_types,
+    }
+
 
 class ContextManager:
     """
@@ -142,16 +201,23 @@ class ContextManager:
                 system_prompt = self.prompts.render(
                     "evolve",
                     tools=tools,
+                    tool_groups=_group_tools_by_type(tools),
                     observations=[],
                     env_info=self._get_env_info(),
                 )
             else:
                 # 回退到硬编码
                 env_info = self._get_env_info()
-                tools_info = "\n".join(
-                    f"- {getattr(t, 'name', str(t))}: {getattr(t, 'description', '')[:150]}"
-                    for t in tools[:30]
-                )
+                tool_groups = _group_tools_by_type(tools)
+                tools_lines = []
+                for type_label, type_tools in tool_groups["non_mcp_types"]:
+                    for t in type_tools:
+                        tools_lines.append(f"- [{type_label}] **{t.name}**: {t.description}")
+                for server_info in tool_groups["mcp_servers"]:
+                    tools_lines.append(f"#### {server_info['server_name']} ({server_info['server_desc']})")
+                    for t in server_info["subtools"]:
+                        tools_lines.append(f"- [mcp] **{t.name}**: {t.description}")
+                tools_info = "\n".join(tools_lines)
                 system_prompt = f"""你是一个自主进化的智能体。你能够自主思考、自主决策、自主行动，并在需要时向用户求助或请求协作。
 
 你具备直接调用工具的能力——这是你的元工具，是你自身具备的能力。你可以自主决定调用哪些工具、观察结果、继续调用或给出最终答案。
@@ -223,7 +289,7 @@ class ContextManager:
             )
         else:
             tools_info = "\n".join(
-                f"- **{t.name}**: {t.description[:120]}"
+                f"- **{t.name}**: {t.description}"
                 for t in tools[:30]
             )
             system_prompt = (
