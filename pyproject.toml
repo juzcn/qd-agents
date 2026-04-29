@@ -23,7 +23,11 @@ dependencies = [
     "sqlite-vec>=0.1.9",
     "llama-cpp-python>=0.3.0",
     "html2text>=2025.4.15",
+    "sentence-transformers>=5.4.1",
 ]
+
+[project.optional-dependencies]
+st-embed = ["sentence-transformers>=3.0.0"]
 
 [dependency-groups]
 dev = [
