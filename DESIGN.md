@@ -1,394 +1,197 @@
-# qd-agents 设计文档
+# QD-Agents 设计文档
 
-## 项目定位
+## 项目概述
 
-基于 LLM 的智能体系统，通过 Tool Calling 和代码编排实现自动化流程。CLI 交互，Python 3.13，OpenAI 兼容 API。
+QD-Agents 是一个自主进化的 AI Agent 框架，核心能力是「工具自主获取 + 工具箱自动管理」。Agent 在运行时发现缺少工具时，能主动安装、注册、使用新工具，实现能力持续扩展。
 
----
-
-## 1. 架构总览
+## 架构
 
 ```
-用户输入
-   ↓
-QDAgent（资源管理器 + EvolveAgent 容器）
-   ├─ MCPService（MCP 连接管理）
-   ├─ ToolService（工具缓存构建）
-   ├─ ContextCompressor（上下文压缩）
-   ├─ MemoryService（长期记忆：QA 存储 + 语义召回）
-   └─ EvolveAgent（自主循环 + function calling + SKILL渐进式披露 + 工具进化 + recall_memory）
+qd_agents/
+├── agent/                    # Agent 核心
+│   ├── base.py              # Agent 基类 + AgentResult 数据模型
+│   ├── evolve.py            # EvolveAgent：主 Agent（自主循环 + 工具编排）
+│   ├── tool_execution.py    # 工具执行调度（按类型路由到对应 executor）
+│   └── core.py              # QDAgent：底层 LLM 调用封装
+├── cli/                      # CLI 命令
+│   ├── app.py               # Typer 应用入口 + 命令注册
+│   └── commands/            # 命令实现
+│       ├── __init__.py      # 公共导出
+│       ├── chat_cmd.py      # qd-agents chat
+│       ├── tools/           # tools 子命令
+│       │   ├── init_cmd.py  # tools init [--keep]
+│       │   ├── list_cmd.py  # tools list
+│       │   ├── remove_cmd.py# tools remove
+│       │   ├── update_cmd.py# tools update
+│       │   ├── add_skill_cmd.py  # tools skill add
+│       │   └── add_mcp_cmd.py    # tools mcp add
+│       └── ...
+├── config/                   # 配置管理
+│   ├── loader.py            # 配置加载（YAML + 环境变量）
+│   └── models.py            # Pydantic 配置模型
+├── context/                  # 上下文管理
+│   └── manager.py           # 系统提示词构建 + 工具分组渲染
+├── executors/                # 工具执行器
+│   ├── base.py              # BaseExecutor 抽象基类
+│   ├── bash.py              # BashExecutor：shell 命令执行
+│   ├── http.py              # HttpExecutor：HTTP API 调用
+│   ├── mcp.py               # McpExecutor：MCP 协议调用
+│   └── function.py          # FunctionExecutor：Python 函数调用
+├── memory/                   # 长期记忆
+│   ├── service.py           # 记忆服务（存储 + 语义召回）
+│   └── embedder.py          # 嵌入后端（sentence-transformers BGE-M3）
+├── models/                   # 数据模型
+│   ├── tool.py              # Tool + ToolExecutionConfig + ToolExecutionType
+│   └── ...
+├── prompts/                  # 提示词模板
+│   ├── manager.py           # Jinja2 模板渲染
+│   └── templates/
+│       ├── evolve.j2        # EvolveAgent 系统提示词
+│       └── add_skill.j2     # 技能分析提示词
+├── registry/                 # 工具注册表
+│   └── tool_registry.py     # 持久化工具注册（JSON 文件）
+├── services/                 # 业务服务
+│   ├── mcp_service.py       # MCP 服务器生命周期管理
+│   ├── tool_service.py      # 工具箱 CRUD + OpenAI schema 生成
+│   └── memory_service.py    # 记忆服务门面
+└── tools/                    # 内置工具
+    └── builtins.py          # execute_bash, memory_list, memory_recall
 ```
 
-**单层架构**：
+## 核心流程
 
-| 层级 | 角色 | 特征 |
-|------|------|------|
-| **Agent** | 完整任务处理单元 | EvolveAgent 持有完整对话上下文，自主循环，function calling 直接调用工具 |
-
----
-
-## 2. Agent 体系
-
-### 2.1 EvolveAgent
-
-EvolveAgent 是唯一的 Agent，直接持有完整对话上下文并通过 function calling 调用工具：
+### 1. 自主循环（Evolve Loop）
 
 ```
-用户输入 → EvolveAgent（自主循环）
-             ├─ LLM 返回 tool_calls → 执行工具 → 观察结果 → 继续循环
-             ├─ LLM 返回 SKILL 工具 → 渐进式披露：注入 SKILL.md → LLM 按 Usage 执行
-             ├─ LLM 不返回 tool_calls → 输出最终答案
-             └─ 达到 max_iterations → 终止
+用户输入 → EvolveAgent.run()
+  → 构建 messages（系统提示词 + 历史 + 工具列表）
+  → LLM 调用（QDAgent）
+  → 解析响应
+    → 文本回答 → 返回用户
+    → 工具调用 → 执行工具 → 观察结果 → 继续循环
 ```
 
-**核心能力**：
-
-1. **自主循环**：LLM 自己决定是否需要调用工具、调用哪些工具、何时停止
-2. **SKILL 渐进式披露**：初始只展示工具名+描述，LLM 调用 SKILL 工具名时才注入 SKILL.md 到系统提示词
-3. **工具进化**：发现缺失工具时自动安装使用（如 `uvx yt-dlp`），成功后通过 `qd-agents tools add` 注册到工具箱
-4. **步骤回调**：通过 `on_step` 回调实时输出中间过程到终端
-5. **ask_user/delegate**：需要用户输入或委托用户执行时输出 JSON 格式
-
-**工具执行逻辑**提取到 `agent/tool_execution.py`，EvolveAgent 通过模块级函数调用：
-
-| 函数 | 职责 |
-|------|------|
-| `execute_tool()` | 执行工具调用，分发到对应执行器 |
-| `find_skill_tool()` | 检测工具是否为 SKILL 类型 |
-| `ensure_bash_available()` | 确保 bash 工具可用（SKILL 依赖） |
-| `inject_skill_into_system_prompt()` | 将 SKILL.md 注入系统提示词 |
-| `format_tool_result()` | 格式化工具执行结果 |
-
-### 2.2 AddSkillAnalyzer
-
-AddSkillAnalyzer 是一个调用大模型的工具类（不是 Agent），用于分析 SKILL.md 内容，识别技能的参数定义和工具依赖。
-
-### 2.3 数据流
+### 2. 工具执行调度
 
 ```
-Agent.execute(user_input, history, **kwargs) → AgentResult
-                                            final_answer, success, total_tokens, trace_id
+工具调用请求 → ToolExecutionHandler
+  → 按 execution.type 路由：
+    BASH    → BashExecutor（shell 命令）
+    SKILL   → 渐进式披露（首次返回 SKILL.md，后续 execute_bash 执行）
+    HTTP    → HttpExecutor（REST API 调用）
+    MCP     → McpExecutor（MCP 协议，通过 mcp_service 管理 server 生命周期）
+    FUNCTION→ FunctionExecutor（Python 函数调用）
 ```
 
----
-
-## 3. Evolve 工作模式
-
-EvolveAgent 是一个真正的自主 agent，不依赖路由判断，直接持有完整对话上下文并通过 function calling 调用工具：
+### 3. 工具注册与发现
 
 ```
-用户输入 → EvolveAgent（自主循环）
-             ├─ LLM 返回 tool_calls → 执行工具 → 观察结果 → 继续循环
-             ├─ LLM 返回 SKILL 工具 → 渐进式披露：注入 SKILL.md → LLM 按 Usage 执行
-             ├─ LLM 不返回 tool_calls → 输出最终答案
-             └─ 达到 max_iterations → 终止
+qd-agents tools init [--keep]  → 初始化工具箱
+  --keep: 保留用户工具，只重新注册 builtin + default
+  默认:   清除所有工具后重新注册
+
+qd-agents tools skill add <name>  → 注册 Skill 工具
+qd-agents tools mcp add <name> <server>  → 注册 MCP 工具
+qd-agents tools list    → 查看工具箱
+qd-agents tools remove  → 移除工具
 ```
 
-**SKILL 渐进式披露流程**：
-1. 系统提示词列出所有工具（含 SKILL），只有名称和描述
-2. LLM 调用 SKILL 工具名 → 检测到 SKILL 类型 → 加载 SKILL.md 注入系统提示词
-3. LLM 阅读 SKILL.md 的 Usage 部分 → 生成正确的 `execute_bash` 命令执行
+工具分类：
+- **builtin**：核心工具（execute_bash, memory_list, memory_recall），不可删除不可更新
+- **default**：预装 MCP 工具（filesystem, fetch, serper-search），不可删除但可更新
+- **user**：用户添加的工具，可删除可更新
 
-**上下文压缩**：
+### 4. 系统提示词构建
 
-EvolveAgent 在长程迭代中，工具返回结果会不断累积到 messages 列表，导致 prompt 膨胀超出模型上限。上下文压缩机制解决此问题：
+系统提示词由 `context/manager.py` 构建，包含：
+- 核心身份与自主行动原则
+- 运行环境信息
+- Bash 执行注意事项（Windows 适配）
+- 工具获取能力说明
+- 工具箱管理命令说明
+- **工具列表**（按类型分组渲染）
 
-1. 工具结果首次出现时完整展示（LLM 本轮可直接使用）
-2. 同时将完整结果写入临时文件（`data/tmp/result_xxx.txt`），并用裸 LLM 调用生成摘要
-3. 后续轮次中，旧 tool_result 被替换为"摘要 + 文件指针"
-4. LLM 需要细节时自主调用 `read_text_file` 读取临时文件
-
-配置项（`config.json` → `context_compression`）：
-
-| 字段 | 默认值 | 说明 |
-|------|--------|------|
-| enabled | true | 是否启用压缩 |
-| result_threshold | 2000 | 工具结果超过此字符数才触发压缩 |
-| summary_max_length | 500 | 摘要最大字符数 |
-| temp_dir | data/tmp | 临时文件存储目录 |
-| keep_recent_results | 1 | 保留最近N轮完整结果不压缩 |
-
----
-
-## 4. 工具系统
-
-### 4.1 六种执行类型
-
-| 类型 | 执行器 | 说明 |
-|------|--------|------|
-| function | FunctionToolExecutor | Python 函数调用（echo, serper_search, tavily_search） |
-| http | HTTPToolExecutor | HTTP API 调用（搜索工具等） |
-| cli | CLIToolExecutor | 外部命令行程序 |
-| bash | BashToolExecutor | Shell 命令执行 |
-| mcp | MCPToolExecutor | Model Context Protocol 工具 |
-| skill | BashToolExecutor / `_ScriptlessSkillExecutor` | 有脚本用 exec 模式，无脚本引导 LLM 用 bash 执行 |
-
-### 4.2 工具注册中心（ToolRegistry）
-
-- **存储**：SQLite（`data/tools.db`），WAL 模式
-- **操作**：register / get / get_by_name / list_all / search / delete
-- **搜索**：关键词匹配（向量检索预留但未实现）
-- **版本状态**：draft / active / deprecated / retired（数据模型已定义，功能未实现）
-
-### 4.3 MCP 工具展开
-
-由 `MCPService`（`services/mcp_service.py`）管理：
-
-1. 启动时从 ToolRegistry 读取所有 MCP 类型工具
-2. 连接 MCP 服务器（支持 stdio / sse / streamable-http）
-3. 展开服务器提供的所有子工具为独立 Tool 对象
-4. 缓存展开结果，同一服务器工具共享执行器连接
-5. 会话结束时关闭所有 MCP 连接
-
-### 4.4 Skill 工具
-
-- **有脚本**：`execution.command` 指定脚本路径，通过 BashToolExecutor 的 exec 模式直接执行
-- **无脚本**：SKILL.md 正文注入系统提示词，LLM 按 SKILL.md 指南 + execute_bash 工具执行
-- **SKILL.md 注入**：ContextManager 读取 `tools/skills/{name}/SKILL.md`，在构建 evolve 提示词时注入正文
-- **依赖声明**：`dependencies.tool_deps` 指定 Skill 依赖的其他工具
-
-### 4.5 内置工具
-
-| ID | 名称 | 类型 | 说明 |
-|----|------|------|------|
-| echo | echo | function | 回显输入，测试用 |
-| search.serper | serper_search | http | Serper API 网络搜索 |
-| search.tavily | tavily_search | http | Tavily AI 增强搜索 |
-| search.baidu | baidu_search | http | 百度搜索 |
-| search.web | web_search | skill | 统一搜索接口，自动选择引擎 |
-| execute_bash | execute_bash | bash | 执行 Bash 命令 |
-
----
-
-## 5. LLM 客户端
-
-- **协议**：OpenAI 兼容 API（AsyncOpenAI）
-- **多提供商**：配置文件中声明，支持 NVIDIA NIM / 讯飞等
-- **模型发现**：NVIDIA 提供商调用 `/v1/models` 自动发现，评分取 Top K
-- **Fallback**：按模型列表顺序自动降级
-- **评分函数**：基础分(1000, 仅 chat 模型) + 参数大小(0-100) + 模型系列(0-50) + 后缀加分(20)
-
-### 模型评分优先级
-
-deepseek/glm > qwen > minimax > llama/mistral/gemma > other
-
----
-
-## 6. 提示词系统
-
-- **引擎**：Jinja2（`.j2` 模板）
-- **模板**：evolve.j2 / add_skill.j2
-- **缓存**：ContextManager 按工具 ID 集合缓存系统提示词，避免重复渲染
-- **回退**：PromptLoader 不可用时使用硬编码提示词
-
----
-
-## 7. 上下文管理
-
-ContextManager 统一构建 LLM 调用的消息：
-
+工具列表渲染格式（结构化 Markdown）：
 ```
-[system_prompt] + [history] + [current_user_input]
+## 可用工具
+
+### bash
+- [bash] **execute_bash**: 执行bash/shell命令
+
+### skill
+- [skill] **web_search**: 统一搜索接口
+
+### mcp
+#### filesystem (MCP server: filesystem)
+- [mcp] **read_file**: 读取文件内容
+- [mcp] **write_file**: 写入文件
+
+#### fetch (MCP server: fetch)
+- [mcp] **fetch**: 发起 HTTP 请求
 ```
 
-- `build_evolve_messages()`：构建 EvolveAgent 的系统提示词（渐进式披露）
-- `build_add_skill_messages()`：SKILL.md 全文 + 已注册工具
+工具分组由 `_group_tools_by_type()` 实现，按 `ToolExecutionType` 分组，MCP 工具按 `execution.server` 嵌套。
 
----
+### 5. 长期记忆
 
-## 8. 配置管理
+- **存储**：SQLite + 向量索引（sentence-transformers BGE-M3）
+- **召回**：`memory_recall` 工具（向量 + 关键词混合检索）
+- **列表**：`memory_list` 工具（按时间/会话筛选）
+- **CLI**：`qd-agents memory list` / `qd-agents memory recall <查询>`
 
-**双文件分离**：
+### 6. Skill 渐进式披露
 
-| 文件 | 内容 | 性质 |
-|------|------|------|
-| `config.json` | 系统配置（LLM/工具/执行/提示词/存储/可观测性） | 静态，可入版本控制 |
-| `runtime.json` | 运行时数据（工具凭证） | 动态，不入版本控制 |
+Skill 工具首次调用时不执行，而是将 SKILL.md 注入系统提示词，让 Agent 了解用法后再通过 `execute_bash` 执行。这避免了 Agent 在不了解工具用法时盲目调用。
 
-**配置加载**：Pydantic BaseModel 验证，支持环境变量插值（`QD_` 前缀 + `__` 嵌套分隔符）。
+## 数据模型
 
-**代码分离**：
+### Tool
 
-| 文件 | 职责 |
-|------|------|
-| `config/models.py` | Pydantic 配置模型定义（Config, RuntimeConfig, LLMProviderConfig 等） |
-| `config/loader.py` | JSON 文件加载/保存逻辑（load_config, save_config, load_runtime_config, save_runtime_config） |
+```python
+class ToolExecutionType(str, Enum):
+    BASH = "bash"
+    SKILL = "skill"
+    HTTP = "http"
+    MCP = "mcp"
+    FUNCTION = "function"
 
----
+class ToolExecutionConfig(BaseModel):
+    type: ToolExecutionType
+    shell_command: str | None = None    # BASH
+    skill_dir: str | None = None        # SKILL
+    endpoint: str | None = None         # HTTP
+    server: str | None = None           # MCP
+    function_name: str | None = None    # FUNCTION
 
-## 9. 服务层
-
-服务类从 `agent/` 提取到独立的 `services/` 包，职责清晰：
-
-| 服务 | 文件 | 职责 |
-|------|------|------|
-| MCPService | `services/mcp_service.py` | MCP 服务器连接管理、工具展开、资源清理 |
-| ToolService | `services/tool_service.py` | 工具缓存构建、内置工具注册 |
-
----
-
-## 10. 可靠性机制
-
-### 重试
-
-- 4 种退避策略：fixed / linear / exponential / exponential_with_jitter
-- 默认：exponential_with_jitter，max_attempts=3，initial_delay=1s
-
-### 熔断器
-
-- 状态：CLOSED → OPEN（失败率 > 阈值）→ HALF_OPEN（冷却后）→ CLOSED
-- 默认：error_rate_threshold=0.5，minimum_requests=10，half_open_timeout=30s
-
----
-
-## 11. CLI
-
-```
-qd-agents                    # 默认启动交互式聊天
-qd-agents --list-models      # 列出可用模型
-qd-agents --version          # 版本信息
-
-qd-agents tools init         # 初始化内置工具
-qd-agents tools list         # 列出已注册工具
-qd-agents tools remove ID    # 移除工具
-qd-agents tools mcp add      # 添加 MCP 服务器
-qd-agents tools skill add    # 添加 Skill 工具
+class Tool(BaseModel):
+    id: str
+    name: str
+    description: str          # 完整描述，不截断
+    parameters: dict           # JSON Schema
+    execution: ToolExecutionConfig
+    metadata: ToolMetadata
 ```
 
-**聊天命令**：`/quit` `/help` `/model` `/models` `/tools`
+### AgentResult
 
----
-
-## 12. 模块结构
-
-```
-src/qd_agents/
-├── agent/           # Agent 体系
-│   ├── base.py      # Agent 基类 + 数据模型（AgentResult, StepCallback 等）
-│   ├── core.py      # QDAgent 容器（资源管理）
-│   ├── evolve.py    # EvolveAgent（自主循环核心）
-│   ├── tool_execution.py  # 工具执行辅助函数（从 evolve.py 提取）
-│   └── add_skill.py # AddSkillAnalyzer（SKILL.md 分析）
-├── services/        # 服务类（从 agent/ 提取）
-│   ├── mcp_service.py   # MCPService（MCP 连接管理）
-│   └── tool_service.py  # ToolService（工具缓存构建）
-├── cli/             # CLI 入口
-│   ├── app.py       # Typer 应用
-│   ├── main.py      # 入口 + prompt_style
-│   ├── commands/    # chat / tools / mcp / skills / models / version
-│   ├── managers/    # configuration / llm_client
-│   └── utils/       # formatting / credentials
-├── config/          # 配置管理
-│   ├── models.py    # Pydantic 配置模型定义
-│   └── loader.py    # JSON 加载/保存逻辑
-├── context/         # 上下文管理器
-│   ├── manager.py   # ContextManager
-│   └── compressor.py # ContextCompressor（工具结果压缩）
-├── llm/             # LLM 客户端 + 评分 + 格式化
-├── models/          # Pydantic 数据模型
-│   ├── tool.py      # Tool / ToolExecutionConfig / ToolMetadata
-│   ├── evolve.py    # EvolveResult / AskUserInfo / DelegateInfo
-│   ├── add_skill.py # AddSkillResult
-│   └── execution.py # ExecutionResult / ExecutionStep / ExecutionStatus
-├── prompts/         # Jinja2 模板加载
-├── memory/          # 长期记忆系统
-│   ├── store.py     # MemoryStore — SQLite + sqlite-vec 读写
-│   ├── embedder.py  # Embedder — llama-cpp-python GGUF 嵌入
-│   ├── recall.py    # RecallService — 向量 + 关键词混合检索（RRF 融合）
-│   └── service.py   # MemoryService — 统一入口（save + recall）
-├── registry/        # 工具注册中心（SQLite）
-├── tools/           # 工具执行器 + 内置工具
-│   ├── executors/   # base / function / http / cli / bash / mcp / factories
-│   ├── builtins.py  # echo 等基础工具
-│   └── search.py    # Serper、Tavily 搜索工具
-└── utils/           # retry / circuit_breaker / logging / parsing
+```python
+@dataclass
+class AgentResult:
+    final_answer: str
+    success: bool
+    working_memory: dict
+    interaction_log: list[dict]
+    total_tokens: int
+    last_prompt_tokens: int
+    total_duration_ms: int
+    trace_id: str
 ```
 
-**导入规范**：
-- 工具模型从 `qd_agents.models.tool` 导入（不从 `registry` 导入）
-- 服务类从 `qd_agents.services` 导入（不从 `agent` 导入）
-- 配置模型从 `qd_agents.config.models` 导入，加载逻辑从 `qd_agents.config.loader` 导入
+## 配置
 
----
+配置通过 `config.json` 加载，支持环境变量覆盖。主要配置项：
 
-## 13. 长期记忆系统
-
-### 13.1 设计理念
-
-- **LLM 自判断召回**：`recall_memory` 注册为工具，LLM 自主决定是否调用，无需关键词规则或额外判断逻辑
-- **session 边界去重**：召回时排除当前 session_id，从源头避免与当前上下文重复
-- **时间倒序排列**：召回结果按时间倒序，越新的越优先
-
-### 13.2 数据模型
-
-存储在独立数据库 `data/memory.db`（与 `tools.db` 分库）：
-
-```sql
-CREATE TABLE memories (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,       -- 所属会话 ID
-    question TEXT NOT NULL,         -- 用户问题
-    answer TEXT NOT NULL,           -- 模型回答
-    tags TEXT NOT NULL DEFAULT '[]',
-    source TEXT NOT NULL DEFAULT '',  -- evolve / skill / manual
-    model TEXT NOT NULL DEFAULT '',
-    token_count INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE VIRTUAL TABLE memory_vec USING vec0(
-    id TEXT PRIMARY KEY,
-    question_vec float[1024]        -- BGE-M3 输出维度
-);
-```
-
-### 13.3 核心流程
-
-**写入**（QA 完成后自动触发）：
-```
-用户问题 + 模型回答 → Embedder.embed(question) → question_vec → MemoryStore.save()
-```
-
-**召回**（LLM 调用 `recall_memory` 工具时触发）：
-```
-LLM 判断需要历史信息 → 调用 recall_memory(query) → Embedder.embed(query) → query_vec
-→ RecallService.search(query_vec, query_text, exclude_session=current_session_id)
-→ 向量召回 + 关键词召回 → RRF 融合 → 按时间倒序 → 截断 max_recall_chars → 返回
-```
-
-### 13.4 配置项（`config.json` → `memory`）
-
-| 字段 | 默认值 | 说明 |
-|------|--------|------|
-| db_path | data/memory.db | 记忆数据库路径 |
-| embedding_model | hf_KimChen_bge-m3-q4_k_m.gguf | GGUF 嵌入模型 |
-| model_path | . | 模型文件路径 |
-| vec_dim | 1024 | 嵌入向量维度 |
-| top_k | 5 | 向量召回 top_k |
-| similarity_threshold | 0.7 | 相似度阈值 |
-| hybrid_search | true | 是否启用混合检索 |
-| auto_save | true | QA 完成后自动写入 |
-| max_recall_chars | 2000 | 召回结果最大字符数 |
-| max_recall_results | 5 | 一次最多返回多少条结果 |
-
-### 13.5 依赖
-
-| 库 | 用途 |
-|---|---|
-| sqlite-vec | SQLite 向量扩展（vec0 虚拟表 + KNN 查询） |
-| llama-cpp-python | GGUF 模型嵌入（BGE-M3 Q4 量化，417MB） |
-
----
-
-## 14. 未实现功能
-
-| 功能 | 状态 |
-|------|------|
-| 向量检索（sqlite-vec） | ✅ 已实现（memory 模块） |
-| 工具版本管理 | 数据模型已定义，功能未实现 |
-| 流式输出 | 未实现 |
-| 渐进式披露 L2/L3 | 未实现 |
-| 历史分离 | 未实现（使用统一历史） |
-| 审计日志 | 未完整实现 |
-| 测试 | 无测试文件 |
+- `llm`：模型选择（provider, model, api_key, base_url）
+- `tools`：工具箱配置
+- `storage`：数据存储路径
+- `memory`：记忆服务配置（embedding backend, vector dimension）
