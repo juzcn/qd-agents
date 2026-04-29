@@ -28,10 +28,13 @@ def init_tools(
     console: Console,
     base_dir: Optional[Path] = None,
     config_file: Optional[Path] = None,
+    keep_user: bool = False,
 ) -> None:
     """
     初始化工具箱：注册内置工具 + 默认 MCP 工具
 
+    - keep_user=False（默认）：完全初始化，清除所有工具后重新注册
+    - keep_user=True：保留用户添加的工具，只清除 builtin + default 后重新注册
     - builtin 类别：核心工具（execute_bash, memory_list, memory_recall），不可删除不可更新
     - default 类别：预装 MCP 工具（filesystem, fetch, serper-search），不可删除但可更新
     - 迁移去重：已存在的同名默认 MCP 工具先删除再重新注册
@@ -44,10 +47,18 @@ def init_tools(
 
     registry = get_tool_registry(config)
 
-    # 1. 只清除 builtin + default 类别的工具（保留用户添加的工具）
-    deleted = registry.delete_by_scopes(["builtin", "default"])
-    if deleted > 0:
-        console.print(f"[dim]已清除 {deleted} 个内置/默认工具（准备重新注册）[/]")
+    if keep_user:
+        # 保留用户工具：只清除 builtin + default
+        deleted = registry.delete_by_scopes(["builtin", "default"])
+        if deleted > 0:
+            console.print(f"[dim]已清除 {deleted} 个内置/默认工具（保留用户工具）[/]")
+    else:
+        # 完全初始化：清除所有工具
+        all_tools = registry.list_all()
+        for tool in all_tools:
+            registry.delete(tool.id)
+        if all_tools:
+            console.print(f"[dim]已清除所有 {len(all_tools)} 个工具（完全初始化）[/]")
 
     # 2. 迁移去重：删除与内置/默认工具同名的旧工具（旧版可能注册为其他类别）
     migrate_names = DEFAULT_MCP_NAMES | BUILTIN_TOOL_NAMES

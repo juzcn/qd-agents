@@ -23,7 +23,7 @@
 - **运行时配置分离** - 静态配置(config.json)与运行时配置(runtime.json)分离存储
 - **详细日志记录** - LLM 请求/响应完整日志，支持 DEBUG 级别
 - **实时日志刷新** - ImmediateFlushFileHandler 确保日志实时写入磁盘
-- **工具箱管理 CLI** - `tools add/skill add/mcp add/list/remove` 命令管理工具注册
+- **工具箱管理 CLI** - `tools init/skill add/mcp add/list/remove` 命令管理工具注册
 
 ## 安装
 
@@ -172,7 +172,11 @@ uv run qd-agents -d /path/to/dir  # 指定基础目录
 uv run qd-agents tools list
 
 # 初始化内置工具（清空数据库并重新注册）
-uv run qd-agents tools init
+uv run # 完全初始化（清除所有工具后重新注册内置+默认工具）
+qd-agents tools init
+
+# 保留用户创建的工具，只重新注册内置+默认工具
+qd-agents tools init --keep
 
 # 注册 CLI/Bash 工具到工具箱
 uv run qd-agents tools add <name> --command "<命令模板>"
