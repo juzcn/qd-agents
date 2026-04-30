@@ -81,6 +81,7 @@ class MemoryConfig(BaseModel):
     embedding_backend: str = "llama_cpp"
     embedding_model: str = "hf_KimChen_bge-m3-q4_k_m.gguf"
     hf_token: str = ""
+    hf_cache_dir: str = ""
     model_path: Path | None = None
     vec_dim: int = 1024
     top_k: int = 5
@@ -98,6 +99,7 @@ class ToolRegistryConfig(BaseModel):
     embedding_backend: str = "llama_cpp"
     embedding_model: str = "hf_KimChen_bge-m3-q4_k_m.gguf"
     hf_token: str = ""
+    hf_cache_dir: str = ""
     model_path: Path | None = None
     top_k: int = 10
     similarity_threshold: float = 0.7

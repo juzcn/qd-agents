@@ -121,14 +121,10 @@ class MCPService:
                 timeout=server_config.get('timeout', 30),
             )
 
-            # 连接超时控制
-            default_connect_timeout = 5
-            if "filesystem" in server_key.lower() or server_config.get('command') in ["npx", "node"]:
-                default_connect_timeout = 15
-
-            connect_timeout = server_config.get('timeout', default_connect_timeout)
+            # 连接超时与工具执行超时分离
+            connect_timeout = self._resolve_connect_timeout(server_key, server_config)
             try:
-                await asyncio.wait_for(executor._ensure_connected(), timeout=connect_timeout)
+                await executor._ensure_connected(timeout=connect_timeout)
             except asyncio.TimeoutError:
                 logger.error(f"MCP server {server_key} connection timeout after {connect_timeout}s")
                 await self._safe_close_executor(executor)
@@ -223,6 +219,23 @@ class MCPService:
             await executor.close()
         except Exception:
             pass
+
+    @staticmethod
+    def _resolve_connect_timeout(server_key: str, server_config: dict) -> int:
+        """根据服务器类型确定连接超时（与工具执行超时分离）。
+
+        npx/node 在 Windows 上首次启动慢（需要下载包），给更长时间。
+        """
+        # 显式配置优先
+        if 'connect_timeout' in server_config:
+            return server_config['connect_timeout']
+
+        command = server_config.get('command', '')
+        if command in ("npx", "node"):
+            return 60
+        if command in ("uvx", "uv"):
+            return 30
+        return 20
 
 
 def _extract_mcp_tool_parameters(mcp_tool: Any) -> dict[str, Any]:

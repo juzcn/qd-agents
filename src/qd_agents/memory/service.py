@@ -37,6 +37,7 @@ class MemoryService:
             model_name=config.embedding_model,
             vec_dim=config.vec_dim,
             hf_token=config.hf_token,
+            hf_cache_dir=config.hf_cache_dir,
         )
 
         # 存储层

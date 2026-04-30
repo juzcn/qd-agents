@@ -217,7 +217,7 @@ class EvolveAgent(Agent):
                     tool_input = {"raw": tool_call.function.arguments}
 
                 # recall_memory 工具：拦截并调用记忆服务
-                handled = self._handle_recall_memory(
+                handled = await self._handle_recall_memory(
                     tool_call, tool_input, tool_name, iteration,
                 )
                 if handled is not None:
@@ -237,11 +237,10 @@ class EvolveAgent(Agent):
 
                 # 渐进式 schema 披露
                 schema_result = self._handle_schema_disclosure(
-                    tool_call, tool_name, tool_map, iteration,
+                    tool_call, tool_name, tool_map, minimal_tools, iteration,
                 )
                 if schema_result is not None:
-                    minimal_tools, schema_msgs = schema_result
-                    messages.extend(schema_msgs)
+                    messages.extend(schema_result)
                     continue
 
                 # 记录 LLM 生成的工具调用命令
@@ -388,12 +387,13 @@ class EvolveAgent(Agent):
         self,
         tool_call: Any,
         tool_name: str,
-        tool_map: dict,
+        tool_map: dict[str, Any],
+        minimal_tools: list[dict[str, Any]],
         iteration: int,
-    ) -> tuple[list, list[dict]] | None:
+    ) -> list[dict[str, Any]] | None:
         """渐进式 schema 披露：首次调用时通过 tool result 返回完整参数定义。
 
-        返回 (minimal_tools, append_messages) 元组，或 None 表示不处理。
+        直接修改 minimal_tools（就地替换为完整 schema）。返回追加的消息列表，或 None。
         """
         if tool_name in self._disclosed_tools or tool_name not in tool_map:
             return None
@@ -408,7 +408,7 @@ class EvolveAgent(Agent):
         self._emit_step(iteration, event="schema_load", tool_name=tool_name, detail=tool_name)
 
         # 更新 minimal_tools 中该工具为完整 schema
-        updated_tools = self._replace_tool_in_list(minimal_tools, tool_obj.to_openai_function())
+        self._replace_tool_in_list(minimal_tools, tool_obj.to_openai_function())
 
         schema_str = json.dumps(tool_obj.parameters, ensure_ascii=False, indent=2)
         msgs = [{
@@ -420,7 +420,7 @@ class EvolveAgent(Agent):
                 f"参数 Schema:\n```json\n{schema_str}\n```"
             ),
         }]
-        return (updated_tools, msgs)
+        return msgs
 
     @staticmethod
     def _replace_tool_in_list(
