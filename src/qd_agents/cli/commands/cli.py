@@ -1,148 +1,191 @@
 """
 CLI 工具管理命令
 
-负责注册和管理 CLI 工具（如 yt-dlp、ffmpeg 等）。
-CLI 工具通过 bash 执行，但有固定的 command + prefix_args，
-LLM 只需提供参数部分。
+负责注册和管理 CLI 工具。
+command 为完整命令行，自动拆分为可执行文件和参数。
+添加时自动执行 --help 并用 LLM 解析参数为 JSON Schema。
 """
+import asyncio
 import json
 import logging
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Optional, List
 
-import typer
 from rich.console import Console
 
 from qd_agents.config import load_config
 from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 from qd_agents.cli.utils.registry import get_tool_registry
-from qd_agents.cli.utils.credentials import env_var_to_tool_name, resolve_env_vars
+from qd_agents.cli.utils.credentials import resolve_env_vars
 from qd_agents.cli.utils.registration import register_tool_and_report
+from qd_agents.utils.parsing import extract_json_from_llm_output
 
 logger = logging.getLogger(__name__)
 
-cli_app = typer.Typer(name="cli", help="CLI 工具管理")
+_PARSE_HELP_PROMPT = """\
+You are a CLI help text parser. Given the --help output of a CLI command, generate a JSON Schema describing its parameters.
+
+Rules:
+- Output ONLY valid JSON, no markdown, no explanation
+- The schema must follow this structure (example):
+  {{ "type": "object", "properties": {{ "PARAM_NAME": {{ "type": "string", "description": "desc" }} }}, "required": [] }}
+- Convert CLI flags (e.g. --verbose, -v) to snake_case property names (e.g. verbose)
+- Positional arguments become required string properties
+- Optional flags become optional string properties with default ""
+- Boolean flags (--verbose) become type "boolean" with default false
+- Numeric flags (--timeout) become type "integer" or "number"
+- Include the description from the help text for each parameter
+
+Help text:
+```
+{help_text}
+```"""
 
 
-@cli_app.command("add")
 def cli_add(
     console: Console,
     name: str,
     command: str,
-    args: Optional[str] = None,
+    default: bool = False,
     extra_env: Optional[List[str]] = None,
     timeout: int = 300,
-    default: bool = False,
     base_dir: Optional[Path] = None,
     config_file: Optional[Path] = None,
     interactive: bool = True,
-    json_file: Optional[Path] = None,
 ) -> None:
-    """添加 CLI 工具"""
-    # 从 JSON 文件读取配置
-    if json_file and json_file.exists():
-        try:
-            with open(json_file, "r", encoding="utf-8") as f:
-                cli_config = json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            console.print(f"[red][ERROR][/] 读取 CLI 配置失败: {json_file.name}: {e}")
-            return
-        command = cli_config.get("command", command)
-        if not args:
-            json_args = cli_config.get("args", [])
-            if json_args:
-                args = ",".join(str(a) for a in json_args) if isinstance(json_args, list) else str(json_args)
-        if not extra_env:
-            json_env = cli_config.get("env", {})
-            extra_env = list(json_env.keys()) if isinstance(json_env, dict) else json_env
-        timeout = cli_config.get("timeout", timeout)
+    """注册 CLI 工具。command 为完整命令行，自动拆分为可执行文件和参数。"""
+    # 拆分命令行
+    parts = shlex.split(command)
+    if not parts:
+        console.print("[red][ERROR][/] 命令不能为空")
+        return
+    executable = parts[0]
+    args = parts[1:]
 
-    # 解析 args
-    parsed_args: list[str] = []
-    if args:
-        try:
-            parsed_args = json.loads(args)
-            if not isinstance(parsed_args, list):
-                parsed_args = [args]
-        except json.JSONDecodeError:
-            parsed_args = [a.strip() for a in args.split(",") if a.strip()]
+    # 验证命令存在并获取 --help 输出
+    try:
+        result = subprocess.run(
+            [executable] + args + ["--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        console.print(f"[red][ERROR][/] 找不到命令: {executable}")
+        return
+    except subprocess.TimeoutExpired:
+        console.print(f"[red][ERROR][/] `{executable} --help` 超时")
+        return
 
-    # 尝试获取 --help 信息作为描述
-    help_text = _fetch_help(command, parsed_args)
-    description = help_text or f"CLI tool: {name}"
+    help_text = result.stdout or result.stderr
+    if not help_text.strip():
+        console.print(f"[red][ERROR][/] `{executable} {' '.join(args)} --help` 无输出")
+        return
+    parameters = _parse_help_with_llm(console, help_text, base_dir, config_file)
 
     # 处理环境变量
-    env: dict[str, str] = {}
-    if extra_env:
-        env, _ = resolve_env_vars(extra_env, console, base_dir=base_dir, interactive=interactive)
+    env_names = extra_env or []
+    env_dict: dict[str, str] = {}
+    if env_names:
+        resolved, _ = resolve_env_vars(env_names, console, base_dir=base_dir, interactive=interactive)
+        env_dict.update(resolved)
 
     # 注册工具
     tool = Tool(
         id=f"cli.{name}",
         name=name,
-        description=description,
-        parameters={
-            "type": "object",
-            "properties": {
-                "arguments": {
-                    "type": "string",
-                    "description": f"传递给 {name} 的参数",
-                },
-            },
-            "required": ["arguments"],
-        },
+        description=f"CLI tool: {name}",
+        parameters=parameters,
         execution=ToolExecutionConfig(
             type=ToolExecutionType.CLI,
-            command=command,
-            args=parsed_args,
+            command=executable,
+            args=args,
             timeout=timeout,
-            env=env,
+            env=env_dict,
         ),
         scope="default" if default else "user",
         metadata=ToolMetadata(
             tags=["cli", name],
         ),
-        dependencies={
-            "cli_command": command,
-            "cli_args": parsed_args,
-        },
     )
 
     register_tool_and_report(tool, console, base_dir=base_dir, config_file=config_file)
-    console.print(f"  命令: {command}")
-    if parsed_args:
-        console.print(f"  前缀参数: {parsed_args}")
+    console.print(f"  命令: {executable} {' '.join(args)}".strip())
     console.print(f"  超时: {timeout}s")
-    if extra_env:
-        console.print(f"  所需环境变量: {', '.join(extra_env)}")
-    if help_text:
-        console.print(f"  [dim]描述来自 --help 输出[/]")
+    if env_names:
+        console.print(f"  所需环境变量: {', '.join(env_names)}")
 
 
-def _fetch_help(command: str, prefix_args: list[str]) -> str | None:
-    """尝试执行 command --help 获取帮助信息"""
-    cmd_parts = [command] + prefix_args + ["--help"]
+def _parse_help_with_llm(
+    console: Console,
+    help_text: str,
+    base_dir: Optional[Path],
+    config_file: Optional[Path],
+) -> dict:
+    """用 LLM 解析 --help 输出，生成 parameters JSON Schema。"""
     try:
-        result = subprocess.run(
-            cmd_parts,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=15,
-        )
-        # --help 输出可能在 stdout 或 stderr
-        output = result.stdout or result.stderr
-        if output:
-            # 截取前 500 字符作为描述
-            lines = output.strip().splitlines()
-            # 取前几行（通常是工具名 + 简短描述）
-            desc_lines = []
-            for line in lines[:5]:
-                stripped = line.strip()
-                if stripped:
-                    desc_lines.append(stripped)
-            return " ".join(desc_lines)[:500] if desc_lines else None
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
-    return None
+        from qd_agents.cli.managers import LLMClientManager, setup_configuration
+        from qd_agents.context import ContextManager
+        from qd_agents.prompts import PromptLoader
+    except ImportError as e:
+        logger.warning("LLMClientManager 依赖不可用: %s", e)
+        return _default_parameters()
+
+    config = setup_configuration(console, base_dir=base_dir, config_file=config_file)
+    tool_registry = get_tool_registry(config)
+
+    prompt_loader = None
+    if config.prompts and config.prompts.template_dir:
+        prompt_loader = PromptLoader(template_dir=Path(config.prompts.template_dir))
+
+    context_manager = ContextManager(prompt_loader=prompt_loader, base_dir=base_dir)
+
+    async def _run():
+        provider_name = config.llm.default_provider
+        llm_manager = LLMClientManager(console, config, tool_registry, prompt_loader, context_manager)
+        if not await llm_manager.initialize(provider_name):
+            logger.warning("LLMClientManager 初始化失败")
+            return None
+
+        try:
+            prompt = _PARSE_HELP_PROMPT.format(help_text=help_text)
+            llm_manager.llm_client.meta_agent_name = "parse_help"
+
+            response = await llm_manager.llm_client.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+            )
+            content = response.choices[0].message.content or ""
+            json_str = extract_json_from_llm_output(content)
+            return json.loads(json_str)
+        except Exception as e:
+            logger.warning("LLM 解析 --help 失败: %s", e)
+            return None
+        finally:
+            await llm_manager.close()
+
+    try:
+        result = asyncio.run(_run())
+        if result and isinstance(result, dict) and "properties" in result:
+            console.print("[dim]  已从 --help 解析参数[/]")
+            return result
+    except Exception as e:
+        logger.warning("LLM 解析 --help 失败: %s", e)
+
+    console.print("[yellow]  ⚠ 无法解析 --help，使用默认参数[/]")
+    return _default_parameters()
+
+
+def _default_parameters() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "arguments": {
+                "type": "string",
+                "description": "传递给命令的参数",
+            },
+        },
+        "required": ["arguments"],
+    }
