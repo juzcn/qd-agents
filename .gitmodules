@@ -1,6 +1,3 @@
-[submodule "tools/mcp/open-meteo-mcp"]
-	path = tools/mcp/open-meteo-mcp
-	url = https://github.com/cmer81/open-meteo-mcp
 [submodule "skills/superpowers"]
 	path = skills/superpowers
 	url = https://github.com/obra/superpowers
@@ -10,6 +7,3 @@
 [submodule "skills/awesome-claude-code"]
 	path = skills/awesome-claude-code
 	url = https://github.com/hesreallyhim/awesome-claude-code
-[submodule "tools/mcp/n8n-mcp"]
-	path = tools/mcp/n8n-mcp
-	url = https://github.com/czlonkowski/n8n-mcp
