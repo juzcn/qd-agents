@@ -6,7 +6,7 @@ CLI 应用配置
 
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 import typer
 from rich.console import Console
@@ -105,36 +105,24 @@ def tools_init(
 
 
 # mcp add 命令
-@mcp_app.command("add", help="添加 MCP 服务器")
+@mcp_app.command("add", help="添加 MCP 服务器（从 tools/mcp/<server>.json 读取配置）")
 def mcp_add_command(
-    name: str = typer.Argument(..., help="工具名称（必需）"),
-    server: str = typer.Argument(..., help="MCP服务器标识（必需）"),
-    transport: str = typer.Option("stdio", "--transport", "-t", help="传输模式: stdio, sse, streamable-http"),
-    command: Optional[str] = typer.Option(None, "--command", "--cmd", help="stdio 模式下的命令"),
-    args: Optional[str] = typer.Option(None, "--args", "-a", help="stdio 模式下的参数 (JSON 数组或逗号分隔)"),
-    url: Optional[str] = typer.Option(None, "--url", "-u", help="SSE 或 streamable-http 模式的 URL"),
+    server: str = typer.Argument(..., help="MCP服务器标识（对应 tools/mcp/<server>.json）"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    json: bool = typer.Option(False, "--json", "-j", help="从同名JSON文件读取配置（tools/mcp/<name>.json）"),
 ):
     """添加 MCP 服务器"""
-    # 验证必需参数（防止空字符串）
-    if not name or not name.strip():
-        console.print("[red][ERROR][/] 工具名称不能为空")
-        return
     if not server or not server.strip():
         console.print("[red][ERROR][/] MCP服务器标识不能为空")
         return
 
-    # 如果指定了 --json，构建JSON文件路径
-    json_file: Optional[Path] = None
-    if json:
-        if base_dir:
-            json_file = base_dir / "tools" / "mcp" / f"{name}.json"
-        else:
-            json_file = Path("tools") / "mcp" / f"{name}.json"
+    # 构建 JSON 文件路径
+    if base_dir:
+        json_file = base_dir / "tools" / "mcp" / f"{server}.json"
+    else:
+        json_file = Path("tools") / "mcp" / f"{server}.json"
 
-    mcp_add(console, name, server, transport, command, args, url, config_file, base_dir, json_file)
+    mcp_add(console, server, config_file=config_file, base_dir=base_dir, json_file=json_file)
 
 
 
@@ -175,6 +163,7 @@ def tools_update(
 @skill_app.command("add", help="添加 Skill 工具")
 def skill_add_command(
     skill_name: str = typer.Argument(..., help="Skill 名称（tools/skills/ 下的文件夹名）"),
+    env: Optional[List[str]] = typer.Option(None, "--env", "-e", help="所需环境变量（如 TAVILY_API_KEY），可多次指定"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
 ):
@@ -182,7 +171,7 @@ def skill_add_command(
     if not skill_name or not skill_name.strip():
         console.print("[red][ERROR][/] Skill 名称不能为空")
         return
-    skill_add(console, skill_name, base_dir, config_file)
+    skill_add(console, skill_name, base_dir, config_file, extra_env=env)
 
 
 # memory list 命令

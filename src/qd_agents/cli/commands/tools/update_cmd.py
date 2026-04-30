@@ -26,8 +26,23 @@ def _detect_package_version(command: str, args: list[str]) -> tuple[str | None, 
 
     # 从 args 中提取包名
     if command in ("npx", "npm") and args:
-        # npx -y @scope/package → 提取 @scope/package
-        filtered = [a for a in args if a not in ("-y", "--yes", "--")]
+        # npx -y -p @scope/package command → 提取 @scope/package
+        # 过滤 npx 选项及其参数：-y, -p <pkg>, --package <pkg>
+        skip_next = False
+        filtered = []
+        for a in args:
+            if skip_next:
+                skip_next = False
+                continue
+            if a in ("-y", "--yes", "--"):
+                continue
+            if a in ("-p", "--package"):
+                skip_next = True  # 跳过 -p 的参数（包名）
+                continue
+            if a.startswith("-p") and len(a) > 2:
+                # -p@scope/package 紧凑写法
+                continue
+            filtered.append(a)
         if filtered:
             install_source = filtered[0]
     elif command in ("uvx", "pip") and args:
@@ -56,7 +71,8 @@ def _npm_detect_version(package: str) -> str | None:
     # 1. 尝试 npm list -g（本地已安装）
     result = subprocess.run(
         ["npm", "list", "-g", package, "--depth=0", "--json"],
-        capture_output=True, text=True, timeout=10, shell=True,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, timeout=10, shell=True,
     )
     if result.returncode == 0:
         try:
@@ -69,7 +85,8 @@ def _npm_detect_version(package: str) -> str | None:
     # 2. 尝试 npm view（远程查询最新版本）
     result = subprocess.run(
         ["npm", "view", package, "version"],
-        capture_output=True, text=True, timeout=10, shell=True,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        text=True, timeout=10, shell=True,
     )
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()

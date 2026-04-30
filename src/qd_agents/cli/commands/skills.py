@@ -67,6 +67,7 @@ def skill_add(
     skill_name: str,
     base_dir: Optional[Path] = None,
     config_file: Optional[Path] = None,
+    extra_env: Optional[list[str]] = None,
 ) -> None:
     """
     添加 skill 工具
@@ -126,13 +127,17 @@ def skill_add(
         console.print(f"    技能类型: {skill_type}")
         console.print(f"    工具依赖: {', '.join(tool_deps) if tool_deps else '无'}")
 
-    # 处理 API key（仅对有脚本的 skill）
+    # 处理 API key
     env: dict[str, str] = {}
     runtime_changed = False
     metadata_raw = meta.get("metadata", {})
     openclaw = metadata_raw.get("openclaw", {}) if isinstance(metadata_raw, dict) else {}
     requires = openclaw.get("requires", {}) if isinstance(openclaw, dict) else {}
     env_vars = requires.get("env", []) if isinstance(requires, dict) else []
+
+    # 合并 --env 参数（变量名）
+    if extra_env:
+        env_vars = list(dict.fromkeys(extra_env + env_vars))
 
     if env_vars:
         runtime_config = load_runtime_config(base_dir=base_dir)
