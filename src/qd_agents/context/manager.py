@@ -218,32 +218,45 @@ class ContextManager:
                     for t in server_info["subtools"]:
                         tools_lines.append(f"- [mcp] **{t.name}**: {t.description}")
                 tools_info = "\n".join(tools_lines)
-                system_prompt = f"""你是一个自主进化的智能体。你能够自主思考、自主决策、自主行动，并在需要时向用户求助或请求协作。
+                system_prompt = f"""你是一个自主进化的智能体，能够自主思考、决策、行动，并在需要时向用户求助。
 
-你具备直接调用工具的能力——这是你的元工具，是你自身具备的能力。你可以自主决定调用哪些工具、观察结果、继续调用或给出最终答案。
+## 运行环境
 
-自我认知：
-- 系统提示词: src/qd_agents/prompts/templates/evolve.j2
-- 运行配置: config.json
-- 数据模型: src/qd_agents/models/evolve.py
-- 决策逻辑: src/qd_agents/agent/evolve.py
+- **操作系统**：{env_info['os']}
+- **Python**：{env_info['python_version']}（{env_info['python_path']}）
+- **虚拟环境**：{env_info['venv_path']}
+- **包管理器**：uv {env_info['uv_version']}
+- **项目根目录**：{env_info['project_dir']}
+- **工作目录**：{env_info['work_dir']}
 
-运行环境：
-- 操作系统: {env_info['os']}
-- Python 版本: {env_info['python_version']}
-- Python 路径: {env_info['python_path']}
-- 虚拟环境: {env_info['venv_path']}
-- 包管理器: uv {env_info['uv_version']}
-- 项目根目录: {env_info['project_dir']}
+## Bash 执行规则
 
-自主循环：你可以多轮迭代：思考 → 调用工具 → 观察结果 → 继续或完成。不要猜测！不确定就先调工具获取信息。
+- 用 `python` 不用 `python3`
+- 用 `tools/skills/` 路径不用 `skills/`
+- JSON 参数用双引号，内部双引号转义
+- 优先 `python -m <module>` 而非 `uvx <module>`
+- SKILL.md 中的示例可能是 Linux 风格，必须适配为 Windows 格式
 
-可用工具:
+## 自主循环
+
+多轮迭代：思考 → 调用工具 → 观察结果 → 继续或完成。不确定的信息先调工具获取，不要猜测。
+
+## 工具箱管理
+
+成功使用新工具后，注册到工具箱以便复用：
+
+- **注册 Skill**：`qd-agents tools skill add <name>`
+- **注册 MCP**：`qd-agents tools mcp add <name> <server> --command <cmd> --args '<json_array>'`
+- **查看工具箱**：`qd-agents tools list`
+- **移除工具**：`qd-agents tools remove <name>`
+
+安装新工具：`uv add <package>` 安装到虚拟环境，`uvx <tool>` 临时运行。
+
+## 可用工具
+
 {tools_info or '暂无'}
 
-需要请求用户输入时输出: {{"action": "ask_user", "ask_user": {{"question": "...", "options": [...], "reason": "..."}}}}
-需要委托用户执行时输出: {{"action": "delegate", "delegate": {{"task": "...", "guide": "...", "reason": "..."}}}}
-其他情况直接用自然语言回答。"""
+**Skill 工具**：调用时传空对象 `{{{{}}}}`。首次调用只获取用法指南（SKILL.md），不是真正执行。收到指南后，必须按「Bash 执行规则」适配命令，再用 `execute_bash` 执行。"""
 
             self._evolve_cache[cache_key] = system_prompt
             logger.debug(f"Cached system prompt for evolve with {len(tools)} tools")
@@ -260,7 +273,7 @@ class ContextManager:
             obs_text = "\n".join(f"- {obs}" for obs in observations)
             obs_message = {
                 "role": "user",
-                "content": f"## 前几轮观察结果\n\n{obs_text}\n\n请基于以上观察结果继续决策。如果信息已足够，给出最终答案；如果仍需更多信息，继续 observe。\n\n重要：你的回复必须是 JSON 格式，不要直接输出文本回答。",
+                "content": f"## 前几轮观察结果\n\n{obs_text}\n\n请基于以上观察结果继续决策。如果信息已足够，给出最终答案；如果仍需更多信息，继续调用工具。",
             }
             # 插入到 user_input 之前（倒数第二个位置）
             messages.insert(-1, obs_message)

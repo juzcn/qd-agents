@@ -91,49 +91,57 @@ class MCPToolExecutor(ToolExecutor):
         # 进程引用（保留用于兼容性）
         self._process = None
 
-    async def _ensure_connected(self) -> None:
-        """确保连接到 MCP 服务器"""
+    async def _ensure_connected(self, timeout: int = 30) -> None:
+        """确保连接到 MCP 服务器
+
+        Args:
+            timeout: 连接总超时（秒），超时抛出 asyncio.TimeoutError
+        """
         if self._session is not None:
             return
 
         logger.info(f"Connecting to MCP server via {self.transport}: {self.server}")
-        # 输出重要的配置信息用于调试
         logger.info(f"MCP server configuration for '{self.server}':")
         logger.info(f"  - transport: {self.transport}")
         logger.info(f"  - command: {self.command}")
         logger.info(f"  - args: {self.args}")
         if self.url:
             logger.info(f"  - url: {self.url}")
-        # 输出额外的详细配置信息（DEBUG级别）
-        logger.debug(f"Additional MCP server details for '{self.server}':")
-        logger.debug(f"  - timeout: {self.timeout}")
-        logger.debug(f"  - tool_name: {self.tool_name}")
-        logger.debug(f"  - env keys: {list(self.env.keys())}")
-        if self.env and "__mcp_config__" in self.env:
-            try:
-                config = json.loads(self.env["__mcp_config__"])
-                logger.debug(f"  - __mcp_config__: {json.dumps(config, indent=2, ensure_ascii=False)}")
-            except:
-                logger.debug(f"  - __mcp_config__: (parse error)")
 
+        try:
+            async with asyncio.timeout(timeout):
+                await self._do_connect()
+        except asyncio.TimeoutError:
+            # 超时时确保清理部分初始化的资源
+            try:
+                await self.close()
+            except Exception:
+                pass
+            raise
+        except Exception:
+            try:
+                await self.close()
+            except Exception:
+                pass
+            raise
+
+    async def _do_connect(self) -> None:
+        """实际连接逻辑（由 _ensure_connected 调用，受超时保护）"""
         try:
             if self.transport == "stdio":
                 if not self.command:
                     raise ValueError("stdio transport requires command")
 
-                # 从配置中提取环境变量
                 env = None
                 if hasattr(self, 'env') and self.env:
                     env = self.env
 
-                # 使用 StdioServerParameters 连接 MCP 服务器
                 server_params = StdioServerParameters(
                     command=self.command,
                     args=self.args,
                     env=env,
                     encoding='utf-8',
                 )
-                # stdio_client 返回异步上下文管理器
                 self._context_manager = stdio_client(server_params)
                 transport = await self._context_manager.__aenter__()
                 self._session = ClientSession(*transport)
@@ -142,7 +150,6 @@ class MCPToolExecutor(ToolExecutor):
                 if not self.url:
                     raise ValueError("sse transport requires url")
 
-                # sse_client 返回异步上下文管理器
                 self._context_manager = sse_client(
                     url=self.url,
                     headers=self.headers,
@@ -154,7 +161,6 @@ class MCPToolExecutor(ToolExecutor):
                 if not self.url:
                     raise ValueError("streamable-http transport requires url")
 
-                # streamable_http_client 返回异步上下文管理器
                 http_client = httpx.AsyncClient(headers=self.headers) if self.headers else None
                 self._context_manager = streamable_http_client(
                     url=self.url,
@@ -169,29 +175,17 @@ class MCPToolExecutor(ToolExecutor):
             # 初始化会话
             await self._session.__aenter__()
 
-            # 显式调用initialize方法（某些MCP服务器需要）
             try:
                 await self._session.initialize()
                 logger.debug(f"MCP server '{self.server}' initialize() called successfully")
             except (AttributeError, TypeError) as e:
-                # 如果session没有initialize方法，忽略错误
                 logger.debug(f"MCP server '{self.server}' has no initialize() method: {e}")
             except Exception as e:
                 logger.warning(f"MCP server '{self.server}' initialize() failed: {e}")
 
-            # 给服务器一些时间完成初始化（特别是对于启动较慢的服务器）
-            if "fetch" in self.server.lower() or self.command == "uvx":
-                logger.debug(f"Waiting for MCP server '{self.server}' to initialize...")
-                await asyncio.sleep(1.5)  # 给Python服务器时间（从2.0秒减少）
-            elif "filesystem" in self.server.lower() or self.command == "cmd" or self.command == "npx":
-                logger.debug(f"Waiting for Node.js MCP server '{self.server}' to initialize...")
-                await asyncio.sleep(2.5)  # 给Node.js服务器更多时间（从3.0秒减少），特别是Windows上
-            else:
-                await asyncio.sleep(0.5)  # 其他服务器较短等待
-
-            # 获取可用工具，添加重试机制
-            max_retries = 5  # 增加重试次数
-            retry_delay = 2.0  # 增加初始延迟
+            # 获取可用工具，短暂重试
+            max_retries = 3
+            retry_delay = 1.0
 
             for attempt in range(max_retries):
                 try:
@@ -199,18 +193,17 @@ class MCPToolExecutor(ToolExecutor):
                     for tool in tools_result.tools:
                         self._tools_cache[tool.name] = tool
                     logger.info(f"MCP server '{self.server}' connection successful, found {len(self._tools_cache)} tools")
-                    break
+                    return
                 except Exception as e:
                     if attempt < max_retries - 1:
                         logger.warning(f"MCP server '{self.server}' list_tools attempt {attempt + 1} failed: {e}, retrying in {retry_delay}s")
                         await asyncio.sleep(retry_delay)
-                        retry_delay *= 2.0  # 更激进的指数退避
+                        retry_delay *= 2.0
                     else:
                         logger.error(f"MCP server '{self.server}' list_tools failed after {max_retries} attempts: {e}")
                         raise
 
         except Exception:
-            # 如果连接失败，确保清理部分初始化的资源
             try:
                 await self.close()
             except Exception:

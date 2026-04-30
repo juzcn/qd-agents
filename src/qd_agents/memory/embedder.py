@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import struct
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -96,15 +97,24 @@ class LlamaCppEmbedder(BaseEmbedder):
 class SentenceTransformersEmbedder(BaseEmbedder):
     """sentence-transformers 嵌入引擎 — 支持 BAAI/bge-m3 等 HuggingFace 模型"""
 
-    def __init__(self, model_name: str = "BAAI/bge-m3", vec_dim: int = 1024, hf_token: str = "") -> None:
+    def __init__(self, model_name: str = "BAAI/bge-m3", vec_dim: int = 1024, hf_token: str = "", hf_cache_dir: str = "") -> None:
         self._model_name = model_name
         self._vec_dim = vec_dim
         self._hf_token = hf_token
+        self._hf_cache_dir = hf_cache_dir
         self._model: object | None = None
 
     def _ensure_model(self) -> None:
         if self._model is not None:
             return
+
+        # 在 import 前设置 HuggingFace 环境变量，避免模型下载到默认 cache 或每次联网检查
+        if self._hf_cache_dir:
+            os.environ["HF_HOME"] = self._hf_cache_dir
+        if self._hf_token:
+            os.environ["HF_TOKEN"] = self._hf_token
+        # 已有本地模型时跳过在线检查
+        os.environ["HF_HUB_OFFLINE"] = "1"
 
         from sentence_transformers import SentenceTransformer
 
@@ -147,10 +157,11 @@ def create_embedder(
     vec_dim: int = 1024,
     n_ctx: int = 8192,
     hf_token: str = "",
+    hf_cache_dir: str = "",
 ) -> BaseEmbedder:
     """工厂函数 — 根据后端配置创建嵌入引擎"""
     if backend == "sentence_transformers":
-        return SentenceTransformersEmbedder(model_name=model_name, vec_dim=vec_dim, hf_token=hf_token)
+        return SentenceTransformersEmbedder(model_name=model_name, vec_dim=vec_dim, hf_token=hf_token, hf_cache_dir=hf_cache_dir)
     if backend == "llama_cpp":
         if model_path is None:
             raise ValueError("llama_cpp backend requires model_path")
