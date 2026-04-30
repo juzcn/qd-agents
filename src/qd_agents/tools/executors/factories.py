@@ -11,6 +11,7 @@ from typing import Any, Callable
 from .base import ToolExecutor
 from .http import HTTPToolExecutor, create_http_tool
 from .bash import BashToolExecutor, create_bash_tool
+from .cli import CliToolExecutor
 from .function import FunctionToolExecutor, create_function_tool
 from .mcp import MCPToolExecutor, create_mcp_tool
 from qd_agents.models.tool import Tool, ToolExecutionType
@@ -32,11 +33,9 @@ def create_executor(tool: Tool) -> ToolExecutor:
     exec_config = tool.execution
 
     if exec_config.type == ToolExecutionType.HTTP:
-        if not exec_config.endpoint:
-            raise ValueError("HTTP tool requires endpoint")
         return HTTPToolExecutor(
-            endpoint=exec_config.endpoint,
-            method=exec_config.method or "POST",
+            endpoint=exec_config.endpoint or exec_config.base_url or "",
+            method=exec_config.method or "GET",
             headers=exec_config.headers,
             timeout=exec_config.timeout,
         )
@@ -46,6 +45,16 @@ def create_executor(tool: Tool) -> ToolExecutor:
             raise ValueError("BASH tool requires shell_command")
         return BashToolExecutor(
             shell_command=exec_config.shell_command,
+            shell=exec_config.shell or "bash",
+            timeout=exec_config.timeout,
+            env=exec_config.env,
+        )
+
+    elif exec_config.type == ToolExecutionType.CLI:
+        if not exec_config.command:
+            raise ValueError("CLI tool requires command")
+        return CliToolExecutor(
+            shell_command="",  # CLI executor 拼装命令，不需要 shell_command
             shell=exec_config.shell or "bash",
             timeout=exec_config.timeout,
             env=exec_config.env,

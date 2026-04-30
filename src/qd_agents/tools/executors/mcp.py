@@ -378,6 +378,7 @@ def create_mcp_tool(
     source_path: str | None = None,
     version: str | None = None,
     install_source: str | None = None,
+    scope: str = "user",
 ) -> Tool:
     """创建 MCP 工具"""
     return Tool(
@@ -402,7 +403,7 @@ def create_mcp_tool(
             env=env or {},
             timeout=timeout,
         ),
-        scope="user",
+        scope=scope,
         metadata=ToolMetadata(
             tags=["mcp", server],
             version=version,

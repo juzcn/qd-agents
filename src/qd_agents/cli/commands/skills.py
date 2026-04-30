@@ -68,6 +68,8 @@ def skill_add(
     base_dir: Optional[Path] = None,
     config_file: Optional[Path] = None,
     extra_env: Optional[list[str]] = None,
+    default: bool = False,
+    interactive: bool = True,
 ) -> None:
     """
     添加 skill 工具
@@ -148,16 +150,20 @@ def skill_add(
                 env[var] = api_key_value
                 console.print(f"  [dim]{var}[/]: 从 runtime.json (tools_credentials.{tool_name}) 加载")
             else:
-                console.print(f"  [yellow]{var}[/] 未在 runtime.json 中配置，请输入 API Key:")
-                api_key_input = input(f"  {var}=").strip()
-                if api_key_input:
-                    env[var] = api_key_input
-                    runtime_config.tools_credentials.set_api_key(tool_name, api_key_input)
-                    runtime_changed = True
-                    console.print(f"  [green]已将 {var} 写入 runtime.json (tools_credentials.{tool_name})[/]")
+                if interactive:
+                    console.print(f"  [yellow]{var}[/] 未在 runtime.json 中配置，请输入 API Key:")
+                    api_key_input = input(f"  {var}=").strip()
+                    if api_key_input:
+                        env[var] = api_key_input
+                        runtime_config.tools_credentials.set_api_key(tool_name, api_key_input)
+                        runtime_changed = True
+                        console.print(f"  [green]已将 {var} 写入 runtime.json (tools_credentials.{tool_name})[/]")
+                    else:
+                        env[var] = ""
+                        console.print(f"  [yellow]警告: {var} 未设置，工具执行时可能失败[/]")
                 else:
-                    env[var] = ""
-                    console.print(f"  [yellow]警告: {var} 未设置，工具执行时可能失败[/]")
+                    import os as _os
+                    env[var] = _os.environ.get(var, "")
 
         if runtime_changed:
             save_runtime_config(runtime_config, base_dir=base_dir)
@@ -179,7 +185,7 @@ def skill_add(
             type=ToolExecutionType.SKILL,
             env=env,
         ),
-        scope="user",
+        scope="default" if default else "user",
         metadata=ToolMetadata(
             tags=["skill", name],
             version=skill_version,

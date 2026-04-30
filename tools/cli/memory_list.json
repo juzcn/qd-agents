@@ -1,0 +1,13 @@
+{
+  "command": "qd-agents",
+  "args": ["memory", "list"],
+  "description": "列出长期记忆，支持时间区间、session 筛选",
+  "timeout": 60,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "arguments": {"type": "string", "description": "可选参数：--asc、--interval 1d、--session ID"}
+    },
+    "required": ["arguments"]
+  }
+}

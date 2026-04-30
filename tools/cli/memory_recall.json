@@ -1,0 +1,13 @@
+{
+  "command": "qd-agents",
+  "args": ["memory", "recall"],
+  "description": "语义召回长期记忆，输入查询语句返回相关历史对话",
+  "timeout": 60,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "arguments": {"type": "string", "description": "用于语义检索的查询语句"}
+    },
+    "required": ["arguments"]
+  }
+}
