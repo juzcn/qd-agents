@@ -8,6 +8,8 @@ from .tools import list_tools, init_tools, remove_tools, update_check, update_to
 from .version import show_version
 from .mcp import mcp_add
 from .skills import skill_add
+from .cli import cli_add
+from .http import http_add
 from .memory import recall_memories, recall_memory
 
 __all__ = [
@@ -22,6 +24,8 @@ __all__ = [
     "show_version",
     "mcp_add",
     "skill_add",
+    "cli_add",
+    "http_add",
     "recall_memories",
     "recall_memory",
 ]

@@ -6,6 +6,7 @@
 
 from .base import ToolExecutor
 from .bash import BashToolExecutor, create_bash_tool
+from .cli import CliToolExecutor
 from .function import FunctionToolExecutor, create_function_tool
 from .http import HTTPToolExecutor, create_http_tool
 from .mcp import MCPToolExecutor, create_mcp_tool, extract_mcp_servers_config
@@ -14,6 +15,7 @@ from .factories import create_executor, ToolExecutorRegistry
 __all__ = [
     "ToolExecutor",
     "BashToolExecutor",
+    "CliToolExecutor",
     "create_bash_tool",
     "FunctionToolExecutor",
     "create_function_tool",

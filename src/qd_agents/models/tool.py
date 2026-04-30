@@ -26,6 +26,7 @@ class ToolExecutionType(str, Enum):
     HTTP = "http"
     MCP = "mcp"
     BASH = "bash"
+    CLI = "cli"
     SKILL = "skill"
 
 
@@ -33,12 +34,15 @@ class ToolExecutionConfig(BaseModel):
     """工具执行配置"""
     type: ToolExecutionType
     endpoint: str | None = None
+    base_url: str | None = None
     method: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
+    auth_type: str | None = None
+    auth_env_key: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
     command: str | None = None
     args: list[str] = Field(default_factory=list)
-    timeout: int = 30
+    timeout: int = 120
     module: str | None = None
     function: str | None = None
     server: str | None = None

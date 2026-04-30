@@ -27,6 +27,8 @@ def mcp_add(
     config_file: Optional[Path] = None,
     base_dir: Optional[Path] = None,
     json_file: Optional[Path] = None,
+    default: bool = False,
+    interactive: bool = True,
 ) -> None:
     """添加 MCP 服务器（从 JSON 文件读取配置）"""
     # JSON 文件必须存在
@@ -120,6 +122,7 @@ def mcp_add(
         source_path=str(json_file),
         version=version,
         install_source=install_source,
+        scope="default" if default else "user",
     )
 
     tool_id = registry.register(tool)

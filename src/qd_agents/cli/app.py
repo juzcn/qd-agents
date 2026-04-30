@@ -11,7 +11,7 @@ from typing import Optional, List
 import typer
 from rich.console import Console
 
-from .commands import chat_async, list_models_async, list_tools, init_tools, remove_tools, update_check, update_tools, show_version, mcp_add, skill_add, recall_memories, recall_memory
+from .commands import chat_async, list_models_async, list_tools, init_tools, remove_tools, update_check, update_tools, show_version, mcp_add, skill_add, cli_add, http_add, recall_memories, recall_memory
 
 
 # 创建 Typer 应用实例
@@ -57,6 +57,28 @@ skill_app = typer.Typer(
 # 将 skill 子命令组添加到 tools 子命令组
 tools_app.add_typer(skill_app)
 
+# 创建 cli 子命令组
+cli_app = typer.Typer(
+    name="cli",
+    help="CLI 工具管理命令",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
+# 将 cli 子命令组添加到 tools 子命令组
+tools_app.add_typer(cli_app)
+
+# 创建 http 子命令组
+http_app = typer.Typer(
+    name="http",
+    help="HTTP 工具管理命令",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
+# 将 http 子命令组添加到 tools 子命令组
+tools_app.add_typer(http_app)
+
 # 创建 memory 子命令组
 memory_app = typer.Typer(
     name="memory",
@@ -75,6 +97,7 @@ def tools_list(
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     mcp: bool = typer.Option(False, "--mcp", "-m", help="列出 MCP 工具及 subtools"),
     skill: bool = typer.Option(False, "--skill", "-s", help="列出 Skill 工具及重要属性"),
+    cli: bool = typer.Option(False, "--cli", help="只列出 CLI 工具"),
     function: bool = typer.Option(False, "--function", help="只列出 Function 工具"),
     bash: bool = typer.Option(False, "--bash", help="只列出 Bash 工具"),
     http: bool = typer.Option(False, "--http", help="只列出 HTTP 工具"),
@@ -85,6 +108,8 @@ def tools_list(
         type_filter.append("mcp")
     if skill:
         type_filter.append("skill")
+    if cli:
+        type_filter.append("cli")
     if function:
         type_filter.append("function")
     if bash:
@@ -108,6 +133,7 @@ def tools_init(
 @mcp_app.command("add", help="添加 MCP 服务器（从 tools/mcp/<server>.json 读取配置）")
 def mcp_add_command(
     server: str = typer.Argument(..., help="MCP服务器标识（对应 tools/mcp/<server>.json）"),
+    default: bool = typer.Option(False, "--default", help="注册为 default 工具（默认注册为 user）"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
 ):
@@ -122,7 +148,7 @@ def mcp_add_command(
     else:
         json_file = Path("tools") / "mcp" / f"{server}.json"
 
-    mcp_add(console, server, config_file=config_file, base_dir=base_dir, json_file=json_file)
+    mcp_add(console, server, config_file=config_file, base_dir=base_dir, json_file=json_file, default=default)
 
 
 
@@ -164,6 +190,7 @@ def tools_update(
 def skill_add_command(
     skill_name: str = typer.Argument(..., help="Skill 名称（tools/skills/ 下的文件夹名）"),
     env: Optional[List[str]] = typer.Option(None, "--env", "-e", help="所需环境变量（如 TAVILY_API_KEY），可多次指定"),
+    default: bool = typer.Option(False, "--default", help="注册为 default 工具（默认注册为 user）"),
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
 ):
@@ -171,7 +198,47 @@ def skill_add_command(
     if not skill_name or not skill_name.strip():
         console.print("[red][ERROR][/] Skill 名称不能为空")
         return
-    skill_add(console, skill_name, base_dir, config_file, extra_env=env)
+    skill_add(console, skill_name, base_dir, config_file, extra_env=env, default=default)
+
+
+# cli add 命令
+@cli_app.command("add", help="添加 CLI 工具")
+def cli_add_command(
+    name: str = typer.Argument(..., help="工具名称（如 yt-dlp、ffmpeg）"),
+    command: str = typer.Option(..., "--command", help="执行命令（如 uvx、ffmpeg）"),
+    args: Optional[str] = typer.Option(None, "--args", "-a", help="命令前缀参数（JSON 数组或逗号分隔）"),
+    env: Optional[List[str]] = typer.Option(None, "--env", "-e", help="所需环境变量，可多次指定"),
+    timeout: int = typer.Option(300, "--timeout", "-t", help="执行超时（秒）"),
+    default: bool = typer.Option(False, "--default", help="注册为 default 工具（默认注册为 user）"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """添加 CLI 工具"""
+    if not name or not name.strip():
+        console.print("[red][ERROR][/] 工具名称不能为空")
+        return
+    cli_add(console, name, command, args=args, extra_env=env, timeout=timeout, default=default, base_dir=base_dir, config_file=config_file)
+
+
+# http add 命令
+@http_app.command("add", help="添加 HTTP 工具（REST API）")
+def http_add_command(
+    name: str = typer.Argument(..., help="工具名称（如 github-api）"),
+    url: str = typer.Option(..., "--url", "-u", help="API base URL（如 https://api.github.com）"),
+    method: str = typer.Option("GET", "--method", "-m", help="默认 HTTP 方法"),
+    header: Optional[List[str]] = typer.Option(None, "--header", "-H", help="自定义请求头 Key:Value，可多次指定"),
+    auth: str = typer.Option("none", "--auth", help="认证方式：none / bearer / api-key"),
+    env: Optional[List[str]] = typer.Option(None, "--env", "-e", help="所需环境变量，可多次指定"),
+    timeout: int = typer.Option(30, "--timeout", "-t", help="请求超时（秒）"),
+    default: bool = typer.Option(False, "--default", help="注册为 default 工具（默认注册为 user）"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """添加 HTTP 工具（REST API）"""
+    if not name or not name.strip():
+        console.print("[red][ERROR][/] 工具名称不能为空")
+        return
+    http_add(console, name, url, method=method, headers=header, auth=auth, extra_env=env, timeout=timeout, default=default, base_dir=base_dir, config_file=config_file)
 
 
 # memory list 命令

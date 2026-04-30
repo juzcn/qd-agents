@@ -1,12 +1,13 @@
 """
 HTTP 工具执行器
 
-处理 HTTP/HTTPS 请求的工具执行器。
+处理 HTTP/HTTPS 请求的工具执行器，支持认证和 base_url + path 拼接。
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urljoin
 
 import httpx
 
@@ -22,8 +23,8 @@ class HTTPToolExecutor(ToolExecutor):
 
     def __init__(
         self,
-        endpoint: str,
-        method: str = "POST",
+        endpoint: str = "",
+        method: str = "GET",
         headers: dict[str, str] | None = None,
         timeout: int = 30,
     ):
@@ -32,27 +33,91 @@ class HTTPToolExecutor(ToolExecutor):
         self.headers = headers or {}
         self.timeout = timeout
 
-    async def execute(self, **kwargs: Any) -> Any:
-        logger.info("Executing HTTP tool: %s %s", self.method, self.endpoint)
+    async def execute(self, tool_input: dict, **kwargs: Any) -> str:
+        tool: Any = kwargs.get("tool")
+        exec_config: ToolExecutionConfig = tool.execution if tool else None
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            request_kwargs: dict[str, Any] = {
-                "headers": self.headers,
-            }
+        # 解析 URL
+        url = self._resolve_url(exec_config, tool_input)
 
-            if self.method in ["POST", "PUT", "PATCH"]:
-                request_kwargs["json"] = kwargs
-            else:
-                request_kwargs["params"] = kwargs
+        # 构建请求头：静态 headers + 认证头
+        headers = dict(exec_config.headers) if exec_config else dict(self.headers)
+        if exec_config:
+            self._inject_auth(headers, exec_config)
 
-            response = await client.request(
-                method=self.method,
-                url=self.endpoint,
-                **request_kwargs
-            )
+        # 解析方法
+        method = (tool_input.get("method") or (exec_config.method if exec_config else None) or self.method).upper()
 
+        # 构建请求参数
+        request_kwargs: dict[str, Any] = {"headers": headers}
+        if method in ("POST", "PUT", "PATCH"):
+            body = tool_input.get("body")
+            if body is None:
+                # 兼容：如果没有 body 字段，把除保留字段外的参数作为 body
+                reserved = {"endpoint", "method", "params", "body"}
+                body = {k: v for k, v in tool_input.items() if k not in reserved}
+            request_kwargs["json"] = body if body else {}
+        else:
+            params = tool_input.get("params")
+            if params:
+                request_kwargs["params"] = params
+
+        logger.info("Executing HTTP tool: %s %s", method, url)
+
+        async with httpx.AsyncClient(timeout=exec_config.timeout if exec_config else self.timeout) as client:
+            response = await client.request(method=method, url=url, **request_kwargs)
             response.raise_for_status()
-            return response.json()
+            content_type = response.headers.get("content-type", "")
+            if "application/json" in content_type:
+                import json
+                return json.dumps(response.json(), ensure_ascii=False)
+            return response.text
+
+    @staticmethod
+    def _resolve_url(exec_config: ToolExecutionConfig | None, tool_input: dict) -> str:
+        """解析请求 URL：base_url + endpoint 拼接，或直接用 endpoint"""
+        path = tool_input.get("endpoint", "")
+
+        if exec_config and exec_config.base_url:
+            # base_url + path 拼接模式
+            base = exec_config.base_url.rstrip("/")
+            if path:
+                if path.startswith("/"):
+                    return base + path
+                return base + "/" + path
+            return base
+
+        if exec_config and exec_config.endpoint:
+            # 完整 endpoint 模式
+            return exec_config.endpoint
+
+        # 兜底：tool_input 中直接提供完整 URL
+        if path and path.startswith(("http://", "https://")):
+            return path
+
+        return path or ""
+
+    @staticmethod
+    def _inject_auth(headers: dict[str, str], exec_config: ToolExecutionConfig) -> None:
+        """根据 auth_type 注入认证头"""
+        auth_type = exec_config.auth_type
+        if not auth_type or auth_type == "none":
+            return
+
+        auth_env_key = exec_config.auth_env_key
+        if not auth_env_key:
+            return
+
+        # 从 execution.env 中读取 token 值
+        token = exec_config.env.get(auth_env_key, "")
+        if not token:
+            logger.warning("HTTP auth token not found for env key: %s", auth_env_key)
+            return
+
+        if auth_type == "bearer":
+            headers["Authorization"] = f"Bearer {token}"
+        elif auth_type == "api-key":
+            headers["X-API-KEY"] = token
 
 
 def create_http_tool(

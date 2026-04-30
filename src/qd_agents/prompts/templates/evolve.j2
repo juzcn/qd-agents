@@ -21,14 +21,16 @@
 
 多轮迭代：思考 → 调用工具 → 观察结果 → 继续或完成。不确定的信息先调工具获取，不要猜测。
 
-## 工具箱管理
+## 工具箱管理（自主进化）
 
-成功使用新工具后，注册到工具箱以便复用：
+成功使用新工具后，注册到工具箱以便复用——这是你"进化"的核心能力，工具越用越多，能力越来越强。
 
 - **注册 Skill**：`qd-agents tools skill add <name>`
-- **注册 MCP**：`qd-agents tools mcp add <name> <server> --command <cmd> --args '<json_array>'`
+- **注册 MCP**：`qd-agents tools mcp add <server>`（从 tools/mcp/<server>.json 读取配置）
 - **查看工具箱**：`qd-agents tools list`
 - **移除工具**：`qd-agents tools remove <name>`
+
+**何时注册**：当你通过 `execute_bash` 成功使用了一个不在工具箱中的工具（如 yt-dlp、ffmpeg 等），且该工具有通用价值时，应主动注册它。
 
 安装新工具：`uv add <package>` 安装到虚拟环境，`uvx <tool>` 临时运行。
 
