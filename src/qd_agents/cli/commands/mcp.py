@@ -16,6 +16,7 @@ from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata
 from qd_agents.tools.executors import create_mcp_tool, extract_mcp_servers_config
 from qd_agents.cli.utils.registry import get_tool_registry
 from qd_agents.cli.utils.registration import register_tool_and_report
+from qd_agents.cli.utils.credentials import resolve_env_vars
 from qd_agents.cli.commands.tools.update_cmd import _detect_package_version
 
 
@@ -27,15 +28,14 @@ def mcp_add(
     server: str,
     config_file: Optional[Path] = None,
     base_dir: Optional[Path] = None,
-    json_file: Optional[Path] = None,
     default: bool = False,
     interactive: bool = True,
 ) -> None:
     """添加 MCP 服务器（从 JSON 文件读取配置）"""
-    # JSON 文件必须存在
-    if not json_file or not json_file.exists():
-        console.print(f"[red][ERROR][/] JSON 配置文件不存在: {json_file or '未指定'}")
-        console.print(f"  期望路径: tools/mcp/{server}.json")
+    # 根据 server 名自动定位 JSON 文件
+    json_file = Path("tools/mcp") / f"{server}.json"
+    if not json_file.exists():
+        console.print(f"[red][ERROR][/] JSON 配置文件不存在: {json_file}")
         return
 
     # 读取 JSON 配置
@@ -75,9 +75,23 @@ def mcp_add(
     final_command = extracted_config.get("command")
     final_args = extracted_config.get("args")
     final_url = extracted_config.get("url")
-    final_env = extracted_config.get("env") or {}
-    if not isinstance(final_env, dict):
-        final_env = {}
+    env_raw = extracted_config.get("env")
+
+    # 处理环境变量（与 skill_add 同样方式）
+    env_names: list[str] = []
+    env_fixed: dict[str, str] = {}
+    if isinstance(env_raw, list):
+        env_names = env_raw
+    elif isinstance(env_raw, dict):
+        for k, v in env_raw.items():
+            env_fixed[k] = str(v)
+
+    final_env: dict[str, str] = {}
+    final_env.update(env_fixed)
+    if env_names:
+        resolved, _ = resolve_env_vars(env_names, console, base_dir=base_dir, interactive=interactive)
+        final_env.update(resolved)
+
     final_env = final_env.copy()
     final_env["__mcp_config__"] = json.dumps(json_config, ensure_ascii=False)
 
@@ -136,3 +150,5 @@ def mcp_add(
         console.print(f"  安装源: {install_source}")
     if version:
         console.print(f"  版本: {version}")
+    if env_names:
+        console.print(f"  所需环境变量: {', '.join(env_names)}")

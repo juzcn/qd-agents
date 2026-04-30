@@ -12,6 +12,7 @@ from qd_agents.config import load_config
 from qd_agents.cli.utils.registry import get_tool_registry
 from qd_agents.models.tool import ToolExecutionType
 from qd_agents.services.mcp_service import MCPService
+from qd_agents.cli.commands.http import fetch_openapi_spec, extract_base_url, parse_endpoints
 
 
 def list_tools(
@@ -21,6 +22,7 @@ def list_tools(
     type_filter: Optional[List[str]] = None,
     skill_detail: bool = False,
     mcp_detail: bool = False,
+    http_detail: bool = False,
 ) -> None:
     """
     列出工具
@@ -32,6 +34,7 @@ def list_tools(
         type_filter: 工具类型过滤列表（如 ["mcp", "skill", "function"]）
         skill_detail: 是否显示 Skill 工具详细属性
         mcp_detail: 是否显示 MCP 工具详细属性及 subtools
+        http_detail: 是否显示 HTTP 工具详细属性及 subtools
     """
     config = load_config(base_dir=base_dir, config_file=config_file)
     registry = get_tool_registry(config)
@@ -56,6 +59,11 @@ def list_tools(
     # MCP 详细模式
     if mcp_detail:
         asyncio.run(_list_mcp_detail(console, tools))
+        return
+
+    # HTTP 详细模式
+    if http_detail:
+        _list_http_detail(console, tools)
         return
 
     # 通用列表模式
@@ -181,3 +189,52 @@ async def _fetch_mcp_subtools(mcp_service: MCPService, server_key: str, config: 
         return subtools
     except Exception:
         return []
+
+
+def _list_http_detail(console: Console, tools: list) -> None:
+    """列出 HTTP 工具详细属性及 subtools（从 OpenAPI spec 动态解析）"""
+    http_tools = [t for t in tools if t.execution.type == ToolExecutionType.HTTP]
+    if not http_tools:
+        console.print("[yellow]未找到已注册的 HTTP 工具[/]")
+        return
+
+    tree = Tree(f"HTTP 工具 ({len(http_tools)} 个 API)")
+
+    for tool in http_tools:
+        base_url = tool.execution.base_url or "-"
+        openapi_url = tool.execution.openapi_url or "-"
+        filter_str = tool.execution.openapi_filter
+
+        # API 节点
+        detail_parts = [f"base_url: [green]{base_url}[/]"]
+        if filter_str:
+            detail_parts.append(f"filter: [yellow]{filter_str}[/]")
+        if tool.execution.env:
+            env_keys = ", ".join(tool.execution.env.keys())
+            detail_parts.append(f"env: [yellow]{env_keys}[/]")
+        api_node = tree.add(f"[cyan]{tool.name}[/] — {', '.join(detail_parts)}")
+
+        # 从 OpenAPI spec 解析 subtools
+        spec = fetch_openapi_spec(openapi_url) if openapi_url != "-" else None
+        if not spec:
+            api_node.add("[dim]未能加载 OpenAPI 文档[/]")
+            continue
+
+        from qd_agents.cli.commands.http import _parse_filter
+        filters = _parse_filter(filter_str) if filter_str else None
+        endpoints = parse_endpoints(spec, filters)
+
+        if endpoints:
+            for ep in endpoints:
+                method = ep["method"].upper()
+                path = ep["path"]
+                summary = ep.get("summary", "")
+                summary_short = summary[:40] + "..." if len(summary) > 40 else summary
+                label = f"[magenta]{method}[/] [dim]{path}[/]"
+                if summary_short:
+                    label += f" — {summary_short}"
+                api_node.add(label)
+        else:
+            api_node.add("[dim]无匹配 endpoint[/]")
+
+    console.print(tree)

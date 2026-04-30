@@ -21,6 +21,26 @@ memory_app = typer.Typer(name="memory", help="长期记忆管理")
 
 @memory_app.command("list")
 def memory_list(
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+    asc: bool = typer.Option(False, "--asc", help="按时间升序排列"),
+    interval: Optional[str] = typer.Option(None, "--interval", "-i", help="时间区间过滤"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="按 session ID 过滤"),
+) -> None:
+    """显示所有永久记忆"""
+    console = Console()
+    recall_memories(console, base_dir, config_file, asc, interval, session)
+
+
+@memory_app.command("recall")
+def memory_recall(
+    query: str = typer.Argument(..., help="语义搜索查询"),
+    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+) -> None:
+    """语义召回永久记忆"""
+    console = Console()
+    recall_memory(console, query, base_dir, config_file)
 
 
 def _parse_interval(interval: str) -> tuple[datetime, datetime]:

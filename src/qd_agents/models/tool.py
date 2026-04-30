@@ -50,6 +50,8 @@ class ToolExecutionConfig(BaseModel):
     transport: str = "stdio"  # MCP传输模式：stdio, sse, streamable-http
     shell_command: str | None = None  # bash工具：完整的shell命令字符串
     shell: str = "bash"  # 使用的shell，默认为bash
+    openapi_url: str | None = None  # HTTP壳工具：OpenAPI 文档 URL
+    openapi_filter: str | None = None  # HTTP壳工具：endpoint 过滤器
 
 
 class ToolMetadata(BaseModel):
