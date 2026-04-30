@@ -73,8 +73,8 @@ app.add_typer(memory_app)
 def tools_list(
     base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
-    mcp: bool = typer.Option(False, "--mcp", help="只列出 MCP 工具"),
-    skill: bool = typer.Option(False, "--skill", help="只列出 Skill 工具"),
+    mcp: bool = typer.Option(False, "--mcp", "-m", help="列出 MCP 工具及 subtools"),
+    skill: bool = typer.Option(False, "--skill", "-s", help="列出 Skill 工具及重要属性"),
     function: bool = typer.Option(False, "--function", help="只列出 Function 工具"),
     bash: bool = typer.Option(False, "--bash", help="只列出 Bash 工具"),
     http: bool = typer.Option(False, "--http", help="只列出 HTTP 工具"),
@@ -91,7 +91,7 @@ def tools_list(
         type_filter.append("bash")
     if http:
         type_filter.append("http")
-    list_tools(console, base_dir, config_file, type_filter=type_filter or None)
+    list_tools(console, base_dir, config_file, type_filter=type_filter or None, skill_detail=skill, mcp_detail=mcp)
 
 # tools init 命令
 @tools_app.command("init", help="初始化工具箱（默认完全初始化，--keep 保留用户工具）")
