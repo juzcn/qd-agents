@@ -15,6 +15,7 @@ from qd_agents.config import load_config
 from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata
 from qd_agents.tools.executors import create_mcp_tool, extract_mcp_servers_config
 from qd_agents.cli.utils.registry import get_tool_registry
+from qd_agents.cli.utils.registration import register_tool_and_report
 from qd_agents.cli.commands.tools.update_cmd import _detect_package_version
 
 
@@ -99,9 +100,6 @@ def mcp_add(
         version, install_source = _detect_package_version(final_command, parsed_args)
 
     # 注册工具
-    config = load_config(base_dir=base_dir, config_file=config_file)
-    registry = get_tool_registry(config)
-
     tool = create_mcp_tool(
         name=final_name,
         description=f"MCP server: {final_server}",
@@ -125,9 +123,7 @@ def mcp_add(
         scope="default" if default else "user",
     )
 
-    tool_id = registry.register(tool)
-
-    console.print(f"[green][OK][/] 已注册 MCP 服务器: {final_name} ({tool_id})")
+    register_tool_and_report(tool, console, base_dir=base_dir, config_file=config_file)
     console.print(f"  服务器: {final_server}")
     console.print(f"  传输模式: {final_transport}")
     if final_command:

@@ -9,11 +9,18 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+import typer
 from rich.console import Console
 from rich.table import Table
 
 from qd_agents.config import load_config
 from qd_agents.memory.store import MemoryStore
+
+memory_app = typer.Typer(name="memory", help="长期记忆管理")
+
+
+@memory_app.command("list")
+def memory_list(
 
 
 def _parse_interval(interval: str) -> tuple[datetime, datetime]:

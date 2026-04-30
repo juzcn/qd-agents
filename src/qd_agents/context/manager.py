@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # 工具类型显示顺序和标签
 _TYPE_ORDER = [
     (ToolExecutionType.BASH, "bash"),
+    (ToolExecutionType.CLI, "cli"),
     (ToolExecutionType.SKILL, "skill"),
     (ToolExecutionType.HTTP, "http"),
     (ToolExecutionType.FUNCTION, "function"),

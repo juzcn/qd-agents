@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from .bash import BashToolExecutor
+from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 
 logger = logging.getLogger(__name__)
 
@@ -46,3 +47,43 @@ class CliToolExecutor(BashToolExecutor):
             parts.append(str(user_args))
 
         return " ".join(parts)
+
+
+def create_cli_tool(
+    name: str,
+    description: str,
+    command: str,
+    args: list[str] | None = None,
+    parameters: dict[str, Any] | None = None,
+    timeout: int = 300,
+    scope: str = "user",
+    tags: list[str] | None = None,
+    version: str | None = None,
+) -> Tool:
+    """创建 CLI 工具"""
+    if tags is None:
+        tags = ["cli"]
+
+    return Tool(
+        id=f"cli.{name}",
+        name=name,
+        description=description,
+        parameters=parameters or {
+            "type": "object",
+            "properties": {
+                "arguments": {"type": "string", "description": f"传递给 {name} 的参数"},
+            },
+            "required": ["arguments"],
+        },
+        execution=ToolExecutionConfig(
+            type=ToolExecutionType.CLI,
+            command=command,
+            args=args or [],
+            timeout=timeout,
+        ),
+        scope=scope,
+        metadata=ToolMetadata(
+            tags=tags,
+            version=version,
+        ),
+    )

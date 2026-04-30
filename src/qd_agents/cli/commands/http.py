@@ -4,21 +4,26 @@ HTTP 工具管理命令
 负责注册和管理 HTTP/REST API 工具（如 GitHub API 等）。
 HTTP 工具通过 httpx 发送请求，支持认证（Bearer / API Key）和 base_url + path 拼接。
 """
+import json
 import logging
-import os
 from pathlib import Path
 from typing import Optional, List
 
+import typer
 from rich.console import Console
 
-from qd_agents.config import load_config, load_runtime_config, save_runtime_config
+from qd_agents.config import load_config
 from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 from qd_agents.cli.utils.registry import get_tool_registry
-from qd_agents.cli.utils.credentials import env_var_to_tool_name
+from qd_agents.cli.utils.credentials import env_var_to_tool_name, resolve_env_vars
+from qd_agents.cli.utils.registration import register_tool_and_report
 
 logger = logging.getLogger(__name__)
 
+http_app = typer.Typer(name="http", help="HTTP 工具管理")
 
+
+@http_app.command("add")
 def http_add(
     console: Console,
     name: str,
@@ -32,8 +37,28 @@ def http_add(
     base_dir: Optional[Path] = None,
     config_file: Optional[Path] = None,
     interactive: bool = True,
+    json_file: Optional[Path] = None,
 ) -> None:
     """添加 HTTP 工具（REST API）"""
+    # 从 JSON 文件读取配置
+    if json_file and json_file.exists():
+        try:
+            with open(json_file, "r", encoding="utf-8") as f:
+                http_config = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            console.print(f"[red][ERROR][/] 读取 HTTP 配置失败: {json_file.name}: {e}")
+            return
+        url = http_config.get("base_url", url)
+        method = http_config.get("method", method)
+        auth = http_config.get("auth_type", auth) or "none"
+        timeout = http_config.get("timeout", timeout)
+        if not extra_env:
+            extra_env = http_config.get("env", [])
+        if not headers:
+            json_headers = http_config.get("headers", {})
+            if json_headers:
+                headers = [f"{k}:{v}" for k, v in json_headers.items()]
+
     # 解析 headers
     parsed_headers: dict[str, str] = {}
     if headers:
@@ -80,9 +105,6 @@ def http_add(
             console.print("  [dim]runtime.json 已更新[/]")
 
     # 注册工具
-    config = load_config(base_dir=base_dir, config_file=config_file)
-    registry = get_tool_registry(config)
-
     tool = Tool(
         id=f"http.{name}",
         name=name,
@@ -131,9 +153,7 @@ def http_add(
         },
     )
 
-    tool_id = registry.register(tool)
-
-    console.print(f"[green][OK][/] 已注册 HTTP 工具: {name} ({tool_id})")
+    register_tool_and_report(tool, console, base_dir=base_dir, config_file=config_file)
     console.print(f"  Base URL: {url}")
     console.print(f"  默认方法: {method}")
     if auth != "none":
