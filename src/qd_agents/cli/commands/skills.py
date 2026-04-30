@@ -16,11 +16,12 @@ from typing import Any, Optional
 import yaml
 from rich.console import Console
 
-from qd_agents.config import load_config, load_runtime_config, save_runtime_config
+from qd_agents.config import load_config
 from qd_agents.cli.managers import setup_configuration
 from qd_agents.cli.utils.registry import get_tool_registry
 from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
-from qd_agents.cli.utils.credentials import env_var_to_tool_name
+from qd_agents.cli.utils.credentials import env_var_to_tool_name, resolve_env_vars
+from qd_agents.cli.utils.registration import register_tool_and_report
 
 
 logger = logging.getLogger(__name__)
@@ -130,8 +131,6 @@ def skill_add(
         console.print(f"    工具依赖: {', '.join(tool_deps) if tool_deps else '无'}")
 
     # 处理 API key
-    env: dict[str, str] = {}
-    runtime_changed = False
     metadata_raw = meta.get("metadata", {})
     openclaw = metadata_raw.get("openclaw", {}) if isinstance(metadata_raw, dict) else {}
     requires = openclaw.get("requires", {}) if isinstance(openclaw, dict) else {}
@@ -141,33 +140,9 @@ def skill_add(
     if extra_env:
         env_vars = list(dict.fromkeys(extra_env + env_vars))
 
+    env: dict[str, str] = {}
     if env_vars:
-        runtime_config = load_runtime_config(base_dir=base_dir)
-        for var in env_vars:
-            tool_name = env_var_to_tool_name(var)
-            api_key_value = runtime_config.tools_credentials.get_api_key(tool_name)
-            if api_key_value:
-                env[var] = api_key_value
-                console.print(f"  [dim]{var}[/]: 从 runtime.json (tools_credentials.{tool_name}) 加载")
-            else:
-                if interactive:
-                    console.print(f"  [yellow]{var}[/] 未在 runtime.json 中配置，请输入 API Key:")
-                    api_key_input = input(f"  {var}=").strip()
-                    if api_key_input:
-                        env[var] = api_key_input
-                        runtime_config.tools_credentials.set_api_key(tool_name, api_key_input)
-                        runtime_changed = True
-                        console.print(f"  [green]已将 {var} 写入 runtime.json (tools_credentials.{tool_name})[/]")
-                    else:
-                        env[var] = ""
-                        console.print(f"  [yellow]警告: {var} 未设置，工具执行时可能失败[/]")
-                else:
-                    import os as _os
-                    env[var] = _os.environ.get(var, "")
-
-        if runtime_changed:
-            save_runtime_config(runtime_config, base_dir=base_dir)
-            console.print("  [dim]runtime.json 已更新[/]")
+        env, _ = resolve_env_vars(env_vars, console, base_dir=base_dir, interactive=interactive)
 
     # 注册工具到数据库
     registry = get_tool_registry(config)

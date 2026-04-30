@@ -11,17 +11,21 @@ import subprocess
 from pathlib import Path
 from typing import Optional, List
 
+import typer
 from rich.console import Console
 
 from qd_agents.config import load_config
 from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolMetadata, ToolExecutionType
 from qd_agents.cli.utils.registry import get_tool_registry
-from qd_agents.cli.utils.credentials import env_var_to_tool_name
-from qd_agents.config import load_runtime_config, save_runtime_config
+from qd_agents.cli.utils.credentials import env_var_to_tool_name, resolve_env_vars
+from qd_agents.cli.utils.registration import register_tool_and_report
 
 logger = logging.getLogger(__name__)
 
+cli_app = typer.Typer(name="cli", help="CLI 工具管理")
 
+
+@cli_app.command("add")
 def cli_add(
     console: Console,
     name: str,
@@ -33,8 +37,27 @@ def cli_add(
     base_dir: Optional[Path] = None,
     config_file: Optional[Path] = None,
     interactive: bool = True,
+    json_file: Optional[Path] = None,
 ) -> None:
     """添加 CLI 工具"""
+    # 从 JSON 文件读取配置
+    if json_file and json_file.exists():
+        try:
+            with open(json_file, "r", encoding="utf-8") as f:
+                cli_config = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            console.print(f"[red][ERROR][/] 读取 CLI 配置失败: {json_file.name}: {e}")
+            return
+        command = cli_config.get("command", command)
+        if not args:
+            json_args = cli_config.get("args", [])
+            if json_args:
+                args = ",".join(str(a) for a in json_args) if isinstance(json_args, list) else str(json_args)
+        if not extra_env:
+            json_env = cli_config.get("env", {})
+            extra_env = list(json_env.keys()) if isinstance(json_env, dict) else json_env
+        timeout = cli_config.get("timeout", timeout)
+
     # 解析 args
     parsed_args: list[str] = []
     if args:
@@ -51,37 +74,10 @@ def cli_add(
 
     # 处理环境变量
     env: dict[str, str] = {}
-    runtime_changed = False
     if extra_env:
-        runtime_config = load_runtime_config(base_dir=base_dir)
-        for var in extra_env:
-            tool_name = env_var_to_tool_name(var)
-            api_key_value = runtime_config.tools_credentials.get_api_key(tool_name)
-            if api_key_value:
-                env[var] = api_key_value
-                console.print(f"  [dim]{var}[/]: 从 runtime.json (tools_credentials.{tool_name}) 加载")
-            else:
-                if interactive:
-                    console.print(f"  [yellow]{var}[/] 未在 runtime.json 中配置，请输入 API Key:")
-                    api_key_input = input(f"  {var}=").strip()
-                    if api_key_input:
-                        env[var] = api_key_input
-                        runtime_config.tools_credentials.set_api_key(tool_name, api_key_input)
-                        runtime_changed = True
-                        console.print(f"  [green]已将 {var} 写入 runtime.json (tools_credentials.{tool_name})[/]")
-                    else:
-                        env[var] = ""
-                        console.print(f"  [yellow]警告: {var} 未设置，工具执行时可能失败[/]")
-                else:
-                    env[var] = os.environ.get(var, "")
-        if runtime_changed:
-            save_runtime_config(runtime_config, base_dir=base_dir)
-            console.print("  [dim]runtime.json 已更新[/]")
+        env, _ = resolve_env_vars(extra_env, console, base_dir=base_dir, interactive=interactive)
 
     # 注册工具
-    config = load_config(base_dir=base_dir, config_file=config_file)
-    registry = get_tool_registry(config)
-
     tool = Tool(
         id=f"cli.{name}",
         name=name,
@@ -113,9 +109,7 @@ def cli_add(
         },
     )
 
-    tool_id = registry.register(tool)
-
-    console.print(f"[green][OK][/] 已注册 CLI 工具: {name} ({tool_id})")
+    register_tool_and_report(tool, console, base_dir=base_dir, config_file=config_file)
     console.print(f"  命令: {command}")
     if parsed_args:
         console.print(f"  前缀参数: {parsed_args}")
