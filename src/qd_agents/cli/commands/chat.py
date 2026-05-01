@@ -70,7 +70,6 @@ class ChatCommandHandler:
             continue_chat: 是否继续聊天
         """
         if user_input.lower() == "/quit":
-            self.console.print("[bold]再见！[/]")
             return False
 
         if user_input.lower() == "/help":
