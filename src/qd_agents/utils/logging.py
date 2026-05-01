@@ -124,10 +124,13 @@ def setup_logging(
         console_handler.setFormatter(formatter)
         handlers.append(console_handler)
 
-    logging.basicConfig(
-        handlers=handlers,
-        level=getattr(logging, level.upper()),
-    )
+    # 强制替换 root logger 的 handlers（basicConfig 在已有 handler 时不生效）
+    root = logging.getLogger()
+    for h in root.handlers[:]:
+        root.removeHandler(h)
+    for h in handlers:
+        root.addHandler(h)
+    root.setLevel(getattr(logging, level.upper()))
 
     # 控制外部HTTP客户端日志级别
     if not log_external_api:

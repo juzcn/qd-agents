@@ -239,6 +239,18 @@ class QDAgent:
         self.executor_registry.register_function("serper_search", serper_search)
         self.executor_registry.register_function("tavily_search", tavily_search)
 
+        # 工具注册 function — LLM 可直接调用管理工具箱
+        from ..tools.builtin_register import (
+            tool_register_cli,
+            tool_register_mcp,
+            tool_register_skill,
+            tool_register_http,
+        )
+        self.executor_registry.register_function("tool_register_cli", tool_register_cli)
+        self.executor_registry.register_function("tool_register_mcp", tool_register_mcp)
+        self.executor_registry.register_function("tool_register_skill", tool_register_skill)
+        self.executor_registry.register_function("tool_register_http", tool_register_http)
+
         logger.info("Registered builtin tool executors")
 
     def add_to_history(self, role: str, content: str) -> None:
