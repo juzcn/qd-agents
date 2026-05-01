@@ -21,26 +21,25 @@ memory_app = typer.Typer(name="memory", help="长期记忆管理")
 
 @memory_app.command("list")
 def memory_list(
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
-    asc: bool = typer.Option(False, "--asc", help="按时间升序排列"),
-    interval: Optional[str] = typer.Option(None, "--interval", "-i", help="时间区间过滤"),
+    asc: bool = typer.Option(False, "--asc", help="按时间升序排列（默认降序）"),
+    interval: Optional[str] = typer.Option(
+        None, "--interval", "-i",
+        help="时间区间过滤，支持: 相对时长(1d/3h/30m/2w)、自然语言(today/yesterday/this_week/this_month)、日期范围(2026-04-25~2026-04-27)、日期时间范围(2026-04-25 10:00~2026-04-27 14:30)、当天时间范围(10:00~14:30)",
+    ),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="按 session ID 过滤"),
 ) -> None:
     """显示所有永久记忆"""
     console = Console()
-    recall_memories(console, base_dir, config_file, asc, interval, session)
+    recall_memories(console, asc=asc, interval=interval, session=session)
 
 
 @memory_app.command("recall")
 def memory_recall(
     query: str = typer.Argument(..., help="语义搜索查询"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
 ) -> None:
     """语义召回永久记忆"""
     console = Console()
-    recall_memory(console, query, base_dir, config_file)
+    recall_memory(console, query)
 
 
 def _parse_interval(interval: str) -> tuple[datetime, datetime]:

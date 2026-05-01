@@ -117,7 +117,12 @@ def run_add_skill_analyzer(
         skill_md_content = skill_md_path.read_text(encoding="utf-8")
 
         from qd_agents.cli.utils.registry import get_tool_registry
+        from qd_agents.services.tool_service import ToolService
         tool_registry = get_tool_registry(config)
+
+        # 使用与 chat 相同的工具加载方式（含 MCP subtools）
+        tool_service = ToolService()
+        expanded_tools = await tool_service.load_expanded_tools(tool_registry)
 
         template_dir = resolve_template_dir(config)
         prompt_loader = PromptLoader(template_dir=template_dir)
@@ -136,9 +141,8 @@ def run_add_skill_analyzer(
         )
 
         try:
-            all_tools = tool_registry.list_all()
             analyzer = AddSkillAnalyzer(llm_client=llm_client, context_manager=context_manager)
-            return await analyzer.analyze(skill_md=skill_md_content, tools=all_tools)
+            return await analyzer.analyze(skill_md=skill_md_content, tools=expanded_tools)
         finally:
             await llm_client.close()
 

@@ -53,8 +53,18 @@ def init_tools(
         console.print("[yellow]数据库中没有已注册的工具[/]")
         return
 
-    # keep_user 模式下过滤掉用户工具
-    if keep_user:
+    # 不保留用户工具时，删除 scope=user 的工具
+    if not keep_user:
+        user_tools = [t for t in tools if t.scope == "user"]
+        if user_tools:
+            deleted = registry.delete_by_scopes(["user"])
+            console.print(f"[dim]删除 {deleted} 个用户工具[/]")
+            tools = [t for t in tools if t.scope != "user"]
+            if not tools:
+                console.print("[yellow]没有需要重注册的默认工具[/]")
+                return
+    else:
+        # keep_user 模式下过滤掉用户工具不重注册
         tools = [t for t in tools if t.scope != "user"]
         if not tools:
             console.print("[yellow]没有需要重注册的默认工具[/]")

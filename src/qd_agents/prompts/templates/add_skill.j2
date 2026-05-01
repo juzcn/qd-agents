@@ -2,15 +2,20 @@
 
 ## 已注册工具
 
-{% if tools %}
-{% for tool in tools[:30] %}
+{% for type_label, type_tools in tool_groups.non_mcp_types %}
+### {{ type_label }}
+{% for tool in type_tools %}
 - **{{ tool.name }}**: {{ tool.description }}
 {% endfor %}
-{% if tools|length > 30 %}
-... 还有 {{ tools|length - 30 }} 个工具
-{% endif %}
-{% else %}
-暂无已注册工具
+{% endfor %}
+{% if tool_groups.mcp_servers %}
+### mcp
+{% for server in tool_groups.mcp_servers %}
+#### {{ server.server_name }} ({{ server.server_desc }})
+{% for tool in server.subtools %}
+- **{{ tool.name }}**: {{ tool.description }}
+{% endfor %}
+{% endfor %}
 {% endif %}
 
 ## 分析任务
