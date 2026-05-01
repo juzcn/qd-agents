@@ -61,6 +61,8 @@ def register_cli_tool(
             parsed = parse_help_with_llm(help_text, name, base_dir, config_file)
             description = parsed.get("description", description)
             parameters = parsed.get("parameters", parameters)
+    except FileNotFoundError as e:
+        raise ToolValidationError(f"可执行文件不存在: {executable}") from e
     except Exception as e:
         logger.warning("执行 %s --help 失败: %s", command, e)
 

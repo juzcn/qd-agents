@@ -118,11 +118,8 @@ class QDAgent:
         # 注册内置工具
         await self._register_builtin_tools()
 
-        # 预加载 MCP 工具
-        await self._preload_mcp_tools()
-
-        # 缓存展开后的工具列表
-        await self._cache_expanded_tools()
+        # 预加载 MCP 工具并缓存展开后的工具列表
+        await self._load_and_cache_tools()
 
         # 初始化长期记忆服务
         self._init_memory_service()
@@ -199,18 +196,17 @@ class QDAgent:
 
     # --- MCP 管理（委托给 MCPService）---
 
-    async def _preload_mcp_tools(self) -> None:
-        """预加载 MCP 工具（委托给 MCPService）"""
+    async def _load_and_cache_tools(self) -> None:
+        """预加载 MCP 工具并缓存展开后的工具列表"""
+        # 预加载 MCP（连接服务器、获取 subtools、注册执行器）
         all_tools = self.registry.list_all()
         mcp_tools = [t for t in all_tools if t.execution.type == ToolExecutionType.MCP]
-
         await self._mcp_service.preload(
             mcp_tools=mcp_tools,
             executor_registry=self.executor_registry,
         )
 
-    async def _cache_expanded_tools(self) -> None:
-        """缓存展开后的工具列表和OpenAI格式工具"""
+        # 缓存展开后的工具列表
         expanded, openai, tool_map = self._tool_service.build_expanded_tools(
             registry=self.registry,
             mcp_tools_cache=self._mcp_service.tools_cache,

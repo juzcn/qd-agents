@@ -129,7 +129,7 @@ def skill_add_cmd(
     env: Optional[List[str]] = typer.Option(None, "--env", "-e", help="额外环境变量"),
 ):
     """添加 Skill 工具"""
-    skill_add(console, skill_name, default=default, base_dir=base_dir, config_file=config_file, extra_env=env)
+    skill_add(skill_name, default=default, base_dir=base_dir, config_file=config_file, extra_env=env)
 
 
 # tools mcp 子命令组
