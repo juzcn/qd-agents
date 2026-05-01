@@ -73,17 +73,20 @@ def list_tools(
     table.add_column("描述", style="dim", max_width=50)
     table.add_column("属性", style="magenta")
     table.add_column("版本", style="dim")
+    table.add_column("env", style="yellow")
     table.add_column("ID", style="dim")
 
     for tool in tools:
         tool_type = tool.execution.type.value.lower() if tool.execution.type else "unknown"
         version = tool.metadata.version or "-"
+        env_keys = ", ".join(k for k in tool.execution.env if k != "__mcp_config__") if tool.execution.env else "-"
         table.add_row(
             tool.name,
             tool_type,
             tool.description,
             tool.scope,
             version,
+            env_keys,
             tool.id,
         )
 

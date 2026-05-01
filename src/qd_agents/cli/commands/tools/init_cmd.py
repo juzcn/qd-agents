@@ -70,13 +70,21 @@ def init_tools(
             console.print("[yellow]没有需要重注册的默认工具[/]")
             return
 
-    # 按 execution type 分组，跳过 builtin 类型
+    # 按 execution type 分组，跳过 bash 类型
     groups: dict[str, list] = defaultdict(list)
+    builtin_count = 0
     for t in tools:
         et = t.execution.type.value
-        if et in ("bash", "function"):
+        if et == "bash":
+            continue
+        if et == "function":
+            builtin_count += 1
             continue
         groups[et].append(t)
+
+    if builtin_count:
+        console.print(f"\n[bold]内置 function 工具 ({builtin_count} 个)[/]")
+        console.print(f"  [dim]跳过（无需重注册）[/]")
 
     stats: dict[str, int] = defaultdict(int)
     errors: dict[str, int] = defaultdict(int)

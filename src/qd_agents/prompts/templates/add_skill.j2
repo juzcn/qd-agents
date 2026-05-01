@@ -2,21 +2,7 @@
 
 ## 已注册工具
 
-{% for type_label, type_tools in tool_groups.non_mcp_types %}
-### {{ type_label }}
-{% for tool in type_tools %}
-- **{{ tool.name }}**: {{ tool.description }}
-{% endfor %}
-{% endfor %}
-{% if tool_groups.mcp_servers %}
-### mcp
-{% for server in tool_groups.mcp_servers %}
-#### {{ server.server_name }} ({{ server.server_desc }})
-{% for tool in server.subtools %}
-- **{{ tool.name }}**: {{ tool.description }}
-{% endfor %}
-{% endfor %}
-{% endif %}
+{{ tools_section }}
 
 ## 分析任务
 

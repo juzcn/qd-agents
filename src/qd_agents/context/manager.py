@@ -25,63 +25,121 @@ logger = logging.getLogger(__name__)
 
 # 工具类型显示顺序和标签
 _TYPE_ORDER = [
-    (ToolExecutionType.BASH, "bash"),
-    (ToolExecutionType.CLI, "cli"),
     (ToolExecutionType.SKILL, "skill"),
-    (ToolExecutionType.HTTP, "http"),
-    (ToolExecutionType.FUNCTION, "function"),
     (ToolExecutionType.MCP, "mcp"),
+    (ToolExecutionType.CLI, "cli"),
+    (ToolExecutionType.HTTP, "http"),
+    (ToolExecutionType.BASH, "bash"),
+    (ToolExecutionType.FUNCTION, "function"),
 ]
+
+# scope 显示顺序
+_SCOPE_ORDER = {"builtin": 0, "default": 1, "user": 2}
 
 
 def _group_tools_by_type(tools: list[Tool]) -> dict[str, Any]:
-    """将工具列表按类型分组，MCP 工具按 server 嵌套子工具。
+    """将工具列表按 scope→type 分组，MCP 工具按 server 嵌套子工具。
+
+    排序规则：先按 scope (builtin → default → user)，再按 type (skill → mcp → cli → http → bash → function)。
 
     Returns:
         {
-            "bash": [Tool, ...],
-            "skill": [Tool, ...],
-            "http": [Tool, ...],
-            "function": [Tool, ...],
-            "mcp_servers": [
-                {"server_name": str, "server_desc": str, "subtools": [Tool, ...]},
-                ...
+            "scope_groups": [
+                {"scope": "builtin", "non_mcp_types": [(label, [Tool, ...]), ...], "mcp_servers": [...]},
+                {"scope": "default", ...},
+                {"scope": "user", ...},
             ],
-            "non_mcp_types": [("bash", [Tool, ...]), ("skill", [Tool, ...]), ...],
+            # 兼容旧接口
+            "mcp_servers": [...],
+            "non_mcp_types": [...],
         }
     """
-    by_type: dict[ToolExecutionType, list[Tool]] = {}
-    mcp_servers: dict[str, list[Tool]] = {}
-
+    # 按 scope 分桶
+    by_scope: dict[str, list[Tool]] = {}
     for tool in tools:
-        t = tool.execution.type
-        if t == ToolExecutionType.MCP:
-            server = tool.execution.server or "unknown"
-            mcp_servers.setdefault(server, []).append(tool)
-        else:
-            by_type.setdefault(t, []).append(tool)
+        by_scope.setdefault(tool.scope, []).append(tool)
 
-    # 构建 MCP 服务器列表（server_name + subtools）
-    mcp_server_list = []
-    for server_name, subtools in mcp_servers.items():
-        # MCP 服务器描述：取第一个子工具的 source_path 或 server_name
-        server_desc = f"MCP server: {server_name}"
-        mcp_server_list.append({
-            "server_name": server_name,
-            "server_desc": server_desc,
-            "subtools": subtools,
+    scope_groups = []
+    all_mcp_servers = []
+    all_non_mcp_types = []
+
+    for scope in sorted(by_scope, key=lambda s: _SCOPE_ORDER.get(s, 99)):
+        scope_tools = by_scope[scope]
+        by_type: dict[ToolExecutionType, list[Tool]] = {}
+        mcp_servers: dict[str, list[Tool]] = {}
+
+        for tool in scope_tools:
+            t = tool.execution.type
+            if t == ToolExecutionType.MCP:
+                server = tool.execution.server or "unknown"
+                mcp_servers.setdefault(server, []).append(tool)
+            else:
+                by_type.setdefault(t, []).append(tool)
+
+        # MCP 服务器列表
+        mcp_server_list = []
+        for server_name, subtools in mcp_servers.items():
+            mcp_server_list.append({
+                "server_name": server_name,
+                "server_desc": f"MCP server: {server_name}",
+                "subtools": subtools,
+            })
+
+        # non-MCP 类型列表（按预定义顺序）
+        non_mcp_types = []
+        for exec_type, label in _TYPE_ORDER:
+            if exec_type != ToolExecutionType.MCP and exec_type in by_type:
+                non_mcp_types.append((label, by_type[exec_type]))
+
+        scope_groups.append({
+            "scope": scope,
+            "non_mcp_types": non_mcp_types,
+            "mcp_servers": mcp_server_list,
         })
-
-    # 构建 non-MCP 类型列表（按预定义顺序）
-    non_mcp_types = []
-    for exec_type, label in _TYPE_ORDER:
-        if exec_type != ToolExecutionType.MCP and exec_type in by_type:
-            non_mcp_types.append((label, by_type[exec_type]))
+        all_mcp_servers.extend(mcp_server_list)
+        all_non_mcp_types.extend(non_mcp_types)
 
     return {
-        "mcp_servers": mcp_server_list,
-        "non_mcp_types": non_mcp_types,
+        "scope_groups": scope_groups,
+        "mcp_servers": all_mcp_servers,
+        "non_mcp_types": all_non_mcp_types,
     }
+
+
+_SCOPE_LABELS = {"builtin": "内置", "default": "默认", "user": "用户安装"}
+
+
+def format_tools_markdown(tools: list[Tool], *, show_type_tag: bool = True) -> str:
+    """将工具列表渲染为 markdown，按 scope→type 排序。
+
+    Args:
+        tools: 工具列表
+        show_type_tag: 是否在每行前显示 [type] 标签（evolve 需要，add_skill 不需要）
+
+    Returns:
+        渲染后的 markdown 字符串
+    """
+    groups = _group_tools_by_type(tools)
+    lines: list[str] = []
+
+    for sg in groups["scope_groups"]:
+        scope_label = _SCOPE_LABELS.get(sg["scope"], sg["scope"])
+        lines.append(f"### {scope_label}")
+        for type_label, type_tools in sg["non_mcp_types"]:
+            for t in type_tools:
+                if show_type_tag:
+                    lines.append(f"- [{type_label}] **{t.name}**: {t.description}")
+                else:
+                    lines.append(f"- **{t.name}**: {t.description}")
+        for server_info in sg["mcp_servers"]:
+            lines.append(f"#### {server_info['server_name']} ({server_info['server_desc']})")
+            for t in server_info["subtools"]:
+                if show_type_tag:
+                    lines.append(f"- [mcp] **{t.name}**: {t.description}")
+                else:
+                    lines.append(f"- **{t.name}**: {t.description}")
+
+    return "\n".join(lines)
 
 
 class ContextManager:
@@ -202,22 +260,14 @@ class ContextManager:
                 system_prompt = self.prompts.render(
                     "evolve",
                     tools=tools,
-                    tool_groups=_group_tools_by_type(tools),
+                    tools_section=format_tools_markdown(tools),
                     observations=[],
                     env_info=self._get_env_info(),
                 )
             else:
                 # 回退到硬编码
                 env_info = self._get_env_info()
-                tool_groups = _group_tools_by_type(tools)
-                tools_lines = []
-                for type_label, type_tools in tool_groups["non_mcp_types"]:
-                    for t in type_tools:
-                        tools_lines.append(f"- [{type_label}] **{t.name}**: {t.description}")
-                for server_info in tool_groups["mcp_servers"]:
-                    tools_lines.append(f"#### {server_info['server_name']} ({server_info['server_desc']})")
-                    for t in server_info["subtools"]:
-                        tools_lines.append(f"- [mcp] **{t.name}**: {t.description}")
+                tools_section = format_tools_markdown(tools)
                 tools_info = "\n".join(tools_lines)
                 system_prompt = f"""你是一个自主进化的智能体，能够自主思考、决策、行动，并在需要时向用户求助。
 
@@ -257,7 +307,7 @@ class ContextManager:
 
 ## 可用工具
 
-{tools_info or '暂无'}
+{tools_section or '暂无'}
 
 **Skill 工具**：调用时传空对象 `{{{{}}}}`。首次调用只获取用法指南（SKILL.md），不是真正执行。收到指南后，必须按「Bash 执行规则」适配命令，再用 `execute_bash` 执行。"""
 
@@ -302,22 +352,13 @@ class ContextManager:
             system_prompt = self.prompts.render(
                 "add_skill",
                 tools=tools,
-                tool_groups=_group_tools_by_type(tools),
+                tools_section=format_tools_markdown(tools, show_type_tag=False),
             )
         else:
-            tool_groups = _group_tools_by_type(tools)
-            tools_lines = []
-            for type_label, type_tools in tool_groups["non_mcp_types"]:
-                for t in type_tools:
-                    tools_lines.append(f"- **{t.name}**: {t.description}")
-            for server_info in tool_groups["mcp_servers"]:
-                tools_lines.append(f"#### {server_info['server_name']} ({server_info['server_desc']})")
-                for t in server_info["subtools"]:
-                    tools_lines.append(f"- **{t.name}**: {t.description}")
-            tools_info = "\n".join(tools_lines)
+            tools_section = format_tools_markdown(tools, show_type_tag=False)
             system_prompt = (
                 "你是一个技能分析助手。分析 SKILL.md 的内容，识别技能的工具依赖。\n\n"
-                f"## 已注册工具\n{tools_info}\n\n"
+                f"## 已注册工具\n{tools_section}\n\n"
                 "请返回 JSON 格式的分析结果，包含 name, description, tool_deps, success, failure_reason 字段。"
             )
 
