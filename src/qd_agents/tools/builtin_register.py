@@ -5,9 +5,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from .register import (
@@ -131,3 +129,72 @@ TOOL_REGISTER_FUNCTIONS = [
         },
     },
 ]
+
+
+def register_builtin_function_tools(registry: Any) -> None:
+    """将4个工具注册 function 注册到数据库（scope=builtin）。
+
+    与 execute_bash 一致，作为核心 builtin 工具持久化到 ToolRegistry。
+    """
+    from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolExecutionType, ToolMetadata
+
+    MODULE = "qd_agents.tools.builtin_register"
+
+    tools = [
+        Tool(
+            id="builtin.tool_register_cli",
+            name="tool_register_cli",
+            description="注册 CLI 工具。command 为完整命令行（如 'qd-agents memory list'）。",
+            parameters=TOOL_REGISTER_FUNCTIONS[0]["function"]["parameters"],
+            execution=ToolExecutionConfig(
+                type=ToolExecutionType.FUNCTION,
+                module=MODULE,
+                function="tool_register_cli",
+            ),
+            scope="builtin",
+            metadata=ToolMetadata(tags=["builtin", "register", "cli"], version="0.1.0"),
+        ),
+        Tool(
+            id="builtin.tool_register_mcp",
+            name="tool_register_mcp",
+            description="注册 MCP 服务器工具。server 为服务器名（从 tools/mcp/<server>.json 读取配置）。",
+            parameters=TOOL_REGISTER_FUNCTIONS[1]["function"]["parameters"],
+            execution=ToolExecutionConfig(
+                type=ToolExecutionType.FUNCTION,
+                module=MODULE,
+                function="tool_register_mcp",
+            ),
+            scope="builtin",
+            metadata=ToolMetadata(tags=["builtin", "register", "mcp"], version="0.1.0"),
+        ),
+        Tool(
+            id="builtin.tool_register_skill",
+            name="tool_register_skill",
+            description="注册 Skill 工具。skill_name 为 skill 目录名（在 tools/skills/ 下）。",
+            parameters=TOOL_REGISTER_FUNCTIONS[2]["function"]["parameters"],
+            execution=ToolExecutionConfig(
+                type=ToolExecutionType.FUNCTION,
+                module=MODULE,
+                function="tool_register_skill",
+            ),
+            scope="builtin",
+            metadata=ToolMetadata(tags=["builtin", "register", "skill"], version="0.1.0"),
+        ),
+        Tool(
+            id="builtin.tool_register_http",
+            name="tool_register_http",
+            description="注册 HTTP/OpenAPI 工具。openapi_url 为 OpenAPI spec URL。",
+            parameters=TOOL_REGISTER_FUNCTIONS[3]["function"]["parameters"],
+            execution=ToolExecutionConfig(
+                type=ToolExecutionType.FUNCTION,
+                module=MODULE,
+                function="tool_register_http",
+            ),
+            scope="builtin",
+            metadata=ToolMetadata(tags=["builtin", "register", "http"], version="0.1.0"),
+        ),
+    ]
+
+    for tool in tools:
+        registry.register(tool)
+        logger.info("Registered builtin function tool: %s", tool.id)

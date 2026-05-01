@@ -241,11 +241,15 @@ class QDAgent:
             tool_register_mcp,
             tool_register_skill,
             tool_register_http,
+            register_builtin_function_tools,
         )
         self.executor_registry.register_function("tool_register_cli", tool_register_cli)
         self.executor_registry.register_function("tool_register_mcp", tool_register_mcp)
         self.executor_registry.register_function("tool_register_skill", tool_register_skill)
         self.executor_registry.register_function("tool_register_http", tool_register_http)
+
+        # 将4个工具注册 function 持久化到数据库（scope=builtin）
+        register_builtin_function_tools(self.registry)
 
         logger.info("Registered builtin tool executors")
 
