@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import ctypes
 import logging
-import os
 import struct
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -109,12 +108,6 @@ class SentenceTransformersEmbedder(BaseEmbedder):
         if self._model is not None:
             return
 
-        # 在 import 前设置 HuggingFace 环境变量
-        if self._hf_cache_dir:
-            os.environ["HF_HOME"] = self._hf_cache_dir
-        if self._hf_token:
-            os.environ["HF_TOKEN"] = self._hf_token
-
         from sentence_transformers import SentenceTransformer
 
         logger.info("Loading embedding model (sentence_transformers): %s", self._model_name)
@@ -123,18 +116,10 @@ class SentenceTransformersEmbedder(BaseEmbedder):
             kwargs["token"] = self._hf_token
 
         if self._hf_hub_offline:
-            # 先尝试离线加载，失败则回退到在线模式
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            try:
-                self._model = SentenceTransformer(self._model_name, **kwargs)
-                logger.info("Embedding model loaded offline (vec_dim=%d)", self._vec_dim)
-                return
-            except Exception as e:
-                logger.warning("Offline loading failed (%s), falling back to online mode", e)
-                os.environ["HF_HUB_OFFLINE"] = "0"
+            kwargs["local_files_only"] = True
 
         self._model = SentenceTransformer(self._model_name, **kwargs)
-        logger.info("Embedding model loaded (vec_dim=%d)", self._vec_dim)
+        logger.info("Embedding model loaded (offline=%s, vec_dim=%d)", self._hf_hub_offline, self._vec_dim)
 
     def close(self) -> None:
         if self._model is not None:

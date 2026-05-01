@@ -302,12 +302,19 @@ class ContextManager:
             system_prompt = self.prompts.render(
                 "add_skill",
                 tools=tools,
+                tool_groups=_group_tools_by_type(tools),
             )
         else:
-            tools_info = "\n".join(
-                f"- **{t.name}**: {t.description}"
-                for t in tools[:30]
-            )
+            tool_groups = _group_tools_by_type(tools)
+            tools_lines = []
+            for type_label, type_tools in tool_groups["non_mcp_types"]:
+                for t in type_tools:
+                    tools_lines.append(f"- **{t.name}**: {t.description}")
+            for server_info in tool_groups["mcp_servers"]:
+                tools_lines.append(f"#### {server_info['server_name']} ({server_info['server_desc']})")
+                for t in server_info["subtools"]:
+                    tools_lines.append(f"- **{t.name}**: {t.description}")
+            tools_info = "\n".join(tools_lines)
             system_prompt = (
                 "你是一个技能分析助手。分析 SKILL.md 的内容，识别技能的工具依赖。\n\n"
                 f"## 已注册工具\n{tools_info}\n\n"

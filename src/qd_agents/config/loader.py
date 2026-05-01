@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -133,7 +134,35 @@ def load_config(
 
     # 设置全局配置
     set_config(config)
+
+    # 尽早设置 HuggingFace 环境变量，确保后续任何 import 都不会触发联网
+    _apply_hf_env(config)
+
     return config
+
+
+def _apply_hf_env(config: Config) -> None:
+    """根据配置设置 HuggingFace 环境变量，必须在所有 HF 相关 import 之前调用。"""
+    # 合并 memory 和 tool_registry 的离线设置：任一要求离线则全局离线
+    sources = []
+    if config.memory:
+        sources.append(config.memory)
+    if config.tool_registry:
+        sources.append(config.tool_registry)
+
+    if any(s.hf_hub_offline for s in sources):
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+    # 取第一个非空的 cache_dir / token
+    for s in sources:
+        if s.hf_cache_dir and not os.environ.get("HF_HOME"):
+            os.environ["HF_HOME"] = s.hf_cache_dir
+            break
+    for s in sources:
+        if s.hf_token and not os.environ.get("HF_TOKEN"):
+            os.environ["HF_TOKEN"] = s.hf_token
+            break
 
 
 def load_runtime_config(
