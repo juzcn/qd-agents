@@ -62,6 +62,10 @@ class ToolService:
         # SKILL 工具也加入 openai_tools（参数 schema 为空，触发渐进式披露）
         openai_tools.extend([t.to_openai_function() for t in expanded_tools])
 
+        # 工具注册 function — LLM 可直接调用管理工具箱
+        from ..tools.builtin_register import TOOL_REGISTER_FUNCTIONS
+        openai_tools.extend(TOOL_REGISTER_FUNCTIONS)
+
         tool_map = {t.name: t for t in expanded_tools}
 
         logger.info(f"Built {len(expanded_tools)} expanded tools and {len(openai_tools)} OpenAI tools")

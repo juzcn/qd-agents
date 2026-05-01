@@ -1,34 +1,19 @@
-"""
-CLI 凭证工具函数
+"""CLI 凭证工具函数 — 交互式环境变量解析
 
-环境变量名到工具名的映射，供 skills 和 tools 命令共享。
+非交互式版本在 tools/env.py 中，本模块提供交互式输入缺失 API Key 的能力。
 """
 
 import os
+import logging
 from pathlib import Path
 from typing import Optional, List
 
 from rich.console import Console
 
 from qd_agents.config import load_runtime_config, save_runtime_config
+from qd_agents.tools.env import env_var_to_tool_name, ENV_TO_TOOL_NAME_MAP
 
-# 环境变量名到 tools_credentials 中工具名的映射
-ENV_TO_TOOL_NAME_MAP: dict[str, str] = {
-    "BAIDU_API_KEY": "baidu_search",
-    "SERPER_API_KEY": "serper_search",
-    "TAVILY_API_KEY": "tavily_search",
-}
-
-
-def env_var_to_tool_name(env_var: str) -> str:
-    """将环境变量名转换为 tools_credentials 中的工具名。"""
-    if env_var in ENV_TO_TOOL_NAME_MAP:
-        return ENV_TO_TOOL_NAME_MAP[env_var]
-
-    if env_var.endswith("_API_KEY"):
-        return env_var[:-len("_API_KEY")].lower()
-
-    return env_var.lower()
+logger = logging.getLogger(__name__)
 
 
 def resolve_env_vars(

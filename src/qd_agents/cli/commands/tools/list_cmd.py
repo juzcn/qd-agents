@@ -12,7 +12,7 @@ from qd_agents.config import load_config
 from qd_agents.cli.utils.registry import get_tool_registry
 from qd_agents.models.tool import ToolExecutionType
 from qd_agents.services.mcp_service import MCPService
-from qd_agents.cli.commands.http import fetch_openapi_spec, extract_base_url, parse_endpoints
+from qd_agents.tools.openapi import parse_filter, parse_endpoints, fetch_openapi_spec_safe
 
 
 def list_tools(
@@ -215,13 +215,12 @@ def _list_http_detail(console: Console, tools: list) -> None:
         api_node = tree.add(f"[cyan]{tool.name}[/] — {', '.join(detail_parts)}")
 
         # 从 OpenAPI spec 解析 subtools
-        spec = fetch_openapi_spec(openapi_url) if openapi_url != "-" else None
+        spec = fetch_openapi_spec_safe(openapi_url) if openapi_url != "-" else None
         if not spec:
             api_node.add("[dim]未能加载 OpenAPI 文档[/]")
             continue
 
-        from qd_agents.cli.commands.http import _parse_filter
-        filters = _parse_filter(filter_str) if filter_str else None
+        filters = parse_filter(filter_str) if filter_str else None
         endpoints = parse_endpoints(spec, filters)
 
         if endpoints:
