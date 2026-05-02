@@ -24,6 +24,7 @@ from .base import Agent, AgentResult, StepCallback
 if TYPE_CHECKING:
     from ..memory.service import MemoryService
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,27 +83,14 @@ class ChatAgent(Agent):
                 total_duration_ms=0,
             )
 
-        # 1. 可选：记忆召回预步骤
-        memory_context = ""
-        if self._memory_service:
-            memory_context = await self._recall_memory_context(user_input)
-
-        # 2. 构建 messages
+        # 1. 构建 messages（不含记忆，记忆由 LLM 在 tool_list 中按需请求）
         messages = self.context.build_chat_messages(
             user_input=user_input,
             tools=self._expanded_tools,
             history=history,
         )
 
-        # 如果有记忆召回结果，注入到 user_input 之前
-        if memory_context:
-            memory_message = {
-                "role": "user",
-                "content": f"## 相关历史记忆\n\n{memory_context}\n\n请结合以上历史记忆进行路由决策。",
-            }
-            messages.insert(-1, memory_message)
-
-        # 3. 调用 LLM（不传 tools 参数，输出纯文本 Job JSON）
+        # 2. 调用 LLM（不传 tools 参数，输出纯文本 Job JSON）
         self.llm.meta_agent_name = self.name
         self.llm.reset_log_count(messages)
 
@@ -119,7 +107,7 @@ class ChatAgent(Agent):
         total_tokens = response.usage.total_tokens if hasattr(response, "usage") and response.usage else 0
         last_prompt_tokens = response.usage.prompt_tokens if hasattr(response, "usage") and response.usage else 0
 
-        # 4. 解析 Job JSON
+        # 3. 解析 Job JSON
         job = self._parse_job(content)
 
         total_duration_ms = int((time.perf_counter() - start_time) * 1000)
@@ -174,11 +162,11 @@ class ChatAgent(Agent):
             )
 
         elif job.route in ("use-tool", "find-tools"):
-            # 返回 Job 给 QDAgent，由 QDAgent 协调子循环
+            # 返回 Job 和 messages 给 QDAgent，由 QDAgent 协调子循环
             return AgentResult(
                 final_answer="",  # 子循环会产生最终答案
                 success=True,
-                working_memory={"job": job},
+                working_memory={"job": job, "messages": messages},
                 total_tokens=total_tokens,
                 last_prompt_tokens=last_prompt_tokens,
                 trace_id=trace_id,
@@ -199,20 +187,6 @@ class ChatAgent(Agent):
             )
 
     # --- 内部方法 ---
-
-    async def _recall_memory_context(self, user_input: str) -> str:
-        """记忆召回预步骤：在路由决策前召回相关记忆"""
-        if not self._memory_service:
-            return ""
-        try:
-            records = self._memory_service.recall(
-                query=user_input,
-                exclude_session=self._session_id,
-            )
-            return self._memory_service.format_recall_result(records)
-        except Exception:
-            logger.exception("Memory recall pre-step failed")
-            return ""
 
     def _parse_job(self, content: str) -> Job | None:
         """解析 LLM 输出为 Job 对象"""

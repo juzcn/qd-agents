@@ -1,7 +1,7 @@
 """Find-Tools Agent — 工具发现子循环
 
 根据任务需求，搜索、评估、安装并注册合适的工具。
-完成后将工具列表交给 Use-Tool 子循环执行。
+在主循环上下文中执行，完成后截断中间消息。
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import logging
 import re
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..llm import LLMClient
 from ..context import ContextManager
@@ -22,16 +22,14 @@ from ..tools import ToolExecutorRegistry
 from .base import Agent, AgentResult, StepCallback
 from .tool_execution import execute_tool, ensure_bash_available
 
-if TYPE_CHECKING:
-    from ..memory.service import MemoryService
-
 logger = logging.getLogger(__name__)
 
 
 class FindToolsAgent(Agent):
     """Find-Tools Agent — 工具发现子循环
 
-    搜索、安装、注册工具，返回新注册的工具名列表。
+    在主循环上下文中执行，共享系统提示词。
+    任务信息通过 tool message 注入，完成后截断中间消息。
     """
 
     name = "find-tools"
@@ -54,12 +52,15 @@ class FindToolsAgent(Agent):
         self._on_step = on_step
         self._cancel_event: asyncio.Event | None = None
 
-    async def execute(self, job: Job, **kwargs) -> AgentResult:
+    async def execute(self, job: Job, messages: list[dict], **kwargs) -> AgentResult:
         """执行工具发现子循环
+
+        在主循环 messages 上操作：注入 task message，执行工具循环，完成后截断。
 
         Args:
             job: Chat 输出的 Job 对象
-            **kwargs: on_step, cancel_event 等
+            messages: 主循环的消息列表（就地修改）
+            **kwargs: on_step, cancel_event, memory_context 等
         """
         on_step = kwargs.get("on_step")
         cancel_event = kwargs.get("cancel_event")
@@ -84,10 +85,12 @@ class FindToolsAgent(Agent):
         # 2. 获取所有 builtin 工具（展示给 LLM，避免重复注册）
         builtin_tools = self.registry.list_all()
 
-        # 3. 构建消息
-        messages = self.context.build_find_tools_messages(
+        # 3. 记录当前 messages 长度，注入 task message
+        start_idx = len(messages)
+        task_message = self.context.build_find_tools_task_message(
             job=job, builtin_tools=builtin_tools,
         )
+        messages.append({"role": "user", "content": task_message})
 
         # 4. 设置 LLM 日志标识
         self.llm.meta_agent_name = self.name
@@ -101,6 +104,7 @@ class FindToolsAgent(Agent):
         while iteration < self._max_iterations:
             if self._cancel_event and self._cancel_event.is_set():
                 logger.info("Find-tools loop cancelled by user")
+                del messages[start_idx:]
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
                 return AgentResult(
                     final_answer="已取消",
@@ -139,9 +143,11 @@ class FindToolsAgent(Agent):
             # 终止条件：LLM 不返回 tool_calls
             if not assistant_message.tool_calls:
                 content = assistant_message.content or ""
-                # 从最终消息中提取注册的工具名
                 found_tool_names = self._extract_registered_tools(content)
                 total_duration_ms = int((time.perf_counter() - start_time) * 1000)
+
+                # 截断中间消息（find-tools 是中间步骤，不保留到历史）
+                del messages[start_idx:]
 
                 return AgentResult(
                     final_answer=content.strip(),
@@ -194,6 +200,8 @@ class FindToolsAgent(Agent):
 
         # 达到最大迭代次数
         total_duration_ms = int((time.perf_counter() - start_time) * 1000)
+        del messages[start_idx:]
+
         return AgentResult(
             final_answer="达到最大工具发现迭代次数，工具搜索可能未完成。",
             success=False,
@@ -228,19 +236,12 @@ class FindToolsAgent(Agent):
 
     @staticmethod
     def _extract_registered_tools(content: str) -> list[str]:
-        """从 LLM 最终消息中提取注册的工具名列表
-
-        支持格式：
-        - "已注册工具: tool1, tool2, tool3"
-        - JSON 数组 ["tool1", "tool2"]
-        """
-        # 尝试匹配 "已注册工具: tool1, tool2" 格式
+        """从 LLM 最终消息中提取注册的工具名列表"""
         match = re.search(r"已注册工具[：:]\s*(.+)", content)
         if match:
             names = [n.strip() for n in match.group(1).split(",") if n.strip()]
             return names
 
-        # 尝试匹配 JSON 数组
         json_match = re.search(r"\[([^\]]+)\]", content)
         if json_match:
             try:
