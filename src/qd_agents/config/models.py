@@ -114,6 +114,8 @@ class ExecutionConfig(BaseModel):
     per_tool_timeout: dict[str, int] = Field(default_factory=dict)
     max_attempts: int = 3
     max_iterations: int = 10
+    max_use_tool_iterations: int = 15
+    max_find_tools_iterations: int = 10
     backoff_strategy: str = "exponential_with_jitter"
     initial_delay_ms: int = 1000
     max_delay_ms: int = 30000

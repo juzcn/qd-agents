@@ -2,6 +2,8 @@
 
 from .base import Agent, AgentResult, StepCallback
 from .evolve import EvolveAgent
+from .use_tool import UseToolAgent
+from .find_tools import FindToolsAgent
 from .add_skill import AddSkillAnalyzer
 from .core import QDAgent
 
@@ -10,6 +12,8 @@ __all__ = [
     "AgentResult",
     "StepCallback",
     "EvolveAgent",
+    "UseToolAgent",
+    "FindToolsAgent",
     "AddSkillAnalyzer",
     "QDAgent",
 ]
