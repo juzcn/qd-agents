@@ -6,11 +6,9 @@ EvolveAgent — 自主进化 Agent
 """
 from .agent import EvolveAgent, EvolveResult
 from .context import EvolveContextManager
-from .system_prompt import build_system_prompt
 
 __all__ = [
     "EvolveAgent",
     "EvolveResult",
     "EvolveContextManager",
-    "build_system_prompt",
 ]

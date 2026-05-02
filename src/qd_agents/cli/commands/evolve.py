@@ -17,7 +17,9 @@ from rich.markdown import Markdown
 
 from ...agent.evolve import EvolveAgent, EvolveContextManager
 from ...config import load_config
+from ...config.paths import resolve_template_dir
 from ...llm import LLMClient
+from ...prompts import PromptLoader
 from ...registry import ToolRegistry
 from ...tools import ToolExecutorRegistry
 from ...tools.builtin_register import (
@@ -29,6 +31,7 @@ from ...tools.builtin_register import (
 )
 from ...tools.builtins import echo
 from ...tools.search import serper_search, tavily_search
+from ...utils.logging import setup_session_logging
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -52,7 +55,21 @@ async def _evolve_async(
     # 1. 加载配置
     config = load_config(config_path)
 
-    # 2. 初始化 LLM
+    # 2. 配置会话日志
+    log_level = config.observability.log_level if config.observability else "INFO"
+    log_dir = config.observability.log_session_dir if (config.observability and config.observability.log_session_dir) else Path(".")
+    log_external_api = config.observability.log_external_api if config.observability else False
+    log_immediate_flush = config.observability.log_immediate_flush if config.observability else True
+
+    log_file, trace_id = setup_session_logging(
+        log_dir=log_dir,
+        level=log_level,
+        log_external_api=log_external_api,
+        log_immediate_flush=log_immediate_flush,
+    )
+    console.print(f"[dim]日志文件: {log_file}[/]")
+
+    # 3. 初始化 LLM
     provider_name = provider or config.llm.default_provider
     provider_config = config.llm.providers.get(provider_name)
     if not provider_config or not provider_config.api_key:
@@ -68,6 +85,7 @@ async def _evolve_async(
         base_url=provider_config.base_url,
         model_names=model_names if model_names else None,
     )
+    llm.meta_agent_name = "evolve"
 
     # 发现模型
     if provider_config.auto_discover and not model_names:
@@ -79,18 +97,21 @@ async def _evolve_async(
 
     console.print(f"[green]当前模型:[/green] {provider_name}/{llm.current_model}")
 
-    # 3. 初始化独立的 Registry（Evolve 有自己的工具箱，独立 db）
+    # 4. 初始化独立的 Registry（Evolve 有自己的工具箱，独立 db）
     evolve_db_path = Path("data/evolve_tools.db")
     registry = ToolRegistry(evolve_db_path)
 
-    # 4. 初始化独立的 Executor Registry + 注册最小工具集
-    executor_registry = ToolExecutorRegistry()
+    # 5. 初始化独立的 Executor Registry + 注册最小工具集
+    executor_registry = ToolExecutorRegistry(registry=registry)
     _register_minimal_tools(executor_registry, registry)
 
-    # 5. 初始化 Memory（可选）
-    memory_service = _init_memory_service(config)
+    # 6. 初始化 Memory（可选，预加载 embedding 模型）
+    memory_service = _init_memory_service(config, console=console)
 
-    # 6. 初始化 Context Manager
+    # 7. 初始化 PromptLoader
+    prompt_loader = PromptLoader(template_dir=resolve_template_dir(config))
+
+    # 8. 初始化 Context Manager
     ctx_manager = EvolveContextManager(
         llm=llm,
         max_context_tokens=config.execution.evolve_context_window,
@@ -98,17 +119,18 @@ async def _evolve_async(
         recent_turns=config.execution.evolve_recent_turns,
     )
 
-    # 7. 创建 EvolveAgent
+    # 9. 创建 EvolveAgent
     agent = EvolveAgent(
         llm=llm,
         registry=registry,
         executor_registry=executor_registry,
         context_manager=ctx_manager,
+        prompt_loader=prompt_loader,
         memory_service=memory_service,
         max_iterations=config.execution.max_evolve_iterations,
     )
 
-    # 8. 欢迎信息
+    # 10. 欢迎信息
     tools_count = len(registry.list_all())
     console.print(Panel(
         f"[bold green]Evolve Agent[/bold green] — 自主进化 Agent\n"
@@ -117,7 +139,7 @@ async def _evolve_async(
         title="qd-agents evolve",
     ))
 
-    # 9. 交互循环
+    # 11. 交互循环
     history: list[dict] = []
 
     while True:
@@ -224,13 +246,22 @@ def _register_minimal_tools(
     logger.info("Registered minimal tool set for evolve")
 
 
-def _init_memory_service(config):
-    """初始化长期记忆服务（可选）"""
+def _init_memory_service(config, console=None):
+    """初始化长期记忆服务（可选），预加载 embedding 模型"""
     if not config.memory:
         return None
     try:
         from ...memory.service import MemoryService
-        return MemoryService(config.memory)
+        service = MemoryService(config.memory)
+
+        # 预加载 embedding 模型，避免首次交互时延迟
+        if console:
+            with console.status("正在加载记忆模型..."):
+                service.preload()
+        else:
+            service.preload()
+
+        return service
     except Exception as e:
         logger.warning("Failed to initialize memory service: %s", e)
         return None

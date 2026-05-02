@@ -24,9 +24,9 @@ from qd_agents.models.tool import Tool, ToolExecutionType
 from qd_agents.tools import ToolExecutorRegistry
 from qd_agents.context.manager import format_tools_markdown
 from qd_agents.memory.service import MemoryService
+from qd_agents.prompts import PromptLoader
 
 from .context import EvolveContextManager
-from .system_prompt import build_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,7 @@ class EvolveAgent:
         registry: ToolRegistry,
         executor_registry: ToolExecutorRegistry,
         context_manager: EvolveContextManager,
+        prompt_loader: PromptLoader,
         memory_service: MemoryService | None = None,
         max_iterations: int = 30,
         on_step: StepCallback | None = None,
@@ -89,6 +90,7 @@ class EvolveAgent:
         self.registry = registry
         self.executor_registry = executor_registry
         self.ctx_manager = context_manager
+        self.prompts = prompt_loader
         self.memory = memory_service
         self.max_iterations = max_iterations
         self._on_step = on_step
@@ -123,7 +125,16 @@ class EvolveAgent:
         tool_map = {t.name: t for t in tools}
 
         # 2. 构建系统提示词
-        system_prompt = build_system_prompt(tools=tools, work_dir=kwargs.get("work_dir"))
+        import platform
+        tools_section = format_tools_markdown(tools, show_type_tag=True)
+        os_info = f"{platform.system()} {platform.release()} ({platform.machine()})"
+        work_dir = kwargs.get("work_dir") or "."
+        system_prompt = self.prompts.render(
+            "evolve",
+            tools_section=tools_section,
+            os_info=os_info,
+            work_dir=work_dir,
+        )
 
         # 3. 构建初始 messages
         messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
