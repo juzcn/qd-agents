@@ -151,6 +151,7 @@ class QDAgent:
             context_manager=self.context,
             executor_registry=self.executor_registry,
             max_iterations=self.config.execution.max_use_tool_iterations,
+            expanded_tool_map=self._tool_map_cache,
         )
 
         self._find_tools_agent = FindToolsAgent(
@@ -204,18 +205,16 @@ class QDAgent:
             total_tokens += chat_result.total_tokens
             last_prompt_tokens = chat_result.last_prompt_tokens
 
-            # 获取 Job（如果 Chat 决定路由到子循环）
+            # 获取 Job 和 messages（如果 Chat 决定路由到子循环）
             job: Job | None = chat_result.working_memory.get("job") if chat_result.working_memory else None
+            messages: list[dict] | None = chat_result.working_memory.get("messages") if chat_result.working_memory else None
 
             if job is None:
                 # 直接回答 / ask_user / delegate — Chat 已产生最终答案
                 final_answer = chat_result.final_answer
                 total_duration_ms = int((time.perf_counter() - start_time) * 1000)
 
-                # QA 自动写入长期记忆
                 self._auto_save_memory(user_input, final_answer, total_tokens)
-
-                # 记录 QA 到历史
                 self.add_to_history("user", user_input)
                 self.add_to_history("assistant", final_answer)
 
@@ -234,6 +233,7 @@ class QDAgent:
 
                 find_result = await self._find_tools_agent.execute(
                     job=job,
+                    messages=messages,
                     trace_id=trace_id,
                     on_step=on_step,
                     cancel_event=self._cancel_event,
@@ -262,15 +262,64 @@ class QDAgent:
                 # 刷新工具缓存（新工具已注册）
                 await self._refresh_tool_caches()
 
-                # 将发现的工具加入 Job 的 tool_list
+                # find-tools 完成后，回到主循环重新路由
+                # 将发现的工具信息注入到上下文，让 ChatAgent 重新决策
                 found_tool_names = find_result.working_memory.get("found_tool_names", []) if find_result.working_memory else []
-                if found_tool_names:
-                    job.tool_list.extend(found_tool_names)
-                    logger.info("Find-tools discovered %d tools: %s", len(found_tool_names), found_tool_names)
+                logger.info("Find-tools discovered %d tools: %s", len(found_tool_names), found_tool_names)
 
-                # 如果 find-tools 没有找到任何工具，直接返回结果
-                if not job.tool_list:
+                if not found_tool_names:
                     final_answer = find_result.final_answer
+                    total_duration_ms = int((time.perf_counter() - start_time) * 1000)
+
+                    self._auto_save_memory(user_input, final_answer, total_tokens)
+                    self.add_to_history("user", user_input)
+                    self.add_to_history("assistant", final_answer)
+
+                    return AgentResult(
+                        final_answer=final_answer,
+                        success=True,
+                        total_tokens=total_tokens,
+                        last_prompt_tokens=last_prompt_tokens,
+                        trace_id=trace_id,
+                        total_duration_ms=total_duration_ms,
+                    )
+
+                # 注入发现结果到上下文，重新路由
+                conversation_history = self.context.get_history()
+                chat_result = await self._chat_agent.execute(
+                    user_input=user_input,
+                    history=conversation_history,
+                    trace_id=trace_id,
+                    on_step=on_step,
+                    cancel_event=self._cancel_event,
+                )
+
+                total_tokens += chat_result.total_tokens
+                last_prompt_tokens += chat_result.last_prompt_tokens
+
+                job = chat_result.working_memory.get("job") if chat_result.working_memory else None
+                messages = chat_result.working_memory.get("messages") if chat_result.working_memory else None
+
+                if job is None:
+                    final_answer = chat_result.final_answer
+                    total_duration_ms = int((time.perf_counter() - start_time) * 1000)
+
+                    self._auto_save_memory(user_input, final_answer, total_tokens)
+                    self.add_to_history("user", user_input)
+                    self.add_to_history("assistant", final_answer)
+
+                    return AgentResult(
+                        final_answer=final_answer,
+                        success=chat_result.success,
+                        total_tokens=total_tokens,
+                        last_prompt_tokens=last_prompt_tokens,
+                        trace_id=trace_id,
+                        total_duration_ms=total_duration_ms,
+                    )
+
+                # 重新路由后只接受 use-tool（find-tools 已经执行过了）
+                if job.route != "use-tool":
+                    final_answer = chat_result.final_answer or "抱歉，无法处理您的请求。"
                     total_duration_ms = int((time.perf_counter() - start_time) * 1000)
 
                     self._auto_save_memory(user_input, final_answer, total_tokens)
@@ -292,6 +341,7 @@ class QDAgent:
 
                 use_result = await self._use_tool_agent.execute(
                     job=job,
+                    messages=messages,
                     trace_id=trace_id,
                     on_step=on_step,
                     cancel_event=self._cancel_event,
@@ -303,7 +353,6 @@ class QDAgent:
                 final_answer = use_result.final_answer
                 total_duration_ms = int((time.perf_counter() - start_time) * 1000)
 
-                # QA 自动写入长期记忆
                 self._auto_save_memory(user_input, final_answer, total_tokens)
 
                 # 记录 QA 到历史（只有 final answer，中间过程不保留）
@@ -396,6 +445,10 @@ class QDAgent:
         # 更新 ChatAgent 的工具缓存（下次路由决策时能看到新工具）
         if self._chat_agent:
             self._chat_agent._expanded_tools = expanded
+
+        # 更新 UseToolAgent 的工具映射（下次执行时能解析 MCP subtools）
+        if self._use_tool_agent:
+            self._use_tool_agent._expanded_tool_map = tool_map
 
         logger.info("Tool caches refreshed: %d expanded tools", len(expanded))
 

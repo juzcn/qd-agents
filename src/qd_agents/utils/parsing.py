@@ -20,15 +20,23 @@ def extract_json_from_llm_output(content: str) -> str:
     # 匹配 ```json ... ``` 或 ``` ... ```
     json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
     if json_match:
-        return json_match.group(1).strip()
+        return _normalize_quotes(json_match.group(1).strip())
 
     # 尝试找到 { } 包裹的内容
     brace_start = content.find('{')
     brace_end = content.rfind('}')
     if brace_start != -1 and brace_end != -1:
-        return content[brace_start:brace_end + 1]
+        return _normalize_quotes(content[brace_start:brace_end + 1])
 
-    return content
+    return _normalize_quotes(content)
+
+
+def _normalize_quotes(json_str: str) -> str:
+    """将中文引号替换为英文引号，避免 JSON 解析失败。
+
+    LLM 常在 JSON 值中使用中文引号（""''），这些不是合法 JSON 字符。
+    """
+    return json_str.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
 
 
 def parse_json_from_llm_output(content: str) -> dict | None:

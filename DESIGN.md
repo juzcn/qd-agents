@@ -10,7 +10,7 @@ QD-Agents 是一个自主进化的 AI Agent 框架，核心能力是「工具自
 qd_agents/
 ├── agent/                    # Agent 核心
 │   ├── base.py              # Agent 基类 + AgentResult 数据模型
-│   ├── evolve.py            # EvolveAgent：主 Agent（自主循环 + 工具编排）
+│   ├── chat.py              # ChatAgent：主 Agent（三循环架构 + 工具编排）
 │   ├── tool_execution.py    # 工具执行调度（按类型路由到对应 executor）
 │   ├── add_skill.py         # AddSkillAnalyzer（SKILL.md 分析）
 │   └── core.py              # QDAgent：资源管理容器
@@ -50,13 +50,11 @@ qd_agents/
 │   └── recall.py            # 记忆召回逻辑
 ├── models/                   # 数据模型
 │   ├── tool.py              # Tool + ToolExecutionConfig + ToolExecutionType + ToolMetadata
-│   ├── evolve.py            # EvolveResult / AskUserInfo / DelegateInfo
 │   ├── execution.py         # ExecutionResult / ExecutionStep / ExecutionStatus
 │   └── add_skill.py         # AddSkillResult
 ├── prompts/                  # 提示词模板
 │   ├── loader.py            # Jinja2 模板加载与渲染
 │   └── templates/
-│       ├── evolve.j2        # EvolveAgent 系统提示词（使用 {{ tools_section }}）
 │       ├── add_skill.j2     # 技能分析提示词（使用 {{ tools_section }}）
 │       └── add_cli.j2       # CLI help 解析提示词
 ├── registry/                 # 工具注册表
@@ -95,9 +93,9 @@ qd_agents/
 
 ### 1. 三循环架构
 
-Chat 模式采用三循环架构：1 个系统提示词主循环（evolve）+ 2 个消息循环子循环（use-tool、find-tools）。
+Chat 模式采用三循环架构：1 个系统提示词主循环（chat）+ 2 个消息循环子循环（use-tool、find-tools）。
 
-#### 1.1 主循环 Evolve
+#### 1.1 主循环 Chat
 
 系统提示词里加载所有工具的名称和描述，上下文中只保留所有 QA。
 
@@ -126,18 +124,7 @@ Chat 模式采用三循环架构：1 个系统提示词主循环（evolve）+ 2 
 
 **为什么使用双层循环**：实现所有工具的渐进式披露，避免主循环的工具 token 爆炸。
 
-### 2. 自主循环（Evolve Loop）执行流程
-
-```
-用户输入 → EvolveAgent.run()
-  → 构建 messages（系统提示词 + 历史 + 工具列表）
-  → LLM 调用（QDAgent）
-  → 解析响应
-    → 文本回答 → 返回用户
-    → 工具调用 → 执行工具 → 观察结果 → 继续循环
-```
-
-### 3. 工具执行调度
+### 2. 工具执行调度
 
 ```
 工具调用请求 → ToolExecutionHandler
@@ -150,7 +137,7 @@ Chat 模式采用三循环架构：1 个系统提示词主循环（evolve）+ 2 
     FUNCTION→ FunctionExecutor（Python 函数调用，需先注册到 ToolExecutorRegistry）
 ```
 
-### 4. 工具注册与发现
+### 3. 工具注册与发现
 
 **三种注册入口，共用同一套纯逻辑层（registrars）**：
 
@@ -165,7 +152,7 @@ Chat 模式采用三循环架构：1 个系统提示词主循环（evolve）+ 2 
 - **default**：预装工具（filesystem, fetch, serper-search 等），不可删除但可更新
 - **user**：用户/Agent 添加的工具，可删除可更新
 
-### 5. 系统提示词构建
+### 4. 系统提示词构建
 
 系统提示词由 `context/manager.py` 构建，包含：
 - 核心身份与自主行动原则
@@ -193,9 +180,9 @@ Chat 模式采用三循环架构：1 个系统提示词主循环（evolve）+ 2 
 - [skill] **tavily-search**: 搜索引擎
 ```
 
-`format_tools_markdown()` 是唯一的渲染函数，`evolve.j2` 和 `add_skill.j2` 都通过 `{{ tools_section }}` 变量使用它，避免重复代码。
+`format_tools_markdown()` 是唯一的渲染函数，`add_skill.j2` 通过 `{{ tools_section }}` 变量使用它。
 
-### 6. Builtin Function 工具
+### 5. Builtin Function 工具
 
 4 个工具注册 function 注册为 `scope=builtin` 的 `FUNCTION` 类型工具，LLM 可直接调用管理工具箱：
 
@@ -208,13 +195,13 @@ Chat 模式采用三循环架构：1 个系统提示词主循环（evolve）+ 2 
 
 这些函数的 OpenAI function calling schema 由 `_generate_openai_schema()` 从函数签名自动生成（使用 `typing.get_type_hints` 解析真实类型注解），无需手写。
 
-### 7. 长期记忆
+### 6. 长期记忆
 
 - **存储**：SQLite + sqlite-vec 向量索引（sentence-transformers BGE-M3）
 - **召回**：`memory_recall` 工具（向量 + 关键词混合检索）
 - **CLI**：`qd-agents memory list` / `qd-agents memory recall <查询>`
 
-### 8. Skill 渐进式披露
+### 7. Skill 渐进式披露
 
 Skill 工具首次调用时不执行，而是将 SKILL.md 注入系统提示词，让 Agent 了解用法后再通过 `execute_bash` 执行。这避免了 Agent 在不了解工具用法时盲目调用。
 

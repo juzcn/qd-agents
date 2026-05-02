@@ -6,7 +6,6 @@ from .use_tool import UseToolAgent
 from .find_tools import FindToolsAgent
 from .add_skill import AddSkillAnalyzer
 from .core import QDAgent
-from .evolve import EvolveAgent, EvolveContextManager, EvolveResult
 
 __all__ = [
     "Agent",
@@ -17,7 +16,4 @@ __all__ = [
     "FindToolsAgent",
     "AddSkillAnalyzer",
     "QDAgent",
-    "EvolveAgent",
-    "EvolveContextManager",
-    "EvolveResult",
 ]

@@ -1,7 +1,7 @@
 """Use-Tool Agent — 工具执行子循环
 
-接收 Chat 的 Job 输出，迭代调用工具完成任务。
-核心逻辑从 ChatAgent 的工具执行循环迁移而来。
+接收 Chat 的 Job 输出，在主循环上下文中迭代调用工具完成任务。
+完成后截断中间消息，只保留 final answer。
 """
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ import json
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..llm import LLMClient
 from ..context import ContextManager
 from ..models.job import Job
-from ..models.tool import Tool, ToolExecutionType
+from ..models.tool import Tool
 from ..registry import ToolRegistry
 from ..tools import ToolExecutorRegistry
 from .base import Agent, AgentResult, StepCallback
@@ -23,12 +23,8 @@ from .tool_execution import (
     execute_tool,
     find_skill_tool,
     ensure_bash_available,
-    inject_skill_into_system_prompt,
     format_tool_result,
 )
-
-if TYPE_CHECKING:
-    from ..memory.service import MemoryService
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +32,8 @@ logger = logging.getLogger(__name__)
 class UseToolAgent(Agent):
     """Use-Tool Agent — 工具执行子循环
 
-    接收 Job 对象，按编排逻辑迭代调用工具，返回最终答案。
+    在主循环上下文中执行，共享系统提示词。
+    任务信息通过 tool message 注入，完成后截断中间消息。
     """
 
     name = "use-tool"
@@ -50,6 +47,7 @@ class UseToolAgent(Agent):
         executor_registry: ToolExecutorRegistry | None = None,
         max_iterations: int = 15,
         on_step: StepCallback | None = None,
+        expanded_tool_map: dict[str, Tool] | None = None,
     ):
         self.llm = llm_client
         self.registry = tool_registry
@@ -58,14 +56,17 @@ class UseToolAgent(Agent):
         self._max_iterations = max_iterations
         self._on_step = on_step
         self._cancel_event: asyncio.Event | None = None
-        self._disclosed_tools: set[str] = set()
+        self._expanded_tool_map = expanded_tool_map or {}
 
-    async def execute(self, job: Job, **kwargs) -> AgentResult:
+    async def execute(self, job: Job, messages: list[dict], **kwargs) -> AgentResult:
         """执行工具调用子循环
+
+        在主循环 messages 上操作：注入 task message，执行工具循环，完成后截断。
 
         Args:
             job: Chat 输出的 Job 对象
-            **kwargs: on_step, cancel_event 等
+            messages: 主循环的消息列表（就地修改）
+            **kwargs: on_step, cancel_event, memory_context 等
         """
         on_step = kwargs.get("on_step")
         cancel_event = kwargs.get("cancel_event")
@@ -97,8 +98,10 @@ class UseToolAgent(Agent):
             openai_tools, tool_map, self.registry
         )
 
-        # 4. 构建消息
-        messages = self.context.build_use_tool_messages(job=job, tools=tools)
+        # 4. 记录当前 messages 长度，注入 task message
+        start_idx = len(messages)
+        task_message = self.context.build_use_tool_task_message(job=job)
+        messages.append({"role": "user", "content": task_message})
 
         # 5. 设置 LLM 日志标识
         self.llm.meta_agent_name = self.name
@@ -113,6 +116,8 @@ class UseToolAgent(Agent):
         while iteration < self._max_iterations:
             if self._cancel_event and self._cancel_event.is_set():
                 logger.info("Use-tool loop cancelled by user")
+                # 截断中间消息
+                del messages[start_idx:]
                 latency_ms = int((time.perf_counter() - start_time) * 1000)
                 return AgentResult(
                     final_answer="已取消",
@@ -154,6 +159,10 @@ class UseToolAgent(Agent):
                 final_answer = content.strip() if content.strip() else "任务执行完成，但未生成明确答案。"
                 total_duration_ms = int((time.perf_counter() - start_time) * 1000)
 
+                # 截断中间消息，只保留 final answer
+                del messages[start_idx:]
+                messages.append({"role": "assistant", "content": final_answer})
+
                 return AgentResult(
                     final_answer=final_answer,
                     success=True,
@@ -172,23 +181,12 @@ class UseToolAgent(Agent):
                 except json.JSONDecodeError:
                     tool_input = {"raw": tool_call.function.arguments}
 
-                # SKILL 工具渐进式披露
-                skill_result = self._handle_skill_disclosure(
-                    tool_call, tool_input, tool_name, tool_map, iteration, messages,
+                # SKILL 工具：注入 SKILL.md
+                skill_msgs = self._handle_skill_disclosure(
+                    tool_call, tool_name, tool_map, iteration, messages,
                 )
-                if skill_result is not None:
-                    replacement_msgs, append_msgs = skill_result
-                    if replacement_msgs is not None:
-                        messages = replacement_msgs
-                    messages.extend(append_msgs)
-                    continue
-
-                # 渐进式 schema 披露（非 SKILL 工具）
-                schema_result = self._handle_schema_disclosure(
-                    tool_call, tool_name, tool_map, openai_tools, iteration,
-                )
-                if schema_result is not None:
-                    messages.extend(schema_result)
+                if skill_msgs is not None:
+                    messages.extend(skill_msgs)
                     continue
 
                 # 记录工具调用
@@ -226,8 +224,13 @@ class UseToolAgent(Agent):
 
         # 达到最大迭代次数
         total_duration_ms = int((time.perf_counter() - start_time) * 1000)
+        # 截断中间消息
+        del messages[start_idx:]
+        final_answer = "达到最大工具调用迭代次数，任务可能未完成。"
+        messages.append({"role": "assistant", "content": final_answer})
+
         return AgentResult(
-            final_answer="达到最大工具调用迭代次数，任务可能未完成。",
+            final_answer=final_answer,
             success=False,
             working_memory={"tools_used": tools_used},
             total_tokens=total_tokens,
@@ -239,30 +242,35 @@ class UseToolAgent(Agent):
     # --- 内部方法 ---
 
     def _resolve_tools(self, tool_names: list[str]) -> list[Tool]:
-        """从工具名列表解析出 Tool 对象"""
+        """从工具名列表解析出 Tool 对象
+
+        查找顺序：expanded_tool_map（含 MCP subtools）→ registry（DB 存储）
+        """
         tools = []
         for name in tool_names:
-            tool = self.registry.get(name) or self.registry.get_by_name(name)
+            tool = (
+                self._expanded_tool_map.get(name)
+                or self.registry.get(name)
+                or self.registry.get_by_name(name)
+            )
             if tool:
                 tools.append(tool)
             else:
-                logger.warning("Tool not found in registry: %s", name)
+                logger.warning("Tool not found: %s (checked expanded_tool_map and registry)", name)
         return tools
 
     def _handle_skill_disclosure(
         self,
         tool_call: Any,
-        tool_input: dict,
         tool_name: str,
         tool_map: dict,
         iteration: int,
         messages: list[dict],
-    ) -> tuple[list[dict] | None, list[dict]] | None:
-        """SKILL 工具渐进式披露
+    ) -> list[dict] | None:
+        """SKILL 工具：通过 tool result 注入 SKILL.md
 
-        prompt 类型：注入系统提示词（已在 build_use_tool_messages 中预注入，
-        此处处理运行时动态调用的情况）。
-        tool_manual 类型：注入 tool result。
+        prompt 类型：注入到系统提示词（修改 messages[0]）
+        tool_manual 类型：注入到 tool result
         """
         skill_tool = find_skill_tool(tool_name, tool_map, self.registry)
         if not skill_tool:
@@ -276,74 +284,29 @@ class UseToolAgent(Agent):
 
         if skill_md:
             if skill_type == "prompt":
+                # prompt 类型：注入到系统提示词
                 logger.info("Injecting SKILL.md into system prompt (prompt type): %s", tool_name)
-                new_messages = inject_skill_into_system_prompt(messages, tool_name, skill_md)
-                append = [{
+                if messages and messages[0].get("role") == "system":
+                    messages[0]["content"] += f"\n\n## 技能指南: {tool_name}\n\n{skill_md}"
+                return [{
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "content": f"已加载技能 {tool_name} 的行为指南到系统提示词。请在后续所有决策中遵循该指南。",
                 }]
-                return (new_messages, append)
             else:
+                # tool_manual 类型：注入到 tool result
                 logger.info("Injecting SKILL.md into tool result (tool_manual type): %s", tool_name)
-                return (None, [{
+                return [{
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "content": f"已加载技能指南，请按照以下说明使用 execute_bash 执行：\n\n{skill_md}",
-                }])
+                }]
         else:
-            return (None, [{
+            return [{
                 "role": "tool",
                 "tool_call_id": tool_call.id,
                 "content": f"技能 {tool_name} 的 SKILL.md 未找到。",
-            }])
-
-    def _handle_schema_disclosure(
-        self,
-        tool_call: Any,
-        tool_name: str,
-        tool_map: dict[str, Tool],
-        openai_tools: list[dict[str, Any]],
-        iteration: int,
-    ) -> list[dict[str, Any]] | None:
-        """渐进式 schema 披露：首次调用时通过 tool result 返回完整参数定义"""
-        if tool_name in self._disclosed_tools or tool_name not in tool_map:
-            return None
-
-        tool_obj = tool_map[tool_name]
-        if tool_obj.execution.type == ToolExecutionType.SKILL:
-            return None
-
-        self._disclosed_tools.add(tool_name)
-        logger.info("Disclosing tool schema via tool result: %s (progressive disclosure)", tool_name)
-        self._emit_step(iteration, event="schema_load", tool_name=tool_name, detail=tool_name)
-
-        self._replace_tool_in_list(openai_tools, tool_obj.to_openai_function())
-
-        schema_str = json.dumps(tool_obj.parameters, ensure_ascii=False, indent=2)
-        msgs = [{
-            "role": "tool",
-            "tool_call_id": tool_call.id,
-            "content": (
-                f"工具 {tool_name} 的参数定义如下，请严格按照参数定义重新调用：\n\n"
-                f"描述: {tool_obj.description}\n\n"
-                f"参数 Schema:\n```json\n{schema_str}\n```"
-            ),
-        }]
-        return msgs
-
-    @staticmethod
-    def _replace_tool_in_list(
-        tools: list[dict[str, Any]],
-        full_tool: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """替换工具列表中对应工具为完整 schema 版本"""
-        target_name = full_tool.get("function", {}).get("name", "")
-        for i, t in enumerate(tools):
-            if t.get("function", {}).get("name") == target_name:
-                tools[i] = full_tool
-                break
-        return tools
+            }]
 
     def _emit_step(
         self,
