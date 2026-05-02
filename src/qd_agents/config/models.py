@@ -131,12 +131,6 @@ class ExecutionConfig(BaseModel):
     )
     code_exec_timeout: int = 30000
 
-    # Evolve Agent 配置
-    max_evolve_iterations: int = 30
-    evolve_context_window: int = 100_000
-    evolve_compact_threshold: float = 0.8
-    evolve_recent_turns: int = 4
-
 
 class ToolCredentialConfig(BaseModel):
     """单个外部工具的凭证配置"""
