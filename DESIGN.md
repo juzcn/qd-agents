@@ -93,7 +93,40 @@ qd_agents/
 
 ## 核心流程
 
-### 1. 自主循环（Evolve Loop）
+### 1. 三循环架构
+
+Chat 模式采用三循环架构：1 个系统提示词主循环（evolve）+ 2 个消息循环子循环（use-tool、find-tools）。
+
+#### 1.1 主循环 Evolve
+
+系统提示词里加载所有工具的名称和描述，上下文中只保留所有 QA。
+
+- **直接回答**：不用工具就能回答的（如问候语），直接输出
+- **已有工具可完成**：输出 Job 信息（需要使用的工具列表 + 工具编排逻辑），进入 use-tool 子循环
+- **工具缺失**：进入 find-tools 子循环
+
+#### 1.2 子循环 Use-Tool
+
+以主循环输出的 Job 为参数执行任务。在 user 消息和 tool 消息中加载任务背景、任务描述、工具编排逻辑和需要使用的工具列表。
+
+- 加载 skill 工具时：如果是提示词注入类型，加载到主循环的系统提示词中；否则加入到自己的 tool 消息中
+- 工具编排逻辑复杂时，用 Python 编排执行
+- 循环结束后生成 final answer
+
+#### 1.3 子循环 Find-Tools
+
+根据任务背景、任务描述自主上网查找可用工具，安装，最后生成完整的工具列表交给 use-tool 执行。
+
+- 加载工具箱里所有 builtin 工具的工具详情，和所有搜索工具的工具详情
+- 安装成功的工具按类型注册到工具箱
+
+#### 1.4 上下文管理
+
+只使用一套提示词模板。为避免上下文膨胀，主循环只保留子循环的 final answer，视子循环为任务循环——一旦任务完成，任务过程中的其它消息都不保留。子循环回到主循环后，上下文中只有 QA。
+
+**为什么使用双层循环**：实现所有工具的渐进式披露，避免主循环的工具 token 爆炸。
+
+### 2. 自主循环（Evolve Loop）执行流程
 
 ```
 用户输入 → EvolveAgent.run()
@@ -104,7 +137,7 @@ qd_agents/
     → 工具调用 → 执行工具 → 观察结果 → 继续循环
 ```
 
-### 2. 工具执行调度
+### 3. 工具执行调度
 
 ```
 工具调用请求 → ToolExecutionHandler
@@ -117,7 +150,7 @@ qd_agents/
     FUNCTION→ FunctionExecutor（Python 函数调用，需先注册到 ToolExecutorRegistry）
 ```
 
-### 3. 工具注册与发现
+### 4. 工具注册与发现
 
 **三种注册入口，共用同一套纯逻辑层（registrars）**：
 
@@ -132,7 +165,7 @@ qd_agents/
 - **default**：预装工具（filesystem, fetch, serper-search 等），不可删除但可更新
 - **user**：用户/Agent 添加的工具，可删除可更新
 
-### 4. 系统提示词构建
+### 5. 系统提示词构建
 
 系统提示词由 `context/manager.py` 构建，包含：
 - 核心身份与自主行动原则
@@ -162,7 +195,7 @@ qd_agents/
 
 `format_tools_markdown()` 是唯一的渲染函数，`evolve.j2` 和 `add_skill.j2` 都通过 `{{ tools_section }}` 变量使用它，避免重复代码。
 
-### 5. Builtin Function 工具
+### 6. Builtin Function 工具
 
 4 个工具注册 function 注册为 `scope=builtin` 的 `FUNCTION` 类型工具，LLM 可直接调用管理工具箱：
 
@@ -175,13 +208,13 @@ qd_agents/
 
 这些函数的 OpenAI function calling schema 由 `_generate_openai_schema()` 从函数签名自动生成（使用 `typing.get_type_hints` 解析真实类型注解），无需手写。
 
-### 6. 长期记忆
+### 7. 长期记忆
 
 - **存储**：SQLite + sqlite-vec 向量索引（sentence-transformers BGE-M3）
 - **召回**：`memory_recall` 工具（向量 + 关键词混合检索）
 - **CLI**：`qd-agents memory list` / `qd-agents memory recall <查询>`
 
-### 7. Skill 渐进式披露
+### 8. Skill 渐进式披露
 
 Skill 工具首次调用时不执行，而是将 SKILL.md 注入系统提示词，让 Agent 了解用法后再通过 `execute_bash` 执行。这避免了 Agent 在不了解工具用法时盲目调用。
 
