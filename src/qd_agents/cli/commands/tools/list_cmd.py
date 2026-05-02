@@ -38,7 +38,7 @@ def list_tools(
         cli_detail: 是否显示 CLI 工具详细属性
         function_detail: 是否显示 Function 工具
     """
-    config = load_config(base_dir=base_dir, config_file=config_file)
+    config = load_config()
     registry = get_tool_registry(config)
     tools = registry.list_all()
 

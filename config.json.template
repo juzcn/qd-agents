@@ -5,6 +5,7 @@
     "environment": "development"
   },
   "llm": {
+    // 默认 LLM 提供商，对应 providers 中的 key
     "default_provider": "nvidia",
     "default_model": null,
     "providers": {
@@ -38,11 +39,21 @@
   "tool_registry": {
     "db_path": "data/tools.db",
     "sqlite_vec_enabled": true,
-    "embedding_backend": "sentence_transformers",
-    "embedding_model": "BAAI/bge-m3",
+    // 嵌入后端选项: "llama_cpp" | "sentence_transformers"
+    //   llama_cpp: 本地 GGUF 模型，无需网络，速度快，内存占用低
+    //     需配合 embedding_model="hf_KimChen_bge-m3-q4_k_m.gguf" + model_path 指向 .gguf 文件
+    //   sentence_transformers: HuggingFace 模型，需下载或离线缓存
+    //     需配合 embedding_model="BAAI/bge-m3" + hf_token/hf_cache_dir/hf_hub_offline
+    "embedding_backend": "llama_cpp",
+    // llama_cpp 时填 GGUF 文件名，sentence_transformers 时填 HuggingFace 模型名
+    "embedding_model": "hf_KimChen_bge-m3-q4_k_m.gguf",
+    // HuggingFace token（sentence_transformers 下载模型时需要）
     "hf_token": "",
+    // HuggingFace 缓存目录（sentence_transformers 离线模式时需要）
     "hf_cache_dir": "",
+    // 是否离线模式（sentence_transformers 不尝试下载，仅用缓存）
     "hf_hub_offline": false,
+    // llama_cpp 时指向 .gguf 文件路径；sentence_transformers 时填 "." 即可
     "model_path": ".",
     "top_k": 10,
     "similarity_threshold": 0.7,
@@ -50,12 +61,15 @@
   },
   "memory": {
     "db_path": "data/memory.db",
-    "embedding_backend": "sentence_transformers",
-    "embedding_model": "BAAI/bge-m3",
+    // 同 tool_registry.embedding_backend，选项: "llama_cpp" | "sentence_transformers"
+    "embedding_backend": "llama_cpp",
+    // 同 tool_registry.embedding_model
+    "embedding_model": "hf_KimChen_bge-m3-q4_k_m.gguf",
     "hf_token": "",
     "hf_cache_dir": "",
     "hf_hub_offline": false,
     "model_path": ".",
+    // 嵌入向量维度，BGE-M3 固定 1024，不要改
     "vec_dim": 1024,
     "top_k": 5,
     "similarity_threshold": 0.7,
