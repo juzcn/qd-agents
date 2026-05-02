@@ -22,15 +22,7 @@ from ...llm import LLMClient
 from ...prompts import PromptLoader
 from ...registry import ToolRegistry
 from ...tools import ToolExecutorRegistry
-from ...tools.builtin_register import (
-    tool_register_cli,
-    tool_register_mcp,
-    tool_register_skill,
-    tool_register_http,
-    register_builtin_function_tools,
-)
-from ...tools.builtins import echo
-from ...tools.search import serper_search, tavily_search
+from ...models.tool import Tool, ToolExecutionConfig, ToolExecutionType, ToolMetadata
 from ...utils.logging import setup_session_logging
 
 logger = logging.getLogger(__name__)
@@ -221,29 +213,43 @@ def _register_minimal_tools(
     executor_registry: ToolExecutorRegistry,
     registry: ToolRegistry,
 ) -> None:
-    """注册 Evolve 的最小工具集
+    """注册 Evolve 的最小工具集 — 仅 execute_bash
 
-    最小工具集：
-    - execute_bash: 万能工具，可以执行任何命令
-    - tool_register_cli/mcp/skill/http: 注册新工具的能力
-    - echo: 简单测试工具
-    - serper_search/tavily_search: 搜索能力
-
-    这些是 Evolve 的"种子"工具，它可以通过 tool_register_* 自主扩展。
+    Evolve 从唯一工具 execute_bash 起步，通过 bash 执行 qd-agents CLI
+    自主注册新工具，实现自我进化。
     """
-    # 注册 Python 函数到 executor_registry
-    executor_registry.register_function("echo", echo)
-    executor_registry.register_function("serper_search", serper_search)
-    executor_registry.register_function("tavily_search", tavily_search)
-    executor_registry.register_function("tool_register_cli", tool_register_cli)
-    executor_registry.register_function("tool_register_mcp", tool_register_mcp)
-    executor_registry.register_function("tool_register_skill", tool_register_skill)
-    executor_registry.register_function("tool_register_http", tool_register_http)
+    # 清空旧工具（每次启动重置）
+    registry.clear_all()
 
-    # 将4个注册工具持久化到数据库（scope=builtin）
-    register_builtin_function_tools(registry)
-
-    logger.info("Registered minimal tool set for evolve")
+    # 注册唯一的种子工具：execute_bash
+    bash_tool = Tool(
+        id="builtin.execute_bash",
+        name="execute_bash",
+        description="执行 bash/shell 命令并返回输出。可用于文件操作、代码运行、系统管理等任务。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "要执行的 shell 命令",
+                },
+            },
+            "required": ["command"],
+        },
+        execution=ToolExecutionConfig(
+            type=ToolExecutionType.BASH,
+            shell_command="{command}",
+            shell="bash",
+            timeout=300,
+        ),
+        scope="builtin",
+        metadata=ToolMetadata(
+            tags=["builtin", "bash", "shell"],
+            version="0.1.0",
+        ),
+    )
+    registry.register(bash_tool)
+    logger.info("Registered minimal tool set for evolve (1 tool: execute_bash)")
 
 
 def _init_memory_service(config, console=None):

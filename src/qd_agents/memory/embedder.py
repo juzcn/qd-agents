@@ -121,6 +121,10 @@ class SentenceTransformersEmbedder(BaseEmbedder):
         self._model = SentenceTransformer(self._model_name, **kwargs)
         logger.info("Embedding model loaded (offline=%s, vec_dim=%d)", self._hf_hub_offline, self._vec_dim)
 
+    def preload(self) -> None:
+        """预加载模型（不计算 embedding）"""
+        self._ensure_model()
+
     def close(self) -> None:
         if self._model is not None:
             try:
@@ -131,7 +135,7 @@ class SentenceTransformersEmbedder(BaseEmbedder):
 
     def embed(self, text: str) -> bytes:
         self._ensure_model()
-        vec: list[float] = self._model.encode(text).tolist()  # type: ignore[union-attr]
+        vec: list[float] = self._model.encode(text, show_progress_bar=False).tolist()  # type: ignore[union-attr]
 
         if len(vec) != self._vec_dim:
             logger.warning(
@@ -143,7 +147,7 @@ class SentenceTransformersEmbedder(BaseEmbedder):
 
     def embed_as_list(self, text: str) -> list[float]:
         self._ensure_model()
-        return self._model.encode(text).tolist()  # type: ignore[union-attr]
+        return self._model.encode(text, show_progress_bar=False).tolist()  # type: ignore[union-attr]
 
 
 def create_embedder(

@@ -55,7 +55,7 @@ class MemoryService:
 
     def preload(self) -> None:
         """预加载 embedding 模型，避免首次交互时延迟"""
-        self._embedder.embed("preload")
+        self._embedder.preload()
 
     def save(
         self,
