@@ -1,7 +1,7 @@
 """
 工具执行辅助函数
 
-从 EvolveAgent 中提取的工具执行、SKILL 注入、bash 可用性检查等逻辑。
+从 ChatAgent 中提取的工具执行、SKILL 注入、bash 可用性检查等逻辑。
 """
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ def ensure_bash_available(
     tool_map: dict[str, Tool],
     registry: ToolRegistry | None = None,
 ) -> tuple[list[dict], dict[str, Tool]]:
-    """确保 execute_bash 在 openai_tools 中可用（evolve agent 的元工具）"""
+    """确保 execute_bash 在 openai_tools 中可用（chat agent 的元工具）"""
     existing_names = {t.get("function", {}).get("name") for t in openai_tools if "function" in t}
     if "execute_bash" in existing_names:
         return openai_tools, tool_map
@@ -91,7 +91,7 @@ def ensure_bash_available(
         if bash_tool and bash_tool.name not in existing_names:
             openai_tools.append(bash_tool.to_openai_function())
             tool_map[bash_tool.name] = bash_tool
-            logger.info("Adding execute_bash to openai_tools (evolve meta-tool)")
+            logger.info("Adding execute_bash to openai_tools (chat meta-tool)")
 
     return openai_tools, tool_map
 

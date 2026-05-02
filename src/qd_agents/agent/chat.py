@@ -1,4 +1,4 @@
-"""Evolve Agent — 路由决策器
+"""Chat 路由决策 Agent
 
 主循环：分析用户请求，输出 Job JSON 决定路由方向。
 不再执行工具，只做路由决策。
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from ..llm import LLMClient
 from ..context import ContextManager
 from ..models.job import Job
-from ..models.evolve import AskUserInfo, DelegateInfo, EvolveResult
+from ..models.chat import AskUserInfo, DelegateInfo, ChatResult
 from ..models.tool import Tool
 from ..registry import ToolRegistry
 from ..utils.parsing import extract_json_from_llm_output
@@ -27,14 +27,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class EvolveAgent(Agent):
-    """Evolve Agent — 路由决策器
+class ChatAgent(Agent):
+    """Chat 路由决策 Agent
 
     分析用户请求和可用工具，输出 Job JSON 决定路由方向。
     不执行工具，只做决策。
     """
 
-    name = "evolve"
+    name = "chat"
     description = "路由决策器，分析用户请求并决定路由方向"
 
     def __init__(
@@ -88,7 +88,7 @@ class EvolveAgent(Agent):
             memory_context = await self._recall_memory_context(user_input)
 
         # 2. 构建 messages
-        messages = self.context.build_evolve_messages(
+        messages = self.context.build_chat_messages(
             user_input=user_input,
             tools=self._expanded_tools,
             history=history,
@@ -126,7 +126,7 @@ class EvolveAgent(Agent):
 
         if job is None:
             # 解析失败，fallback 为直接回答
-            logger.warning("Failed to parse Job JSON from Evolve response, treating as direct answer")
+            logger.warning("Failed to parse Job JSON from Chat response, treating as direct answer")
             final_answer = content.strip() if content.strip() else "抱歉，无法理解您的请求。"
             return AgentResult(
                 final_answer=final_answer,
@@ -278,5 +278,5 @@ class EvolveAgent(Agent):
                 "command": command,
                 "result_summary": result_summary,
                 "detail": detail,
-                "loop": "evolve",
+                "loop": "chat",
             })

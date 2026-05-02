@@ -114,7 +114,7 @@ def format_tools_markdown(tools: list[Tool], *, show_type_tag: bool = True) -> s
 
     Args:
         tools: 工具列表
-        show_type_tag: 是否在每行前显示 [type] 标签（evolve 需要，add_skill 不需要）
+        show_type_tag: 是否在每行前显示 [type] 标签（chat 需要，add_skill 不需要）
 
     Returns:
         渲染后的 markdown 字符串
@@ -166,7 +166,7 @@ class ContextManager:
         self._session_history: list[dict[str, str]] = []
         self._cached_system_prompt: str | None = None
         self._cached_tools: list[Any] | None = None
-        self._evolve_cache: dict[tuple, str] = {}     # 缓存进化判断提示词
+        self._chat_cache: dict[tuple, str] = {}     # 缓存进化判断提示词
         self._use_tool_cache: dict[tuple, str] = {}   # 缓存 use-tool 提示词
         self._find_tools_cache: dict[tuple, str] = {}  # 缓存 find-tools 提示词
         self._skill_md_cache: dict[str, str] = {}      # 缓存 SKILL.md 正文
@@ -227,7 +227,7 @@ class ContextManager:
         logger.debug("Loaded SKILL.md for %s (%d chars)", skill_dir_name, len(body))
         return body
 
-    def build_evolve_messages(
+    def build_chat_messages(
         self,
         user_input: str,
         tools: list[Tool],
@@ -238,7 +238,7 @@ class ContextManager:
         构建自主进化决策消息
 
         初始只列出所有工具的 name+description（渐进式披露）。
-        SKILL 工具的 SKILL.md 在 LLM 选择使用时由 EvolveAgent 动态注入。
+        SKILL 工具的 SKILL.md 在 LLM 选择使用时由 ChatAgent 动态注入。
 
         Args:
             user_input: 当前用户输入
@@ -254,13 +254,13 @@ class ContextManager:
         cache_key = tool_ids
 
         # 检查缓存
-        if cache_key in self._evolve_cache:
-            system_prompt = self._evolve_cache[cache_key]
-            logger.debug("Using cached system prompt for evolve")
+        if cache_key in self._chat_cache:
+            system_prompt = self._chat_cache[cache_key]
+            logger.debug("Using cached system prompt for chat")
         else:
             if self.prompts:
                 system_prompt = self.prompts.render(
-                    "evolve",
+                    "chat",
                     tools=tools,
                     tools_section=format_tools_markdown(tools),
                     observations=[],
@@ -322,8 +322,8 @@ class ContextManager:
 
 **重要**：只输出 JSON，不要输出其他内容。确保 JSON 格式正确。"""
 
-            self._evolve_cache[cache_key] = system_prompt
-            logger.debug(f"Cached system prompt for evolve with {len(tools)} tools")
+            self._chat_cache[cache_key] = system_prompt
+            logger.debug(f"Cached system prompt for chat with {len(tools)} tools")
 
         # 构建 base messages（system + history + user_input）
         messages = self._build_messages(

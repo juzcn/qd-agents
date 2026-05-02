@@ -1,7 +1,7 @@
 """Use-Tool Agent — 工具执行子循环
 
-接收 Evolve 的 Job 输出，迭代调用工具完成任务。
-核心逻辑从 EvolveAgent 的工具执行循环迁移而来。
+接收 Chat 的 Job 输出，迭代调用工具完成任务。
+核心逻辑从 ChatAgent 的工具执行循环迁移而来。
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ class UseToolAgent(Agent):
         """执行工具调用子循环
 
         Args:
-            job: Evolve 输出的 Job 对象
+            job: Chat 输出的 Job 对象
             **kwargs: on_step, cancel_event 等
         """
         on_step = kwargs.get("on_step")

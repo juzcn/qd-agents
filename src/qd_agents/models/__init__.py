@@ -1,4 +1,4 @@
-from .evolve import EvolveResult, AskUserInfo, DelegateInfo
+from .chat import ChatResult, AskUserInfo, DelegateInfo
 from .add_skill import AddSkillResult
 from .tool import (
     Tool,
@@ -9,7 +9,7 @@ from .tool import (
 )
 
 __all__ = [
-    "EvolveResult",
+    "ChatResult",
     "AskUserInfo",
     "DelegateInfo",
     "AddSkillResult",

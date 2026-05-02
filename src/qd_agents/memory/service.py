@@ -59,7 +59,7 @@ class MemoryService:
         answer: str,
         session_id: str = "",
         tags: list[str] | None = None,
-        source: str = "evolve",
+        source: str = "chat",
         model: str = "",
         token_count: int = 0,
     ) -> str:
