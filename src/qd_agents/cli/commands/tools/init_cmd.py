@@ -61,19 +61,15 @@ def init_tools(
             console.print(f"[dim]删除 {deleted} 个用户工具[/]")
             tools = [t for t in tools if t.scope != "user"]
             if not tools:
-                console.print("[yellow]没有需要重注册的默认工具[/]")
+                console.print("[yellow]没有需要重注册的工具[/]")
                 return
-    else:
-        # keep_user 模式下过滤掉用户工具不重注册
-        tools = [t for t in tools if t.scope != "user"]
-        if not tools:
-            console.print("[yellow]没有需要重注册的默认工具[/]")
-            return
 
     # 按 execution type 分组，跳过 bash 类型
     groups: dict[str, list] = defaultdict(list)
     builtin_count = 0
     for t in tools:
+        if t.scope == "builtin":
+            continue
         et = t.execution.type.value
         if et == "bash":
             continue

@@ -93,7 +93,7 @@ def parse_help_with_llm(
     except Exception as e:
         logger.warning("LLM 解析 --help 失败: %s", e)
 
-    return {"description": f"CLI tool: {name}", "parameters": {"type": "object", "properties": {}, "required": []}}
+    return None
 
 
 def run_add_skill_analyzer(

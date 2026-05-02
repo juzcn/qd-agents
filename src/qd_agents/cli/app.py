@@ -46,11 +46,9 @@ app.add_typer(memory_app)
 # tools list 命令
 @tools_app.command("list", help="列出已注册的工具")
 def tools_list(
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     mcp: bool = typer.Option(False, "--mcp", "-m", help="列出 MCP 工具及 subtools"),
     skill: bool = typer.Option(False, "--skill", "-s", help="列出 Skill 工具及重要属性"),
-    cli: bool = typer.Option(False, "--cli", help="只列出 CLI 工具"),
+    cli: bool = typer.Option(False, "--cli", help="列出 CLI 工具及详细属性"),
     function: bool = typer.Option(False, "--function", help="只列出 Function 工具"),
     bash: bool = typer.Option(False, "--bash", help="只列出 Bash 工具"),
     http: bool = typer.Option(False, "--http", help="只列出 HTTP 工具"),
@@ -69,50 +67,40 @@ def tools_list(
         type_filter.append("bash")
     if http:
         type_filter.append("http")
-    list_tools(console, base_dir, config_file, type_filter=type_filter or None, skill_detail=skill, mcp_detail=mcp, http_detail=http)
+    list_tools(console, type_filter=type_filter or None, skill_detail=skill, mcp_detail=mcp, http_detail=http, cli_detail=cli)
 
 
 # tools init 命令
 @tools_app.command("init", help="初始化工具箱（默认完全初始化，--keep 保留用户工具）")
 def tools_init(
     keep: bool = typer.Option(False, "--keep", "-k", help="保留用户创建的工具（默认完全初始化）"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
 ):
     """初始化工具箱"""
-    init_tools(console, base_dir, config_file, keep_user=keep)
+    init_tools(console, keep_user=keep)
 
 
 # tools remove 命令
 @tools_app.command("remove", help="移除已注册的工具")
 def tools_remove_command(
     tool_identifier: str = typer.Argument(..., help="工具名称或 ID"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     keep_credentials: bool = typer.Option(False, "--keep-credentials", help="保留工具凭证配置"),
 ):
     """移除已注册的工具（支持所有类型）"""
-    remove_tools(console, tool_identifier, base_dir, config_file, keep_credentials)
+    remove_tools(console, tool_identifier, keep_credentials)
 
 
 # tools update-check 命令
 @tools_app.command("update-check", help="检查默认 MCP 工具版本更新")
-def tools_update_check(
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
-):
+def tools_update_check():
     """检查默认 MCP 工具版本更新"""
-    update_check(console, base_dir, config_file)
+    update_check(console)
 
 
 # tools update 命令
 @tools_app.command("update", help="更新默认 MCP 工具到最新版本")
-def tools_update(
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
-):
+def tools_update():
     """更新默认 MCP 工具到最新版本"""
-    update_tools(console, base_dir, config_file)
+    update_tools(console)
 
 
 # tools skill 子命令组
@@ -124,12 +112,10 @@ tools_app.add_typer(skill_app)
 def skill_add_cmd(
     skill_name: str = typer.Argument(..., help="Skill 名称"),
     default: bool = typer.Option(False, "--default", help="注册为 default scope"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
     env: Optional[List[str]] = typer.Option(None, "--env", "-e", help="额外环境变量"),
 ):
     """添加 Skill 工具"""
-    skill_add(skill_name, default=default, base_dir=base_dir, config_file=config_file, extra_env=env)
+    skill_add(skill_name, default=default, extra_env=env)
 
 
 # tools mcp 子命令组
@@ -141,11 +127,9 @@ tools_app.add_typer(mcp_app)
 def mcp_add_cmd(
     server: str = typer.Argument(..., help="MCP 服务器名称"),
     default: bool = typer.Option(False, "--default", help="注册为 default scope"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
 ):
     """添加 MCP 服务器"""
-    mcp_add(console, server, default=default, config_file=config_file, base_dir=base_dir)
+    mcp_add(console, server, default=default)
 
 
 # tools cli 子命令组
@@ -160,11 +144,9 @@ def cli_add_cmd(
     default: bool = typer.Option(False, "--default", help="注册为 default scope"),
     env: Optional[List[str]] = typer.Option(None, "--env", "-e", help="环境变量"),
     timeout: int = typer.Option(300, "--timeout", "-t", help="超时秒数"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
 ):
     """添加 CLI 工具"""
-    cli_add(console, name, command, default=default, extra_env=env, timeout=timeout, base_dir=base_dir, config_file=config_file)
+    cli_add(console, name, command, default=default, extra_env=env, timeout=timeout)
 
 
 # tools http 子命令组
@@ -180,11 +162,9 @@ def http_add_cmd(
     filter_str: Optional[str] = typer.Option(None, "--filter", "-f", help="endpoint 过滤器，格式: METHOD:KEYWORD,KEYWORD"),
     env: Optional[List[str]] = typer.Option(None, "--env", "-e", help="环境变量"),
     timeout: int = typer.Option(30, "--timeout", "-t", help="超时秒数"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
 ):
     """添加 HTTP 工具"""
-    http_add(console, name, openapi_url, default=default, filter_str=filter_str, extra_env=env, timeout=timeout, base_dir=base_dir, config_file=config_file)
+    http_add(console, name, openapi_url, default=default, filter_str=filter_str, extra_env=env, timeout=timeout)
 
 
 # 主回调（默认启动聊天）
@@ -193,8 +173,6 @@ def main(
     ctx: typer.Context,
     list_models: bool = typer.Option(False, "--list-models", help="列出可用模型"),
     version: bool = typer.Option(False, "--version", help="显示版本信息"),
-    config_file: Optional[Path] = typer.Option(None, "--config", "-c", help="配置文件路径"),
-    base_dir: Optional[Path] = typer.Option(None, "--base-dir", "-d", help="基础目录"),
 ):
     """
     qd-agents - 从对话到自动化流程的智能体系统
@@ -214,8 +192,8 @@ def main(
     if list_models:
         if options_executed:
             print()
-        asyncio.run(list_models_async(console, base_dir, config_file, None))
+        asyncio.run(list_models_async(console, None, None, None))
         options_executed = True
 
     if not options_executed:
-        asyncio.run(chat_async(console, base_dir, config_file, None, None))
+        asyncio.run(chat_async(console, None, None, None, None))
