@@ -260,9 +260,11 @@ class EvolveAgent:
                 if tool_name not in tools_used:
                     tools_used.append(tool_name)
 
-                # 如果注册了新工具，刷新工具列表
-                if tool_name.startswith("tool_register_"):
-                    openai_tools, tool_map = self._refresh_tools(openai_tools, tool_map)
+                # 如果通过 bash 执行了工具注册命令，刷新工具列表
+                if tool_name == "execute_bash":
+                    command = tool_input.get("command", "")
+                    if "qd-agents tool register" in command or "qd-agents tool remove" in command:
+                        openai_tools, tool_map = self._refresh_tools(openai_tools, tool_map)
 
                 # 回调
                 result_summary = tool_result[:200] if len(tool_result) > 200 else tool_result
