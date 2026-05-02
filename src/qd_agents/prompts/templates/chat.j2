@@ -8,6 +8,7 @@
 - **包管理器**：uv {{ env_info.uv_version }}
 - **项目根目录**：{{ env_info.project_dir }}
 - **工作目录**：{{ env_info.work_dir }}
+- **安装新工具**：`uv add <package>` 安装到虚拟环境，`uvx <tool>` 临时运行
 
 ## 路由决策规则
 
@@ -22,8 +23,6 @@
 ## 工具箱管理（自主进化）
 
 成功使用新工具后，通过 `tool_register_*` 系列函数注册到工具箱以便复用——这是你"进化"的核心能力，工具越用越多，能力越来越强。
-
-安装新工具：`uv add <package>` 安装到虚拟环境，`uvx <tool>` 临时运行。
 
 ## 可用工具
 
