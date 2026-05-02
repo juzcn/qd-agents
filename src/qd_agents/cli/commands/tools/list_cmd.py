@@ -1,12 +1,14 @@
 """工具列表命令"""
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Optional, List
 
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
+from rich.panel import Panel
 
 from qd_agents.config import load_config
 from qd_agents.cli.utils.registry import get_tool_registry
@@ -17,24 +19,24 @@ from qd_agents.tools.openapi import parse_filter, parse_endpoints, fetch_openapi
 
 def list_tools(
     console: Console,
-    base_dir: Optional[Path] = None,
-    config_file: Optional[Path] = None,
     type_filter: Optional[List[str]] = None,
     skill_detail: bool = False,
     mcp_detail: bool = False,
     http_detail: bool = False,
+    cli_detail: bool = False,
+    function_detail: bool = False,
 ) -> None:
     """
     列出工具
 
     Args:
         console: Rich 控制台对象
-        base_dir: 基础目录
-        config_file: 配置文件路径
         type_filter: 工具类型过滤列表（如 ["mcp", "skill", "function"]）
         skill_detail: 是否显示 Skill 工具详细属性
         mcp_detail: 是否显示 MCP 工具详细属性及 subtools
         http_detail: 是否显示 HTTP 工具详细属性及 subtools
+        cli_detail: 是否显示 CLI 工具详细属性
+        function_detail: 是否显示 Function 工具
     """
     config = load_config(base_dir=base_dir, config_file=config_file)
     registry = get_tool_registry(config)
@@ -54,6 +56,11 @@ def list_tools(
     # Skill 详细模式
     if skill_detail:
         _list_skill_detail(console, tools)
+        return
+
+    # CLI 详细模式
+    if cli_detail:
+        _list_cli_detail(console, tools)
         return
 
     # MCP 详细模式
@@ -125,6 +132,50 @@ def _list_skill_detail(console: Console, tools: list) -> None:
         )
 
     console.print(table)
+
+
+def _list_cli_detail(console: Console, tools: list) -> None:
+    """列出 CLI 工具详细属性"""
+    cli_tools = [t for t in tools if t.execution.type == ToolExecutionType.CLI]
+    if not cli_tools:
+        console.print("[yellow]未找到已注册的 CLI 工具[/]")
+        return
+
+    for tool in cli_tools:
+        cmd = tool.execution.command or "-"
+        args = " ".join(tool.execution.args) if tool.execution.args else ""
+        full_cmd = f"{cmd} {args}".strip() if args else cmd
+        timeout = tool.execution.timeout or 300
+        env_keys = ", ".join(tool.execution.env.keys()) if tool.execution.env else "-"
+
+        # Header
+        header = f"[cyan]{tool.name}[/] [dim]({tool.id})[/]"
+        detail_parts = [f"command: [green]{full_cmd}[/]"]
+        detail_parts.append(f"timeout: [green]{timeout}s[/]")
+        detail_parts.append(f"env: [yellow]{env_keys}[/]")
+        detail_parts.append(f"scope: [blue]{tool.scope}[/]")
+
+        # Parameters schema
+        params = tool.parameters or {}
+        props = params.get("properties", {})
+        required = params.get("required", [])
+
+        if props:
+            schema_lines = []
+            for pname, pdef in props.items():
+                ptype = pdef.get("type", "any")
+                pdesc = pdef.get("description", "")
+                req_mark = "*" if pname in required else ""
+                schema_lines.append(f"  [green]{pname}{req_mark}[/] [dim]({ptype})[/] {pdesc}")
+            schema_str = "\n".join(schema_lines)
+        else:
+            schema_str = "  [dim]无参数[/]"
+
+        console.print(Panel(
+            f"{', '.join(detail_parts)}\n\n[bold]Parameters:[/]\n{schema_str}",
+            title=header,
+            border_style="dim",
+        ))
 
 
 async def _list_mcp_detail(console: Console, tools: list) -> None:

@@ -45,10 +45,7 @@ def register_cli_tool(
     executable = parts[0]
     args = parts[1:]
 
-    # 执行 --help 获取帮助文本
-    description = f"CLI tool: {name}"
-    parameters: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
-
+    # 执行 --help 获取帮助文本（必须成功）
     try:
         result = subprocess.run(
             [executable, *args, "--help"],
@@ -56,15 +53,31 @@ def register_cli_tool(
             text=True,
             timeout=10,
         )
-        help_text = result.stdout or result.stderr
-        if help_text.strip():
-            parsed = parse_help_with_llm(help_text, name, base_dir, config_file)
-            description = parsed.get("description", description)
-            parameters = parsed.get("parameters", parameters)
     except FileNotFoundError as e:
         raise ToolValidationError(f"可执行文件不存在: {executable}") from e
+    except subprocess.TimeoutExpired as e:
+        raise ToolValidationError(f"执行 {command} --help 超时") from e
     except Exception as e:
-        logger.warning("执行 %s --help 失败: %s", command, e)
+        raise ToolValidationError(f"执行 {command} --help 失败: {e}") from e
+
+    help_text = result.stdout or result.stderr
+    if not help_text.strip():
+        raise ToolValidationError(f"{command} --help 无输出")
+
+    # LLM 解析 --help 输出（必须成功）
+    parsed = parse_help_with_llm(help_text, name, base_dir, config_file)
+    if not parsed or "parameters" not in parsed:
+        raise ToolValidationError(f"LLM 解析 {command} --help 失败，无法提取参数 schema")
+
+    description = parsed.get("description", f"CLI tool: {name}")
+    parameters = parsed["parameters"]
+
+    # 移除 --help 自身（所有命令都有，不是业务参数）
+    properties = parameters.get("properties", {})
+    properties.pop("help", None)
+    required = [r for r in parameters.get("required", []) if r != "help"]
+    parameters["properties"] = properties
+    parameters["required"] = required
 
     # 环境变量
     env_dict = resolve_env_vars_noninteractive(extra_env or [], base_dir) if extra_env else {}
