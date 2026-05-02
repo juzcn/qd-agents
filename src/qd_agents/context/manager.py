@@ -167,6 +167,8 @@ class ContextManager:
         self._cached_system_prompt: str | None = None
         self._cached_tools: list[Any] | None = None
         self._evolve_cache: dict[tuple, str] = {}     # 缓存进化判断提示词
+        self._use_tool_cache: dict[tuple, str] = {}   # 缓存 use-tool 提示词
+        self._find_tools_cache: dict[tuple, str] = {}  # 缓存 find-tools 提示词
         self._skill_md_cache: dict[str, str] = {}      # 缓存 SKILL.md 正文
 
     def add_to_history(self, role: str, content: str) -> None:
@@ -269,7 +271,7 @@ class ContextManager:
                 env_info = self._get_env_info()
                 tools_section = format_tools_markdown(tools)
                 tools_info = "\n".join(tools_lines)
-                system_prompt = f"""你是一个自主进化的智能体，能够自主思考、决策、行动，并在需要时向用户求助。
+                system_prompt = f"""你是一个智能路由决策器。分析用户请求，决定如何处理。
 
 ## 运行环境
 
@@ -280,28 +282,19 @@ class ContextManager:
 - **项目根目录**：{env_info['project_dir']}
 - **工作目录**：{env_info['work_dir']}
 
-## Bash 执行规则
+## 路由决策规则
 
-- 用 `python` 不用 `python3`
-- 用 `tools/skills/` 路径不用 `skills/`
-- JSON 参数用双引号，内部双引号转义
-- 优先 `python -m <module>` 而非 `uvx <module>`
-- SKILL.md 中的示例可能是 Linux 风格，必须适配为 Windows 格式
+根据用户请求和可用工具，选择最合适的路由：
 
-## 自主循环
-
-多轮迭代：思考 → 调用工具 → 观察结果 → 继续或完成。不确定的信息先调工具获取，不要猜测。
+1. **direct-answer**：简单问题、问候语、常识性问题、不需要工具就能回答的问题
+2. **use-tool**：当前工具箱中有合适的工具可以完成任务。你需要列出需要使用的工具名和编排逻辑
+3. **find-tools**：任务需要工具，但当前工具箱中缺少必要的工具。你需要描述需要什么能力
+4. **ask_user**：信息不足，需要向用户提问才能继续
+5. **delegate**：任务需要用户亲自执行（如涉及敏感操作、需要人工判断等）
 
 ## 工具箱管理（自主进化）
 
-成功使用新工具后，注册到工具箱以便复用——这是你"进化"的核心能力，工具越用越多，能力越来越强。
-
-- **注册 Skill**：`qd-agents tools skill add <name>`
-- **注册 MCP**：`qd-agents tools mcp add <server>`（从 tools/mcp/<server>.json 读取配置）
-- **查看工具箱**：`qd-agents tools list`
-- **移除工具**：`qd-agents tools remove <name>`
-
-**何时注册**：当你通过 `execute_bash` 成功使用了一个不在工具箱中的工具（如 yt-dlp、ffmpeg 等），且该工具有通用价值时，应主动注册它。
+成功使用新工具后，通过 `tool_register_*` 系列函数注册到工具箱以便复用——这是你"进化"的核心能力，工具越用越多，能力越来越强。
 
 安装新工具：`uv add <package>` 安装到虚拟环境，`uvx <tool>` 临时运行。
 
@@ -309,7 +302,25 @@ class ContextManager:
 
 {tools_section or '暂无'}
 
-**Skill 工具**：调用时传空对象 `{{{{}}}}`。首次调用只获取用法指南（SKILL.md），不是真正执行。收到指南后，必须按「Bash 执行规则」适配命令，再用 `execute_bash` 执行。"""
+## 输出格式
+
+你必须输出一个 JSON 对象，格式如下：
+
+```json
+{{
+  "route": "direct-answer | use-tool | find-tools | ask_user | delegate",
+  "task_background": "任务的背景上下文",
+  "task_description": "任务的具体描述",
+  "tool_list": ["tool_name_1", "tool_name_2"],
+  "orchestration_logic": "工具使用的编排逻辑描述",
+  "direct_answer": "直接回答的内容（仅 direct-answer 路由）",
+  "ask_user": {{ "question": "...", "options": ["..."], "reason": "..." }},
+  "delegate": {{ "task": "...", "guide": "...", "reason": "..." }},
+  "reflection": "对当前决策的反思"
+}}
+```
+
+**重要**：只输出 JSON，不要输出其他内容。确保 JSON 格式正确。"""
 
             self._evolve_cache[cache_key] = system_prompt
             logger.debug(f"Cached system prompt for evolve with {len(tools)} tools")
@@ -366,6 +377,188 @@ class ContextManager:
             system_prompt=system_prompt,
             user_input=skill_md,
         )
+
+    def build_use_tool_messages(
+        self,
+        job: Any,
+        tools: list[Tool],
+    ) -> list[dict[str, str]]:
+        """构建 Use-Tool 子循环消息
+
+        Args:
+            job: Job 对象（含 task_background, task_description, orchestration_logic）
+            tools: 本次任务需要的工具列表（带完整 schema）
+
+        Returns:
+            完整的消息列表
+        """
+        env_info = self._get_env_info()
+        tool_groups = _group_tools_by_type(tools)
+
+        # 收集 prompt 类型 SKILL 的 SKILL.md，预注入系统提示词
+        skill_prompts: dict[str, str] = {}
+        for t in tools:
+            if t.execution.type == ToolExecutionType.SKILL:
+                skill_type = t.dependencies.get("skill_type", "tool_manual")
+                if skill_type == "prompt":
+                    skill_md = self._load_skill_md(t.local_path or t.name) or ""
+                    if skill_md:
+                        skill_prompts[t.name] = skill_md
+
+        # 构建缓存键
+        tool_ids = tuple(sorted(t.id for t in tools))
+        skill_keys = tuple(sorted(skill_prompts.keys()))
+        cache_key = (tool_ids, skill_keys, job.task_description[:100])
+
+        if cache_key in self._use_tool_cache:
+            system_prompt = self._use_tool_cache[cache_key]
+            logger.debug("Using cached system prompt for use-tool")
+        else:
+            if self.prompts:
+                system_prompt = self.prompts.render(
+                    "use_tool",
+                    task_background=job.task_background,
+                    task_description=job.task_description,
+                    orchestration_logic=job.orchestration_logic,
+                    tools=tools,
+                    tool_groups=tool_groups,
+                    skill_prompts=skill_prompts,
+                    env_info=env_info,
+                )
+            else:
+                # 回退到硬编码
+                tools_lines = []
+                for type_label, type_tools in tool_groups["non_mcp_types"]:
+                    for t in type_tools:
+                        tools_lines.append(f"- [{type_label}] **{t.name}**: {t.description}")
+                for server_info in tool_groups["mcp_servers"]:
+                    tools_lines.append(f"#### {server_info['server_name']} ({server_info['server_desc']})")
+                    for t in server_info["subtools"]:
+                        tools_lines.append(f"- [mcp] **{t.name}**: {t.description}")
+                tools_info = "\n".join(tools_lines)
+
+                skill_section = ""
+                if skill_prompts:
+                    parts = []
+                    for name, md in skill_prompts.items():
+                        parts.append(f"### {name}\n\n{md}")
+                    skill_section = "\n## 技能指南\n\n" + "\n\n".join(parts)
+
+                system_prompt = (
+                    f"你是一个工具执行专家。根据任务描述和编排逻辑，使用提供的工具完成任务。\n\n"
+                    f"## 任务背景\n\n{job.task_background}\n\n"
+                    f"## 任务描述\n\n{job.task_description}\n\n"
+                    f"## 编排逻辑\n\n{job.orchestration_logic}\n\n"
+                    f"## 可用工具\n\n{tools_info or '暂无'}\n"
+                    f"{skill_section}\n\n"
+                    "## 执行规则\n\n"
+                    "1. 按编排逻辑执行\n2. 观察后决策\n3. 完成后给出最终答案\n"
+                )
+
+            self._use_tool_cache[cache_key] = system_prompt
+            logger.debug("Cached system prompt for use-tool with %d tools", len(tools))
+
+        # 子循环独立，无会话历史
+        messages: list[dict[str, str]] = []
+        messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": job.task_description})
+
+        return messages
+
+    def build_find_tools_messages(
+        self,
+        job: Any,
+        builtin_tools: list[Tool],
+    ) -> list[dict[str, str]]:
+        """构建 Find-Tools 子循环消息
+
+        Args:
+            job: Job 对象（含 task_background, task_description）
+            builtin_tools: 当前工具箱中所有工具（用于展示已有工具，避免重复注册）
+
+        Returns:
+            完整的消息列表
+        """
+        env_info = self._get_env_info()
+        builtin_tool_groups = _group_tools_by_type(builtin_tools)
+
+        # 构建缓存键
+        tool_ids = tuple(sorted(t.id for t in builtin_tools))
+        cache_key = (tool_ids, job.task_description[:100])
+
+        if cache_key in self._find_tools_cache:
+            system_prompt = self._find_tools_cache[cache_key]
+            logger.debug("Using cached system prompt for find-tools")
+        else:
+            if self.prompts:
+                system_prompt = self.prompts.render(
+                    "find_tools",
+                    task_background=job.task_background,
+                    task_description=job.task_description,
+                    builtin_tool_groups=builtin_tool_groups,
+                    env_info=env_info,
+                )
+            else:
+                # 回退到硬编码
+                tools_lines = []
+                for type_label, type_tools in builtin_tool_groups["non_mcp_types"]:
+                    for t in type_tools:
+                        tools_lines.append(f"- [{type_label}] **{t.name}**: {t.description}")
+                for server_info in builtin_tool_groups["mcp_servers"]:
+                    tools_lines.append(f"#### {server_info['server_name']} ({server_info['server_desc']})")
+                    for t in server_info["subtools"]:
+                        tools_lines.append(f"- [mcp] **{t.name}**: {t.description}")
+                tools_info = "\n".join(tools_lines)
+
+                system_prompt = (
+                    f"你是一个工具发现专家。根据任务需求，搜索、评估、安装并注册合适的工具。\n\n"
+                    f"## 任务背景\n\n{job.task_background}\n\n"
+                    f"## 任务描述\n\n{job.task_description}\n\n"
+                    f"## 当前工具箱\n\n{tools_info or '暂无'}\n\n"
+                    "## 可用操作\n\n"
+                    "- serper_search / tavily_search: 搜索网络\n"
+                    "- execute_bash: 执行 shell 命令（uv add 安装包）\n"
+                    "- tool_register_cli/mcp/skill/http: 注册工具\n\n"
+                    "## 输出\n\n"
+                    "完成工具发现和注册后，列出所有新注册的工具名，格式：已注册工具: tool1, tool2, tool3"
+                )
+
+            self._find_tools_cache[cache_key] = system_prompt
+            logger.debug("Cached system prompt for find-tools with %d builtin tools", len(builtin_tools))
+
+        # 子循环独立，无会话历史
+        messages: list[dict[str, str]] = []
+        messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": job.task_description})
+
+        return messages
+
+    def build_skill_injected_system_prompt(
+        self,
+        system_prompt: str,
+        skill_tools: list[Tool],
+    ) -> str:
+        """将 prompt 类型 SKILL 的 SKILL.md 预注入系统提示词
+
+        在 Use-Tool 循环开始前调用，将所有 prompt 类型的 SKILL 指南
+        直接注入系统提示词，避免循环中动态注入的复杂性。
+
+        Args:
+            system_prompt: 原始系统提示词
+            skill_tools: SKILL 类型的工具列表
+
+        Returns:
+            注入后的系统提示词
+        """
+        for t in skill_tools:
+            skill_type = t.dependencies.get("skill_type", "tool_manual")
+            if skill_type == "prompt":
+                skill_md = self._load_skill_md(t.local_path or t.name) or ""
+                if skill_md:
+                    system_prompt += f"\n\n## 技能指南: {t.name}\n\n{skill_md}"
+                    logger.info("Pre-injected SKILL.md for %s into system prompt (%d chars)", t.name, len(skill_md))
+
+        return system_prompt
 
     @staticmethod
     def _get_env_info() -> dict[str, str]:

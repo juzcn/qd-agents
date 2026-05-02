@@ -249,10 +249,18 @@ class ChatCommandHandler:
             command = step_info.get("command", "")
             result_summary = step_info.get("result_summary", "")
             detail = step_info.get("detail", "")
-            prefix = f"[dim][{iteration}/{max_iter}][/]"
+            loop_name = step_info.get("loop", "")
+            loop_tag = f"[{loop_name}]" if loop_name else ""
+            prefix = f"[dim][{iteration}/{max_iter}]{loop_tag}[/]"
 
-            if event == "skill_load":
+            if event == "route_decision":
+                self.console.print(f"{prefix} [blue]路由决策[/]")
+            elif event == "route_result":
+                self.console.print(f"{prefix} [blue]路由结果[/]: {detail}")
+            elif event == "skill_load":
                 self.console.print(f"{prefix} [cyan]加载技能[/]: {tool_name}")
+            elif event == "schema_load":
+                self.console.print(f"{prefix} [cyan]加载参数[/]: {tool_name}")
             elif event == "tool_call":
                 if tool_name == "execute_bash" and command:
                     # 截断长命令
