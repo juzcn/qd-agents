@@ -100,9 +100,14 @@ def create_executor(tool: Tool) -> ToolExecutor:
 class ToolExecutorRegistry:
     """工具执行器注册表"""
 
-    def __init__(self):
+    def __init__(self, registry=None):
         self._executors: dict[str, ToolExecutor] = {}
         self._functions: dict[str, Callable] = {}
+        self._registry = registry
+
+    def set_registry(self, registry) -> None:
+        """设置关联的 ToolRegistry，供 register 函数注入"""
+        self._registry = registry
 
     def register_function(self, name: str, func: Callable) -> None:
         """注册 Python 函数"""
@@ -120,6 +125,9 @@ class ToolExecutorRegistry:
         if tool.execution.type == ToolExecutionType.FUNCTION:
             func_name = tool.execution.function
             if func_name and func_name in self._functions:
-                return FunctionToolExecutor(self._functions[func_name])
+                return FunctionToolExecutor(
+                    self._functions[func_name],
+                    registry=self._registry,
+                )
 
         return create_executor(tool)

@@ -53,6 +53,10 @@ class MemoryService:
             max_recall_results=config.max_recall_results,
         )
 
+    def preload(self) -> None:
+        """预加载 embedding 模型，避免首次交互时延迟"""
+        self._embedder.embed("preload")
+
     def save(
         self,
         question: str,
