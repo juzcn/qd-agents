@@ -96,22 +96,6 @@ def ensure_bash_available(
     return openai_tools, tool_map
 
 
-def inject_skill_into_system_prompt(
-    messages: list[dict[str, Any]],
-    skill_name: str,
-    skill_md: str,
-) -> list[dict[str, Any]]:
-    """将 SKILL.md 注入系统提示词，返回更新后的 messages"""
-    if not messages or messages[0].get("role") != "system":
-        return messages
-
-    skill_section = f"\n\n## 技能指南: {skill_name}\n\n{skill_md}"
-    messages[0]["content"] = messages[0]["content"] + skill_section
-    logger.info("System prompt updated: injected SKILL.md for %s (%d chars added)", skill_name, len(skill_section))
-    logger.info("System prompt appended content:\n%s", skill_section)
-    return messages
-
-
 def format_tool_result(tool_result: Any) -> str:
     """将工具执行结果格式化为字符串"""
     if isinstance(tool_result, str):
