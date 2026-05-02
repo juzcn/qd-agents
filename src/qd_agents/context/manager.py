@@ -258,69 +258,15 @@ class ContextManager:
             system_prompt = self._chat_cache[cache_key]
             logger.debug("Using cached system prompt for chat")
         else:
-            if self.prompts:
-                system_prompt = self.prompts.render(
-                    "chat",
-                    tools=tools,
-                    tools_section=format_tools_markdown(tools),
-                    observations=[],
-                    env_info=self._get_env_info(),
-                )
-            else:
-                # 回退到硬编码
-                env_info = self._get_env_info()
-                tools_section = format_tools_markdown(tools)
-                tools_info = "\n".join(tools_lines)
-                system_prompt = f"""你是一个智能路由决策器。分析用户请求，决定如何处理。
-
-## 运行环境
-
-- **操作系统**：{env_info['os']}
-- **Python**：{env_info['python_version']}（{env_info['python_path']}）
-- **虚拟环境**：{env_info['venv_path']}
-- **包管理器**：uv {env_info['uv_version']}
-- **项目根目录**：{env_info['project_dir']}
-- **工作目录**：{env_info['work_dir']}
-
-## 路由决策规则
-
-根据用户请求和可用工具，选择最合适的路由：
-
-1. **direct-answer**：简单问题、问候语、常识性问题、不需要工具就能回答的问题
-2. **use-tool**：当前工具箱中有合适的工具可以完成任务。你需要列出需要使用的工具名和编排逻辑
-3. **find-tools**：任务需要工具，但当前工具箱中缺少必要的工具。你需要描述需要什么能力
-4. **ask_user**：信息不足，需要向用户提问才能继续
-5. **delegate**：任务需要用户亲自执行（如涉及敏感操作、需要人工判断等）
-
-## 工具箱管理（自主进化）
-
-成功使用新工具后，通过 `tool_register_*` 系列函数注册到工具箱以便复用——这是你"进化"的核心能力，工具越用越多，能力越来越强。
-
-安装新工具：`uv add <package>` 安装到虚拟环境，`uvx <tool>` 临时运行。
-
-## 可用工具
-
-{tools_section or '暂无'}
-
-## 输出格式
-
-你必须输出一个 JSON 对象，格式如下：
-
-```json
-{{
-  "route": "direct-answer | use-tool | find-tools | ask_user | delegate",
-  "task_background": "任务的背景上下文",
-  "task_description": "任务的具体描述",
-  "tool_list": ["tool_name_1", "tool_name_2"],
-  "orchestration_logic": "工具使用的编排逻辑描述",
-  "direct_answer": "直接回答的内容（仅 direct-answer 路由）",
-  "ask_user": {{ "question": "...", "options": ["..."], "reason": "..." }},
-  "delegate": {{ "task": "...", "guide": "...", "reason": "..." }},
-  "reflection": "对当前决策的反思"
-}}
-```
-
-**重要**：只输出 JSON，不要输出其他内容。确保 JSON 格式正确。"""
+            if not self.prompts:
+                raise RuntimeError("PromptLoader 未初始化，无法渲染 chat 模板")
+            system_prompt = self.prompts.render(
+                "chat",
+                tools=tools,
+                tools_section=format_tools_markdown(tools),
+                observations=[],
+                env_info=self._get_env_info(),
+            )
 
             self._chat_cache[cache_key] = system_prompt
             logger.debug(f"Cached system prompt for chat with {len(tools)} tools")
@@ -359,19 +305,13 @@ class ContextManager:
         Returns:
             完整的消息列表
         """
-        if self.prompts:
-            system_prompt = self.prompts.render(
-                "add_skill",
-                tools=tools,
-                tools_section=format_tools_markdown(tools, show_type_tag=False),
-            )
-        else:
-            tools_section = format_tools_markdown(tools, show_type_tag=False)
-            system_prompt = (
-                "你是一个技能分析助手。分析 SKILL.md 的内容，识别技能的工具依赖。\n\n"
-                f"## 已注册工具\n{tools_section}\n\n"
-                "请返回 JSON 格式的分析结果，包含 name, description, tool_deps, success, failure_reason 字段。"
-            )
+        if not self.prompts:
+            raise RuntimeError("PromptLoader 未初始化，无法渲染 add_skill 模板")
+        system_prompt = self.prompts.render(
+            "add_skill",
+            tools=tools,
+            tools_section=format_tools_markdown(tools, show_type_tag=False),
+        )
 
         return self._build_messages(
             system_prompt=system_prompt,
