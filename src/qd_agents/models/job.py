@@ -1,6 +1,6 @@
 """Job 路由决策模型
 
-Evolve 主循环的输出，决定路由到哪个子循环。
+Chat 主循环的输出，决定路由到哪个子循环。
 """
 from __future__ import annotations
 
@@ -8,13 +8,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .evolve import AskUserInfo, DelegateInfo
+from .chat import AskUserInfo, DelegateInfo
 
 
 class Job(BaseModel):
-    """Evolve 路由决策输出
+    """Chat 路由决策输出
 
-    Evolve 主循环分析用户输入后，输出此对象决定路由方向。
+    Chat 主循环分析用户输入后，输出此对象决定路由方向。
     """
     route: Literal["direct-answer", "use-tool", "find-tools", "ask_user", "delegate"] = Field(
         description="路由方向: direct-answer(直接回答), use-tool(使用已有工具), find-tools(发现缺失工具), ask_user(请求用户输入), delegate(委托用户执行)"

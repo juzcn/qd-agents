@@ -1,8 +1,8 @@
 """
-Evolve 自主进化Agent 数据模型
+Chat Agent 数据模型
 
-EvolveAgent 直接通过 function calling 调用工具，
-EvolveResult 只用于 ask_user 和 delegate 两种特殊输出。
+ChatAgent 通过 function calling 调用工具，
+ChatResult 只用于 ask_user 和 delegate 两种特殊输出。
 """
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ class DelegateInfo(BaseModel):
     reason: str = Field(description="为什么需要用户执行而非自己完成")
 
 
-class EvolveResult(BaseModel):
-    """Evolve 特殊输出结果（仅用于 ask_user 和 delegate）"""
+class ChatResult(BaseModel):
+    """Chat 特殊输出结果（仅用于 ask_user 和 delegate）"""
     action: Literal["ask_user", "delegate"] = Field(
         description="行动模式: ask_user(请求用户输入), delegate(委托用户执行)"
     )

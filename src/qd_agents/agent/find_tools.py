@@ -58,7 +58,7 @@ class FindToolsAgent(Agent):
         """执行工具发现子循环
 
         Args:
-            job: Evolve 输出的 Job 对象
+            job: Chat 输出的 Job 对象
             **kwargs: on_step, cancel_event 等
         """
         on_step = kwargs.get("on_step")

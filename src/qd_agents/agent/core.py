@@ -2,7 +2,7 @@
 QDAgent 核心容器
 
 负责资源管理和三循环协调：
-- EvolveAgent (Loop 1): 路由决策
+- ChatAgent (Loop 1): 路由决策
 - UseToolAgent (Loop 2): 工具执行
 - FindToolsAgent (Loop 3): 工具发现
 
@@ -29,7 +29,7 @@ from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerCo
 from ..context import ContextManager
 from ..services import MCPService, ToolService
 from .base import Agent, AgentResult, StepCallback
-from .evolve import EvolveAgent
+from .chat import ChatAgent
 from .use_tool import UseToolAgent
 from .find_tools import FindToolsAgent
 
@@ -44,7 +44,7 @@ class QDAgent:
     主智能体类 — 资源管理器 + 三循环协调器
 
     管理工具注册、MCP 连接、上下文压缩等资源，
-    协调 Evolve → Use-Tool / Find-Tools 三循环。
+    协调 Chat → Use-Tool / Find-Tools 三循环。
     """
 
     def __init__(
@@ -69,7 +69,7 @@ class QDAgent:
         )
 
         # 三个 Agent
-        self._evolve_agent: EvolveAgent | None = None
+        self._chat_agent: ChatAgent | None = None
         self._use_tool_agent: UseToolAgent | None = None
         self._find_tools_agent: FindToolsAgent | None = None
 
@@ -135,7 +135,7 @@ class QDAgent:
         self._init_memory_service()
 
         # 创建三个 Agent
-        self._evolve_agent = EvolveAgent(
+        self._chat_agent = ChatAgent(
             llm_client=self.llm,
             tool_registry=self.registry,
             context_manager=self.context,
@@ -161,12 +161,12 @@ class QDAgent:
             max_iterations=self.config.execution.max_find_tools_iterations,
         )
 
-        logger.info("QDAgent initialized with 3 agents (evolve, use-tool, find-tools). Models: %s", self.llm._model_names)
+        logger.info("QDAgent initialized with 3 agents (chat, use-tool, find-tools). Models: %s", self.llm._model_names)
 
     @property
-    def agent(self) -> EvolveAgent | None:
-        """获取 EvolveAgent（向后兼容）"""
-        return self._evolve_agent
+    def agent(self) -> ChatAgent | None:
+        """获取 ChatAgent（向后兼容）"""
+        return self._chat_agent
 
     async def process(
         self,
@@ -183,7 +183,7 @@ class QDAgent:
         self._cancel_event = asyncio.Event()
 
         try:
-            if self._evolve_agent is None:
+            if self._chat_agent is None:
                 raise ValueError("Agent not initialized")
 
             # 获取当前历史（执行前的 Q&A 对）
@@ -192,8 +192,8 @@ class QDAgent:
             total_tokens = 0
             last_prompt_tokens = 0
 
-            # ===== Loop 1: Evolve 路由决策 =====
-            evolve_result = await self._evolve_agent.execute(
+            # ===== Loop 1: Chat 路由决策 =====
+            chat_result = await self._chat_agent.execute(
                 user_input=user_input,
                 history=conversation_history,
                 trace_id=trace_id,
@@ -201,15 +201,15 @@ class QDAgent:
                 cancel_event=self._cancel_event,
             )
 
-            total_tokens += evolve_result.total_tokens
-            last_prompt_tokens = evolve_result.last_prompt_tokens
+            total_tokens += chat_result.total_tokens
+            last_prompt_tokens = chat_result.last_prompt_tokens
 
-            # 获取 Job（如果 Evolve 决定路由到子循环）
-            job: Job | None = evolve_result.working_memory.get("job") if evolve_result.working_memory else None
+            # 获取 Job（如果 Chat 决定路由到子循环）
+            job: Job | None = chat_result.working_memory.get("job") if chat_result.working_memory else None
 
             if job is None:
-                # 直接回答 / ask_user / delegate — Evolve 已产生最终答案
-                final_answer = evolve_result.final_answer
+                # 直接回答 / ask_user / delegate — Chat 已产生最终答案
+                final_answer = chat_result.final_answer
                 total_duration_ms = int((time.perf_counter() - start_time) * 1000)
 
                 # QA 自动写入长期记忆
@@ -221,7 +221,7 @@ class QDAgent:
 
                 return AgentResult(
                     final_answer=final_answer,
-                    success=evolve_result.success,
+                    success=chat_result.success,
                     total_tokens=total_tokens,
                     last_prompt_tokens=last_prompt_tokens,
                     trace_id=trace_id,
@@ -320,7 +320,7 @@ class QDAgent:
                 )
 
             # 未知路由（不应到达此处）
-            final_answer = evolve_result.final_answer or "抱歉，无法处理您的请求。"
+            final_answer = chat_result.final_answer or "抱歉，无法处理您的请求。"
             total_duration_ms = int((time.perf_counter() - start_time) * 1000)
 
             self.add_to_history("user", user_input)
@@ -393,9 +393,9 @@ class QDAgent:
         self._openai_tools_cache = openai
         self._tool_map_cache = tool_map
 
-        # 更新 EvolveAgent 的工具缓存（下次路由决策时能看到新工具）
-        if self._evolve_agent:
-            self._evolve_agent._expanded_tools = expanded
+        # 更新 ChatAgent 的工具缓存（下次路由决策时能看到新工具）
+        if self._chat_agent:
+            self._chat_agent._expanded_tools = expanded
 
         logger.info("Tool caches refreshed: %d expanded tools", len(expanded))
 
@@ -480,7 +480,7 @@ class QDAgent:
                 question=question,
                 answer=answer,
                 session_id=self._session_id,
-                source="evolve",
+                source="chat",
                 model=self.llm.current_model,
                 token_count=token_count,
             )

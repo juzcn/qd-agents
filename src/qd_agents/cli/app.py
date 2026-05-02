@@ -18,13 +18,14 @@ from .commands.skills import skill_add
 from .commands.mcp import mcp_add
 from .commands.cli import cli_add
 from .commands.http import http_add
+from .commands.evolve import evolve_cmd
 
 
 # 主应用
 app = typer.Typer(
     name="qd-agents",
     help="从对话到自动化流程的智能体系统",
-    no_args_is_help=False,
+    no_args_is_help=True,
     add_completion=False,
 )
 
@@ -41,6 +42,27 @@ console = Console()
 # 注册子命令组
 app.add_typer(tools_app)
 app.add_typer(memory_app)
+
+
+# chat 命令
+@app.command("chat", help="启动交互式聊天会话")
+def chat_cmd(
+    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="LLM 提供商"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="模型名称"),
+):
+    """启动交互式聊天会话"""
+    asyncio.run(chat_async(console, provider, model, None))
+
+
+# evolve 命令
+@app.command("evolve", help="启动自主进化 Agent 会话")
+def evolve_command(
+    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="LLM 提供商"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="模型名称"),
+    config_path: Optional[str] = typer.Option(None, "--config", "-c", help="配置文件路径"),
+):
+    """启动自主进化 Agent 会话"""
+    evolve_cmd(provider=provider, model=model, config_path=config_path)
 
 
 # tools list 命令
@@ -167,18 +189,17 @@ def http_add_cmd(
     http_add(console, name, openapi_url, default=default, filter_str=filter_str, extra_env=env, timeout=timeout)
 
 
-# 主回调（默认启动聊天）
-@app.callback(invoke_without_command=True)
+# 主回调
+@app.callback()
 def main(
     ctx: typer.Context,
     list_models: bool = typer.Option(False, "--list-models", help="列出可用模型"),
-    version: bool = typer.Option(False, "--version", help="显示版本信息"),
+    version: bool = typer.Option(False, "--version", "-v", help="显示版本信息"),
 ):
     """
     qd-agents - 从对话到自动化流程的智能体系统
 
-    默认启动交互式聊天会话。使用选项执行其他操作。
-    多个选项可以同时使用。
+    使用 qd-agents chat 启动交互式聊天会话。
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -196,4 +217,6 @@ def main(
         options_executed = True
 
     if not options_executed:
-        asyncio.run(chat_async(console, None, None, None, None))
+        # 无子命令且无选项时，显示帮助
+        console.print("使用 [bold]qd-agents chat[/] 启动交互式聊天会话")
+        console.print("使用 [bold]qd-agents --help[/] 查看所有命令")

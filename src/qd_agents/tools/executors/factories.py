@@ -90,7 +90,7 @@ def create_executor(tool: Tool) -> ToolExecutor:
                 command=exec_config.command,
             )
         raise NotImplementedError(
-            f"Scriptless SKILL tool '{tool.name}' must be executed via the SKILL.md injection path in evolve.py"
+            f"Scriptless SKILL tool '{tool.name}' must be executed via the SKILL.md injection path in chat.py"
         )
 
     else:
