@@ -50,6 +50,7 @@ class UseToolAgent(Agent):
         executor_registry: ToolExecutorRegistry | None = None,
         max_iterations: int = 15,
         on_step: StepCallback | None = None,
+        expanded_tool_map: dict[str, Tool] | None = None,
     ):
         self.llm = llm_client
         self.registry = tool_registry
@@ -59,6 +60,7 @@ class UseToolAgent(Agent):
         self._on_step = on_step
         self._cancel_event: asyncio.Event | None = None
         self._disclosed_tools: set[str] = set()
+        self._expanded_tool_map = expanded_tool_map or {}
 
     async def execute(self, job: Job, **kwargs) -> AgentResult:
         """执行工具调用子循环
@@ -239,14 +241,21 @@ class UseToolAgent(Agent):
     # --- 内部方法 ---
 
     def _resolve_tools(self, tool_names: list[str]) -> list[Tool]:
-        """从工具名列表解析出 Tool 对象"""
+        """从工具名列表解析出 Tool 对象
+
+        查找顺序：expanded_tool_map（含 MCP subtools）→ registry（DB 存储）
+        """
         tools = []
         for name in tool_names:
-            tool = self.registry.get(name) or self.registry.get_by_name(name)
+            tool = (
+                self._expanded_tool_map.get(name)
+                or self.registry.get(name)
+                or self.registry.get_by_name(name)
+            )
             if tool:
                 tools.append(tool)
             else:
-                logger.warning("Tool not found in registry: %s", name)
+                logger.warning("Tool not found: %s (checked expanded_tool_map and registry)", name)
         return tools
 
     def _handle_skill_disclosure(

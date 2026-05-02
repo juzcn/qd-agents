@@ -151,6 +151,7 @@ class QDAgent:
             context_manager=self.context,
             executor_registry=self.executor_registry,
             max_iterations=self.config.execution.max_use_tool_iterations,
+            expanded_tool_map=self._tool_map_cache,
         )
 
         self._find_tools_agent = FindToolsAgent(
@@ -396,6 +397,10 @@ class QDAgent:
         # 更新 ChatAgent 的工具缓存（下次路由决策时能看到新工具）
         if self._chat_agent:
             self._chat_agent._expanded_tools = expanded
+
+        # 更新 UseToolAgent 的工具映射（下次执行时能解析 MCP subtools）
+        if self._use_tool_agent:
+            self._use_tool_agent._expanded_tool_map = tool_map
 
         logger.info("Tool caches refreshed: %d expanded tools", len(expanded))
 
