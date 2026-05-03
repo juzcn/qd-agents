@@ -1,4 +1,5 @@
-# Evolve Agent 设计（修正版）
+```markdown
+# Evolve Agent 设计（正式版）
 
 ## 一、概述
 
@@ -17,7 +18,7 @@
 7. Break big goals into small tasks, order them, persist to disk.
 8. When the task is too big for one, delegate to teammates.
 
-我们发现，智能体能力 = 大模型的能力 + 工具能力。事实上，工具配置直接影响大模型的推理能力，两者密不可分。人也一样，如果你安排行程的时候不知道有飞机通航，你的推理中就不可能考虑乘坐飞机。发散思维并不是所有人的思维方式。
+我们发现，智能体能力 = 大模型的能力 + 工具能力。事实上，工具配置直接影响大模型的推理能力，两者密不可分。人也一样，如果你安排行程的时候不知道有飞机通航，你的推理中就不可能考虑乘坐飞机。
 
 智能体框架本身是代码，它给智能体的运行提供基础条件，但它不应该硬编码一些自以为是的逻辑，因为设计者自身并不比大模型智能。
 
@@ -25,138 +26,219 @@
 
 **Evolve Agent 的设计目标**可以概括为一个极简的智能体框架，它包括：
 
-第一：它只提供 Opinionated 的原则，例如“只使用现有工具，缺少工具时，自己去搜索发现和安装”，不提供自以为是的人类经验指导。
+第一：它只提供 **Opinionated 的原则**，例如“只使用现有工具，缺少工具时，自己去搜索发现和安装”，不提供自以为是的人类经验指导。**路由决策权完全交给模型**：框架只提供统一的委托工具 `delegate`，由模型自主决定何时、如何使用专用子 Agent。
 
-第二：它提供一个最小集合的工具箱，这个工具箱包含感知环境的工具、使用工具的工具、发现工具的工具、注册新工具到工具箱的工具。通过这个设计，让 Evolve Agent 随着用户使用而自主进化，每个用户有自己的进化版本。最小集合的工具箱包括上下文管理工具、永久记忆的工具、本地和网络搜索的工具。
+第二：它提供一个**最小集合的工具箱**，这个工具箱包含感知环境的工具、使用工具的工具、发现工具的工具、注册新工具的工具。通过这个设计，让 Evolve Agent 随着用户使用而自主进化，每个用户有自己的进化版本。最小集合的工具箱包括上下文管理工具、永久记忆的工具、本地和网络搜索的工具。
 
-第三：它能够自我修复、自我更新和自我升级智能体框架本身，实现自我迭代。
+第三：它能够**自我修复、自我更新和自我升级**智能体框架本身，实现自我迭代，但所有更新需经过用户授权和签名验证。
 
 ## 二、智能体框架设计
 
 ### 2.1 Agents 设计
 
-整体架构包括 Evolve Agent（主循环）、Use-Tool Agent、Find-Tools Agent、Coding-Tool-Use Agent（简称 
-Coding Agent）。每个 Agent 都是 MetaAgent 的扩展。
+整体架构包括 **Evolve Agent（主循环）** 以及三个专用子 Agent：**Use-Tool Agent**、**Find-Tools Agent**、**Coding Agent**。每个 Agent 都是 **MetaAgent** 的扩展，即它们都遵循相同的“感知-推理-行动”循环模式，只是在具体的 system prompt 和工具集上有所不同。为了清晰地理解各个 Agent 的设计，下面首先定义 **MetaAgent** 基类，然后再分别介绍各个 Agent。
 
-### 2.1.1 MetaAgent
+#### 2.1.1 MetaAgent
 
-MetaAgent 是大模型调用工具的基础循环模式。
+MetaAgent 是大模型调用工具的基础循环模式。它遵循 **OpenAI 标准工具调用循环**，直到模型返回最终答案。
 
 **输入参数**：
 - `task-background`：任务的背景信息，字符串
 - `task-requirements`：任务的要求，字符串
-- `tools-list`：工具数组
+- `tools-list`：工具数组，每个工具包含名称、描述、参数 JSON schema
 
-**内部管理**：
-- `system prompt`：根据传入的参数，追加 task-background、task-requirements 以及 tools-list 中每个工具的详细信息（包括 schema）
-- `messages`：数组或字符串
+**内部状态**：
+- `system_prompt`：根据传入的参数，追加 task-background、task-requirements 以及 tools-list 中每个工具的详细信息
+- `messages`：消息列表，初始为 system 消息，随后添加用户消息和所有助手/工具响应
 
-**输出参数**：
-- `Final answer`：任意结构
+**输出参数**：`Final answer`
 
-支持两种大模型的 OpenAI API 接口规范（completion 和 response），根据系统的配置选择使用。MetaAgent 的实现不在此文档中展开，核心思想是循环调用模型，根据模型的工具调用决策执行对应工具，并将结果写回消息历史，直到模型给出最终答案。可以参考 meta-agent.py 的示例代码实现。
+**核心循环逻辑**（标准 OpenAI 风格）：
+
+1. **初始化**：将系统提示词和用户任务加入 `messages` 列表。
+
+2. **循环**（最大迭代次数可配置，默认 20）：
+   - 调用大模型 API，传入 `messages` 和 `tools` 列表，`tool_choice` 设为 `"auto"`。
+   - 模型返回响应：
+     - **若响应包含 `tool_calls`**：
+       - 将助手的 `tool_calls` 消息追加到 `messages`。
+       - 遍历每个 `tool_call`：
+         - 如果工具名称为 `ask_user`：
+           - 解析参数（`question`、可选的 `options`、`timeout_seconds`）。
+           - 将问题输出给用户（支持选项菜单），**暂停循环**等待用户回复。
+           - 用户回复后，构造工具响应消息（`role: "tool"`，`content` 为 JSON 格式 `{"answer": "...", "selected_option": idx/null}`），追加到 `messages`。
+         - 否则（其他工具）：
+           - 执行工具实现，获得返回值或错误。
+           - 将工具响应消息（`role: "tool"`，`content` 为 JSON 字符串）追加到 `messages`。
+       - 继续下一轮循环，将工具结果返回模型。
+     - **若响应仅为文本内容（无 `tool_calls`）**：
+       - 将该文本作为助手消息追加到 `messages`。
+       - 终止循环，返回该文本作为最终答案。
+   - 若达到最大迭代次数，强制终止并返回最后一条助手消息。
+
+3. **错误处理**：API 调用或工具执行异常时，根据配置进行重试（最多 3 次，指数退避），重试失败则返回错误信息。
+
+**关键要点**：
+- `ask_user` 是唯一需要暂停循环等待外部输入的工具，其余工具均为同步执行。
+- 其他 `builtin` 工具（如 `execute_bash`、`fetch`）按标准方式执行并返回结果。
+- 该循环完全兼容 OpenAI API 的 `chat/completions` 和 `responses` 端点。
 
 #### 2.1.2 Evolve Agent（主循环）
 
 **输入参数**：
-- `Task-background`：字符串，可为空（因为提示词模板里有）
-- `Task-requirements`：字符串，可为空（因为提示词模板里有）
-- `tools_list`：只提供 `llm-route` 工具
+- `Task-background`：字符串，可为空
+- `Task-requirements`：字符串，可为空
+- `tools_list`：**只提供一个工具：`delegate`**
 
-**系统提示词**：加载工具箱中所有工具的名称和描述，并注入原则性指令，例如优先使用现有工具、缺少工具时调用 Find-Tools Agent、复杂逻辑调用 Coding Agent 等。
+**系统提示词**：加载工具箱中所有工具的名称和描述（包括通过 `delegate` 可调用的子 Agent），并注入原则性指令，例如：
+- 优先使用现有工具解决问题。
+- 如果现有工具不足，通过 `delegate` 调用 Find-Tools Agent 去发现/安装新工具。**调用时，你必须在任务描述中清晰地说明缺少的工具能力或具体工具名称**（例如“需要访问 PostgreSQL 数据库的 MCP 工具”），以便 Find-Tools Agent 能够精准搜索和注册。
+- 如果需要使用任何工具（无论是简单还是复杂），通过 `delegate` 调用 Use-Tool Agent。
+- 你可以自行分解大任务，分多次调用子 Agent。
+- **当用户提供的信息不足以完成目标，或存在多种可能的解释时，你**必须**调用 `ask_user` 工具向用户提问，而不是猜测或假设。你可以提供选项列表以方便用户选择。不要在文本输出中直接提出澄清问题。**
 
-**上下文管理**：存储用户输入以及其他 Agent 返回的最终答案（final answer）。
+**关于 skill 工具的特殊处理**：
+- 技能（skill）工具在注册时可能不具有传统的参数 schema，而是附带一份 `SKILL.md` 文档，描述该技能的使用方法、步骤或提示词。
+- 当 skill 工具被加载到工具箱时，框架会将其 `SKILL.md` 内容注入到该工具的 `description` 字段（或单独的 `configuration` 字段）中，供模型在调用前了解其能力。
+- 若该 skill 属于“指导性提示词注入”类型（例如用于改变 Agent 行为模式的元技能），则框架还需将其内容**同时追加到当前会话的系统提示词中**，并持续生效直至会话结束或被显式卸载。这类 skill 通常通过 `tool_register_skill` 注册时标记 `inject_to_system_prompt: true`。
 
-**主逻辑**：
-1. 如果能直接回答用户问题（不依赖任何工具），则直接返回最终答案。
-2. 如果直接使用某个现有工具就能回答（例如搜索、文件读取），则通过 `llm-route` 调用 Use-Tool Agent 来执行该工具。
-3. 如果任务需要复杂逻辑、多步编码才能完成（例如需要编写一个新脚本来处理数据），则调用 Coding-Tool-Use Agent。
-4. 如果当前工具箱中缺少完成该任务所需的任何工具，则调用 Find-Tools Agent 去搜索、发现或创建新工具，并注册到工具箱中。
+**关键设计**：路由选择完全由模型基于提示词原则自主决定，框架层面没有硬编码分支。模型只需决定是直接回答、提问还是调用 `delegate` 指向 `Use-Tool` / `Find-Tools` / `Coding`。
 
-**新增工具管理**：如果Find-Tools Agent返回了已注册新工具，则需要在提示词中追加新增工具名称和描述的内容。
+**上下文管理**：存储用户输入以及各子 Agent 返回的最终答案。当上下文长度超过阈值（例如模型最大窗口的 80%）时，自动触发 `context_summarizer`（见 2.3 节）。
 
-Evolve Agent 是用户直接交互的入口，它负责整体的任务分解、子 Agent 调度和结果整合。
+**工具调用流程**：
+- 如果模型认为可以直接回答，返回最终答案。
+- 如果需要向用户澄清，调用 `ask_user` 工具。
+- 如果需要使用任何工具（包括执行 bash、搜索、文件操作、HTTP 请求等），调用 `delegate` 工具，参数 `agent` 为 `"Use-Tool"`，`task` 为自然语言描述。
+- 如果需要发现或安装新工具，调用 `delegate` 指向 `"Find-Tools"`，**并在任务描述中明确所需工具的能力**。
+- 如果需要生成代码或复杂脚本，调用 `delegate` 指向 `"Coding"`。
+
+**新增工具管理**：如果 Find-Tools Agent 返回了已注册的新工具，主循环会自动更新其 system prompt 中的工具列表（热加载，无需重启）。对于需要注入系统提示词的 skill 工具，同时更新 system prompt 内容。
 
 #### 2.1.3 Use-Tool Agent
 
-**职责**：接收一个明确的任务，`task-background`， `task-requirements`， `tools-list`，
-（例如“搜索人工智能新闻”），自动选择合适的工具并执行，返回结构化结果。
+**职责**：接收一个明确的任务（例如“搜索人工智能新闻”），自动选择合适的工具并执行，返回结构化结果。
+
+**工作流程**：
+1. 该 Agent 首先尝试**直接使用现有工具**完成任务，即通过自身的大模型推理和工具调用循环，顺序或并行调用一个或多个工具（如 `execute_bash`、`fetch`、`filesystem` 等），像普通 MetaAgent 一样完成单步或多步操作。
+2. 如果任务只需要简单、线性的工具调用，Use-Tool Agent 直接执行并返回结果。
+3. **如果任务需要复杂的工具编排**（例如多个工具之间有条件分支、循环、数据依赖），或者需要编写自定义代码才能完成，则 Use-Tool Agent 会进一步 `delegate` 给 Coding Agent，让 Coding Agent 生成可复用的脚本或编排逻辑，然后执行该脚本完成最终任务。
+4. 最终返回结构化结果（例如 `{ "success": true, "data": ... }`）。
+
+**输入**：`task-background`、`task-requirements`、`tools-list`（通常只给与任务最相关的工具，由主循环筛选）。
+
+**输出**：结构化结果。
+
+**与 Coding Agent 的关系**：Use-Tool Agent 可调用 Coding Agent 作为“复杂任务”的解决者，但 Coding Agent 专注于生成和注册新工具，而 Use-Tool Agent 负责整体任务的成功交付。
 
 #### 2.1.4 Find-Tools Agent
 
-**职责**：当当前工具箱无法满足需求时，自动发现或创建新工具。
+**职责**：当当前工具箱无法满足需求时，自动发现现成的工具并注册。
 
 **工作流程**：
-1. 分析缺失的能力（例如“需要访问 PostgreSQL 数据库”）。
-2. 搜索网络资源（如 GitHub、MCP 市场、公共 API 文档、SKILL市场）。
-3. 如果找到现成的工具（MCP 服务、HTTP API、命令行工具），则调用 `tool_register_` 进行注册。
+1. 分析任务描述中明确指出的缺失能力（例如“需要访问 PostgreSQL 数据库”），以及通过自身推理判断的隐含缺失。
+2. 搜索网络资源（如 GitHub、MCP 市场、公共 API 文档、SKILL 市场）——**框架保证至少 `fetch` 和 `builtin_web_search` 可用**。
+3. 如果找到现成的工具（MCP 服务、HTTP API、命令行工具、Skill 模块），则调用对应的注册工具（`tool_register_http`、`tool_register_mcp`、`tool_register_cli` 或 `tool_register_skill`）进行注册。
 
-**工具集**：`tools_list`、`serper_search`、`fetch`、`tool_register_http`、`tool_register_code`。
+**工具集**：该 Agent 的可用工具包括：
+- `builtin_web_search`（builtin）：使用内置的搜索引擎 API（可配置，默认 DuckDuckGo 或 Serper），不依赖外部工具。
+- `fetch`（builtin）：发送 HTTP 请求。
+- `tool_register_http`（builtin）
+- `tool_register_skill`（builtin）
+- `tool_register_cli`（builtin）
+- `tool_register_mcp`（builtin）
+- `tools_list`（builtin）
 
-#### 2.1.5 Coding-Tool-Use Agent（Coding Agent）
+**解决循环依赖**：`builtin_web_search` 和 `fetch` 作为 builtin 工具随框架提供，永不缺失，因此 Find-Tools Agent 无需自举即可工作。
+
+#### 2.1.5 Coding Agent
 
 **职责**：根据自然语言描述生成可复用的 skill（Python 脚本或 bash 脚本），并注册为新工具。
 
-**输入**：需求描述，可选的输入输出 JSON schema。
+**安全机制**：待设计
 
-**输出**：新工具的名称、描述以及调用方式（例如可执行的命令或函数入口）。
-
-**安全机制**：生成的代码先在沙盒环境中执行测试，通过后再正式注册到工具箱。
+**输出**：新工具的名称、描述以及调用方式（可执行命令或函数入口）。
 
 ### 2.2 工具箱设计
 
 工具的范围（scope）分为三类：
 - **builtin**：框架内置，不可删除、不可覆盖，随框架更新而更新。
 - **default**：框架提供但可被用户同名的 user 工具覆盖，用户可手动重置。
-- **user**：用户动态注册，优先级最高，可覆盖 builtin 和 default（需显式允许），
+- **user**：用户动态注册，优先级最高，可覆盖 builtin 和 default（需显式允许）。
 
-工具的类型（type）包括：bash、cli、mcp、http、skill、llm-route。其中：
+工具的类型（type）包括：bash、cli、mcp、http、skill、delegate。其中：
 - `bash`：执行 shell 命令（受安全限制）。
-- `cli`：调用本地命令行程序（非 shell 内建），有通过分析 --help获得的参数schema, 通常为长期运行的子进程。
+- `cli`：调用本地命令行程序（非 shell 内建），通过分析 `--help` 获得参数 schema，通常为长期运行的子进程。
 - `mcp`：遵循 Model Context Protocol 的外部服务。
 - `http`：直接调用 HTTP API，支持 OpenAPI/Swagger 自动发现。
-- `skill`：由大模型生成的可复用多步骤任务脚本或者是提示词注入（存储为 Markdown 或 Python 文件）。
-- `llm-route`：调用其它 Agent 的路由工具，参数包括目标 Agent 的名称和任务描述。
+- `skill`：技能工具。与其他工具不同，skill 不一定有严格的参数 schema，而是携带一份 **SKILL.md 文档**（Markdown 格式），描述该技能的使用方法、步骤流程、提示词模板或指导性原则。skill 的加载方式有两种：
+  - **普通技能**：SKILL.md 内容被注入到工具的 `description` 字段（或单独的 `documentation` 字段），模型在调用前可阅读该文档理解如何使用。此类技能通常用于封装多步骤操作指南或外部知识。
+  - **指导性提示词注入**：注册时标记 `inject_to_system_prompt: true`，则 SKILL.md 内容会被**追加到当前会话的系统提示词中**，持续生效，用于改变 Agent 的整体行为模式（例如“始终使用中文回答”、“优先搜索本地文件”等元指令）。这类 skill 也会同时保留为可调用工具，以便在需要时重新加载或更新。
+- `delegate`：调用子 Agent 的特殊工具（主循环拥有此工具，其他 Agent 视情况可拥有）。
 
-所有工具使用 sqlite 永久存储。初始工具箱包含以下 builtin 和 default 工具：
+**初始工具箱**（builtin 和 default）：
 
-1. `execute_bash`（builtin）：执行 bash 命令，带超时、输出截断和路径白名单。
-2. `serper_search`（default，mcp）：通过 Serper API 进行 Google 搜索。
-3. `filesystem`（default，mcp）：读写文件、目录遍历，基于 MCP 文件系统协议。
-4. `baidu_search_skill`（default，skill）：百度搜索，封装为可复用的 skill。
-5. `fetch`（default，mcp）：发送 HTTP 请求，获取网页内容或调用 API。
-6. `tool_register_http`（builtin，function）：通过提供 HTTP 端点和 JSON schema 注册一个新工具。
-7. `tool_register_code`（builtin，function）：通过上传 Python 代码动态注册一个新工具。
-8. `tools_list`（builtin，function）：列出当前所有可用工具，按 scope 分组显示。
-9. `memory_recall`（builtin，http）：键值存储，持久化到 sqlite，支持向量检索，用于永久记忆。
-10. `local_search`（default，cli）：使用 ripgrep 或 grep 搜索本地文本文件，实现本地内容检索。
+| 工具名 | 范围 | 类型 | 说明 |
+|--------|------|------|------|
+| `delegate` | builtin | delegate | 调用子 Agent（Use-Tool/Find-Tools/Coding） |
+| `execute_bash` | builtin | bash | 执行 bash 命令，带超时、输出截断和路径白名单 |
+| `cli_executor` | builtin | cli | 执行任意命令行程序（非 shell 内建），自动解析 `--help` 生成参数 schema |
+| `builtin_web_search` | builtin | http | 使用内置搜索引擎（可配置，默认 DuckDuckGo 或 Serper） |
+| `fetch` | builtin | http | 发送 HTTP 请求，获取网页内容或调用 API |
+| `mcp_client` | builtin | mcp | 通用 MCP 客户端，用于调用任意 MCP 服务（需提供服务 URL 和方法名） |
+| `tool_register_http` | builtin | function | 通过提供 HTTP 端点和 JSON schema 注册一个新工具 |
+| `tool_register_code` | builtin | function | 通过上传 Python 代码动态注册一个新工具（需沙盒验证） |
+| `tool_register_skill` | builtin | function | 注册一个 skill 工具。参数包括：`name`、`description`、`skill_md_content`（SKILL.md 的完整文本），以及可选的 `inject_to_system_prompt`（默认为 false）。 |
+| `tool_register_cli` | builtin | function | 通过提供命令行路径和参数 schema 注册一个 cli 工具 |
+| `tool_register_mcp` | builtin | function | 通过提供 MCP 服务配置（URL、协议版本）注册一个 mcp 工具 |
+| `tools_list` | builtin | function | 列出当前所有可用工具，按 scope 分组显示，支持过滤生命周期 |
+| `memory_recall` | builtin | http | 键值存储，持久化到 sqlite，支持向量检索 |
+| `context_summarizer` | builtin | function | 主动总结对话历史，压缩上下文（见 2.3 节） |
+| `ask_user` | builtin | function | 向用户提问并等待回复。参数：`question`（字符串，必填）、`options`（字符串数组，可选）、`timeout_seconds`（整数，可选）。返回用户输入的内容。 |
+| `filesystem` | default | mcp | 读写文件、目录遍历，基于 MCP 文件系统协议 |
+| `local_search` | default | cli | 使用 ripgrep 或 grep 搜索本地文本文件（若不可用则降级为纯 Python 搜索） |
+| `baidu_search_skill` | default | skill | 百度搜索的封装 skill，注册时 `inject_to_system_prompt: false`，仅作为可调用工具使用 |
+| `serper_search` | default | mcp | 通过 Serper API 进行 Google 搜索（需要 API key） |
 
-至此，最小集合工具箱包含了上下文管理工具（`context_summarizer`）、永久记忆工具（`memory_store`）、本地搜索工具（`local_search`）和网络搜索工具（`serper_search`、`baidu_search_skill`）。
+至此，最小集合工具箱包含了上下文管理工具（`context_summarizer`）、永久记忆工具（`memory_recall`）、本地搜索工具（`local_search`）、网络搜索工具（`builtin_web_search` + 可选 default）、用户交互工具（`ask_user`）以及完整的工具注册体系（支持 http/code/skill/cli/mcp）。其中 skill 工具支持两种注入模式，灵活满足不同场景。
+
+### 2.3 上下文管理（详细机制）
+
+原则 #5：“Context will fill up; you need a way to make room.” 具体实现：
+
+- **触发条件**：当消息历史中的 token 数量超过模型最大上下文窗口的 75% 时，自动触发 `context_summarizer`。也可由模型主动调用 `context_summarizer` 工具。
+- **总结策略**：
+  1. 保留最近 K 条消息（K 可配置，默认 20 条）不动。
+  2. 将更早的消息按“重要性评分”筛选。重要性评分基于：消息中是否包含工具调用结果、是否被用户引用/加星、是否包含错误信息、以及模型对消息的注意力权重（模拟）。
+  3. 将重要性较低的消息丢弃；对剩余早期消息，调用大模型生成一段摘要（200-300 字），插入到上下文开头。
+  4. 摘要中需保留：用户原始目标、已经完成的步骤、尚未解决的问题、重要的中间结果。
 
 ### 2.4 自我修复、自我更新与自我迭代
 
-Evolve Agent 不仅支持工具级的进化，还对框架本身提供了自我维护能力。
+**待设计**
 
-#### 2.4.1 自我修复
+### 2.5 永久记忆的具体机制
 
-- **工具调用失败**：自动重试最多 3 次（指数退避）。如果仍然失败，Evolve Agent 会尝试寻找替代工具（通过 Find-Tools Agent），或降级执行（例如将 bash 命令转为 HTTP API 调用），并将失败信息记录到永久记忆中，避免重复同样的失败。
-- **Agent 状态损坏**：定期保存检查点（包括对话历史、工具注册表、用户偏好）。如果运行中发生崩溃，重启后自动从最近的检查点恢复。
+- 每个 QA 对（用户输入 + 最终回答）存入 SQLite，支持键值存储和向量相似检索（用于长期记忆的自动召回）。
+- 检索方式：精确 key 匹配或向量相似度（余弦相似度）阈值 0.7 以上自动召回，并注入到 system prompt。
 
-#### 2.4.2 自我更新
+### 2.6 日志管理
 
-- **框架代码更新**：内置一个更新命令（类似 `git pull` 并重启），用户可授权自动检查更新并应用。
-- **工具热更新**：对于 `user` 和 `default` 范围内的工具，支持动态重新加载，无需重启整个 Agent。
-- **模型能力升级**：可配置多个模型（例如从 GPT-4 切换到 GPT-5）。当检测到新模型 API 可用时，通过内部基准测试评估效果，并支持平滑迁移。
-
-
-### 2.5 上下文与永久记忆的具体机制
-
-
-- **永久记忆**：Evolve Agent的按每个QA对存入 SQLite，  `memory recall`支持键值存储和向量相似检索。
-
+整个运行日志遵守 qd-agents 的日志方案。
 
 ## 三、总结
 
-Evolve Agent 是一个极简但可自主进化的智能体框架。它摒弃了过度的人类编排，将感知、推理和行动的能力完全交给大模型，同时提供最小但完备的工具集（包含上下文管理、永久记忆、本地和网络搜索）。通过内置的四个 Agent（主循环、工具执行、工具发现、代码生成）以及自我修复、自我更新、自主进化机制，它能够随着用户使用不断优化自身能力，最终实现“每个用户拥有自己进化版本”的目标。
+Evolve Agent 是一个极简但可自主进化的智能体框架。它摒弃了过度的人类编排，将感知、推理和行动的能力完全交给大模型，同时提供最小但完备的工具集。主要设计亮点：
 
-该设计已修正原始文档中的笔误和缺失，并补全了上下文管理工具、永久记忆工具、本地搜索工具的定义，明确了各 Agent 的职责以及安全自愈策略，保持了原文的结构和表达风格。
+- **无硬编码路由**：通过唯一的 `delegate` 工具将任务分解和子 Agent 调用的决策权完全交给模型。
+- **自主进化**：内置 Find-Tools Agent（仅发现和注册现成工具）和 Coding Agent（待设计安全机制），支持动态扩展工具能力。
+- **安全可控**：工具生命周期管理防止膨胀；代码生成的安全机制待设计。
+- **上下文与记忆**：自动总结压缩上下文，永久记忆基于向量检索。
+- **显式用户交互**：`ask_user` 工具提供结构化的澄清机制。
+- **完整工具注册体系**：支持 HTTP、代码、Skill、CLI、MCP 五种类型的工具注册；其中 Skill 工具支持两种注入模式（普通文档注入和系统提示词注入），且 Find-Tools Agent 在调用时要求明确描述工具依赖，确保精准发现。
+
+每个用户可以根据使用习惯进化出自己独特的工具集和配置，同时支持快照、重置和冻结，保证系统的可控性和可复现性。
+
+## 四、配置管理
+
+为适应不同使用场景和资源约束，Evolve Agent 框架提供一组可配置的参数。所有配置均有合理默认值，用户可根据需要修改（通过配置文件、环境变量或命令行参数）。**具体设计（包括配置项的名称、默认值、范围等）由 Claude Code 根据当前版本自行确定，不在此文档中硬编码。**
