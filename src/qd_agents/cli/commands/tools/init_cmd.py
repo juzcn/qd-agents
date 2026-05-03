@@ -1,8 +1,13 @@
-"""tools init — 从数据库读取已注册工具，按类型重新调用纯逻辑层注册"""
+"""tools init — 初始化工具箱
+
+注册所有 builtin function 工具 + default 工具（local-search 等），
+并按类型重注册已有的 user/default 工具。
+"""
 
 from __future__ import annotations
 
 import logging
+import shutil
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional
@@ -10,6 +15,7 @@ from typing import Optional
 from rich.console import Console
 
 from qd_agents.config.loader import load_config
+from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolExecutionType, ToolMetadata
 from qd_agents.registry.registry import ToolRegistry
 from qd_agents.tools.registrars import (
     register_cli_tool,
@@ -20,6 +26,10 @@ from qd_agents.tools.registrars import (
     mcp_extract_args,
     skill_extract_args,
     http_extract_args,
+)
+from qd_agents.tools.builtin_register import (
+    register_builtin_function_tools,
+    register_meta_function_tools,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +49,7 @@ def init_tools(
     config_file: Optional[Path] = None,
     keep_user: bool = False,
 ) -> None:
-    """初始化工具箱：按类型重新调用纯逻辑层注册所有工具。
+    """初始化工具箱：注册 builtin + default 工具，重注册已有工具。
 
     Args:
         keep_user: 为 True 时保留 scope=user 的工具不重注册
@@ -47,6 +57,102 @@ def init_tools(
     config = load_config(base_dir=base_dir, config_file=config_file)
     db_path = config.tool_registry.db_path if config.tool_registry else "data/tools.db"
     registry = ToolRegistry(db_path=str(db_path))
+
+    # 1. 注册 builtin function 工具
+    _register_builtin_tools(console, registry)
+
+    # 2. 注册 default 工具（local-search 等）
+    _register_default_tools(console, registry, base_dir, config_file)
+
+    # 3. 重注册非 builtin 工具
+    _reregister_user_tools(console, registry, base_dir, config_file, keep_user)
+
+
+def _register_builtin_tools(console: Console, registry: ToolRegistry) -> None:
+    """注册 builtin function 和 meta function 工具到数据库"""
+    existing = {t.name for t in registry.list_all() if t.scope == "builtin"}
+
+    before_builtin = len(existing)
+    register_builtin_function_tools(registry)
+    after_builtin = {t.name for t in registry.list_all() if t.scope == "builtin"}
+    new_builtin = after_builtin - existing
+    if new_builtin:
+        console.print(f"\n[bold]注册 builtin function 工具 ({len(new_builtin)} 个新增)[/]")
+        for name in sorted(new_builtin):
+            console.print(f"  [green]OK[/] {name}")
+    else:
+        console.print(f"\n[bold]builtin function 工具[/] [dim]（已注册，跳过）[/]")
+
+    existing_meta = {t.name for t in registry.list_all() if t.scope == "builtin"}
+    register_meta_function_tools(registry)
+    after_meta = {t.name for t in registry.list_all() if t.scope == "builtin"}
+    new_meta = after_meta - existing_meta
+    if new_meta:
+        console.print(f"\n[bold]注册 meta function 工具 ({len(new_meta)} 个新增)[/]")
+        for name in sorted(new_meta):
+            console.print(f"  [green]OK[/] {name}")
+    else:
+        console.print(f"[bold]meta function 工具[/] [dim]（已注册，跳过）[/]")
+
+
+def _register_default_tools(
+    console: Console,
+    registry: ToolRegistry,
+    base_dir: Optional[Path],
+    config_file: Optional[Path],
+) -> None:
+    """注册 default 工具（local-search、filesystem 等）"""
+    existing_names = {t.name for t in registry.list_all()}
+
+    # --- local-search ---
+    # rg/grep 是大模型熟悉的工具，注册为 bash 类型，无需 schema
+    if "local-search" not in existing_names:
+        search_cmd = None
+        for cmd in ("rg", "grep"):
+            if shutil.which(cmd):
+                search_cmd = cmd
+                break
+        if search_cmd:
+            tool = Tool(
+                id="default.local-search",
+                name="local-search",
+                description=f"搜索本地文本文件。使用 {search_cmd} 命令，支持正则表达式。用法: {search_cmd} <pattern> [path]",
+                parameters={"type": "object", "properties": {}, "required": []},
+                execution=ToolExecutionConfig(
+                    type=ToolExecutionType.BASH,
+                    shell_command=search_cmd,
+                    timeout=30,
+                ),
+                scope="default",
+                metadata=ToolMetadata(tags=["bash", "search", "local"]),
+            )
+            registry.register(tool)
+            console.print(f"\n  [green]OK[/] local-search (command: {search_cmd})")
+        else:
+            console.print(f"\n  [yellow]SKIP[/] local-search: 未找到 rg 或 grep")
+    else:
+        console.print(f"\n  [dim]local-search 已注册，跳过[/]")
+
+    # --- filesystem mcp ---
+    if "filesystem" not in existing_names:
+        try:
+            tool = register_mcp_tool(server="filesystem", default=True)
+            console.print(f"  [green]OK[/] filesystem (mcp)")
+        except Exception as e:
+            logger.warning("注册 filesystem mcp 失败: %s", e)
+            console.print(f"  [yellow]SKIP[/] filesystem: {e}")
+    else:
+        console.print(f"  [dim]filesystem 已注册，跳过[/]")
+
+
+def _reregister_user_tools(
+    console: Console,
+    registry: ToolRegistry,
+    base_dir: Optional[Path],
+    config_file: Optional[Path],
+    keep_user: bool,
+) -> None:
+    """按类型重注册非 builtin 工具"""
     tools = registry.list_all()
 
     if not tools:
@@ -64,9 +170,8 @@ def init_tools(
                 console.print("[yellow]没有需要重注册的工具[/]")
                 return
 
-    # 按 execution type 分组，跳过 bash 类型
+    # 按 execution type 分组，跳过 builtin 和 bash 类型
     groups: dict[str, list] = defaultdict(list)
-    builtin_count = 0
     for t in tools:
         if t.scope == "builtin":
             continue
@@ -74,13 +179,8 @@ def init_tools(
         if et == "bash":
             continue
         if et == "function":
-            builtin_count += 1
             continue
         groups[et].append(t)
-
-    if builtin_count:
-        console.print(f"\n[bold]内置 function 工具 ({builtin_count} 个)[/]")
-        console.print(f"  [dim]跳过（无需重注册）[/]")
 
     stats: dict[str, int] = defaultdict(int)
     errors: dict[str, int] = defaultdict(int)

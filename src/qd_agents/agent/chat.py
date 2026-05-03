@@ -1,7 +1,9 @@
-"""Chat 路由决策 Agent
+"""Evolve Agent — 主循环
 
-主循环：分析用户请求，输出 Job JSON 决定路由方向。
-不再执行工具，只做路由决策。
+Evolve Agent 是智能体的主循环，遵循 MetaAgent 的感知-推理-行动模式。
+它只拥有 delegate、ask_user、context_summarizer 三个内置工具，
+通过 delegate 工具将任务路由到子 Agent（Use-Tool/Find-Tools/Coding）。
+路由决策完全由模型基于提示词原则自主决定，框架层面没有硬编码分支。
 """
 from __future__ import annotations
 
@@ -14,12 +16,12 @@ from typing import TYPE_CHECKING, Any
 
 from ..llm import LLMClient
 from ..context import ContextManager
-from ..models.job import Job
-from ..models.chat import AskUserInfo, DelegateInfo, ChatResult
 from ..models.tool import Tool
 from ..registry import ToolRegistry
-from ..utils.parsing import extract_json_from_llm_output
-from .base import Agent, AgentResult, StepCallback
+from ..tools import ToolExecutorRegistry
+from .base import MetaAgent, AgentResult, StepCallback, AskUserCallback
+from .use_tool import UseToolAgent
+from .find_tools import FindToolsAgent
 
 if TYPE_CHECKING:
     from ..memory.service import MemoryService
@@ -28,41 +30,61 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ChatAgent(Agent):
-    """Chat 路由决策 Agent
+class EvolveAgent(MetaAgent):
+    """Evolve Agent — 智能体主循环
 
-    分析用户请求和可用工具，输出 Job JSON 决定路由方向。
-    不执行工具，只做决策。
+    通过 delegate 工具将任务路由到子 Agent。
+    系统提示词中加载所有工具的名称和描述，模型自主决定路由方向。
     """
 
-    name = "chat"
-    description = "路由决策器，分析用户请求并决定路由方向"
+    name = "evolve"
+    description = "智能体主循环，通过 delegate 路由到子 Agent"
 
     def __init__(
         self,
         llm_client: LLMClient,
         tool_registry: ToolRegistry,
         context_manager: ContextManager,
-        expanded_tools_cache: list | None = None,
+        executor_registry: ToolExecutorRegistry | None = None,
+        expanded_tools_cache: list[Tool] | None = None,
         max_iterations: int | None = None,
         on_step: StepCallback | None = None,
         memory_service: MemoryService | None = None,
         session_id: str = "",
+        use_tool_agent: UseToolAgent | None = None,
+        find_tools_agent: FindToolsAgent | None = None,
+        ask_user_callback: AskUserCallback | None = None,
+        refresh_callback: Any | None = None,
+        context_window_size: int = 0,
+        context_summarizer_threshold: float = 0.75,
+        task_background: str = "",
+        task_requirements: str = "",
     ):
-        self.llm = llm_client
-        self.registry = tool_registry
+        super().__init__(
+            llm_client=llm_client,
+            tool_registry=tool_registry,
+            executor_registry=executor_registry,
+            max_iterations=max_iterations or 20,
+            on_step=on_step,
+            ask_user_callback=ask_user_callback,
+            context_window_size=context_window_size,
+            context_summarizer_threshold=context_summarizer_threshold,
+            task_background=task_background,
+            task_requirements=task_requirements,
+        )
         self.context = context_manager
         self._expanded_tools = expanded_tools_cache or []
-        self._max_iterations = max_iterations or 3
-        self._on_step = on_step
-        self._cancel_event: asyncio.Event | None = None
         self._memory_service = memory_service
         self._session_id = session_id
+        self._use_tool_agent = use_tool_agent
+        self._find_tools_agent = find_tools_agent
+        self._refresh_callback = refresh_callback
 
     async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
-        """执行路由决策
+        """执行主循环
 
-        输出 Job JSON，由 QDAgent 解析并路由到子循环。
+        构建 Evolve Agent 的 messages 和工具，运行 MetaAgent 标准循环。
+        模型通过 delegate/ask_user 工具与子 Agent 和用户交互。
         """
         on_step = kwargs.get("on_step")
         cancel_event = kwargs.get("cancel_event")
@@ -83,174 +105,288 @@ class ChatAgent(Agent):
                 total_duration_ms=0,
             )
 
-        # 1. 构建 messages（不含记忆，记忆由 LLM 在 tool_list 中按需请求）
+        # 1. 构建 messages（含系统提示词 + 历史 + 用户输入）
         messages = self.context.build_chat_messages(
             user_input=user_input,
             tools=self._expanded_tools,
             history=history,
         )
 
-        # 2. 调用 LLM（不传 tools 参数，输出纯文本 Job JSON）
+        # 2. 构建内置工具 schema（delegate + ask_user + context_summarizer）
+        openai_tools = self._build_meta_tools()
+        tool_map = self._build_meta_tool_map()
+
+        # 3. 设置 LLM 日志标识
         self.llm.meta_agent_name = self.name
         self.llm.reset_log_count(messages)
 
-        self._emit_step(1, event="route_decision")
-
-        response = await self.llm.chat(
+        # 4. 运行 MetaAgent 标准工具调用循环
+        result = await self.run_loop(
             messages=messages,
+            openai_tools=openai_tools,
+            tool_map=tool_map,
             temperature=0.1,
         )
 
-        choice = response.choices[0]
-        content = choice.message.content or ""
-
-        total_tokens = response.usage.total_tokens if hasattr(response, "usage") and response.usage else 0
-        last_prompt_tokens = response.usage.prompt_tokens if hasattr(response, "usage") and response.usage else 0
-
-        # 3. 解析 Job JSON
-        job = self._parse_job(content)
-
         total_duration_ms = int((time.perf_counter() - start_time) * 1000)
 
-        if job is None:
-            # 解析失败，fallback 为直接回答
-            logger.warning("Failed to parse Job JSON from Chat response, treating as direct answer")
-            final_answer = content.strip() if content.strip() else "抱歉，无法理解您的请求。"
-            return AgentResult(
-                final_answer=final_answer,
-                success=True,
-                total_tokens=total_tokens,
-                last_prompt_tokens=last_prompt_tokens,
-                trace_id=trace_id,
-                total_duration_ms=total_duration_ms,
-            )
+        return AgentResult(
+            final_answer=result.final_answer,
+            success=result.success,
+            working_memory=result.working_memory,
+            total_tokens=result.total_tokens,
+            last_prompt_tokens=result.last_prompt_tokens,
+            trace_id=trace_id,
+            total_duration_ms=total_duration_ms,
+        )
 
-        # 5. 按 route 路由
-        self._emit_step(1, event="route_result", detail=job.route)
+    # --- delegate 工具拦截 ---
 
-        if job.route == "direct-answer":
-            final_answer = job.direct_answer or content.strip()
-            return AgentResult(
-                final_answer=final_answer,
-                success=True,
-                total_tokens=total_tokens,
-                last_prompt_tokens=last_prompt_tokens,
-                trace_id=trace_id,
-                total_duration_ms=total_duration_ms,
-            )
-
-        elif job.route == "ask_user":
-            final_answer = self._format_ask_user(job)
-            return AgentResult(
-                final_answer=final_answer,
-                success=True,
-                total_tokens=total_tokens,
-                last_prompt_tokens=last_prompt_tokens,
-                trace_id=trace_id,
-                total_duration_ms=total_duration_ms,
-            )
-
-        elif job.route == "delegate":
-            final_answer = self._format_delegate(job)
-            return AgentResult(
-                final_answer=final_answer,
-                success=True,
-                total_tokens=total_tokens,
-                last_prompt_tokens=last_prompt_tokens,
-                trace_id=trace_id,
-                total_duration_ms=total_duration_ms,
-            )
-
-        elif job.route in ("use-tool", "find-tools"):
-            # 返回 Job 和 messages 给 QDAgent，由 QDAgent 协调子循环
-            return AgentResult(
-                final_answer="",  # 子循环会产生最终答案
-                success=True,
-                working_memory={"job": job, "messages": messages},
-                total_tokens=total_tokens,
-                last_prompt_tokens=last_prompt_tokens,
-                trace_id=trace_id,
-                total_duration_ms=total_duration_ms,
-            )
-
-        else:
-            # 未知路由，fallback
-            logger.warning("Unknown route: %s, treating as direct answer", job.route)
-            final_answer = content.strip() if content.strip() else "抱歉，无法处理您的请求。"
-            return AgentResult(
-                final_answer=final_answer,
-                success=True,
-                total_tokens=total_tokens,
-                last_prompt_tokens=last_prompt_tokens,
-                trace_id=trace_id,
-                total_duration_ms=total_duration_ms,
-            )
-
-    # --- 内部方法 ---
-
-    def _parse_job(self, content: str) -> Job | None:
-        """解析 LLM 输出为 Job 对象"""
-        try:
-            json_str = extract_json_from_llm_output(content)
-            result_dict = json.loads(json_str)
-
-            # 兼容：如果 LLM 输出 "action" 而非 "route"
-            if "action" in result_dict and "route" not in result_dict:
-                result_dict["route"] = result_dict.pop("action")
-
-            job = Job(**result_dict)
-            logger.info("Parsed Job: route=%s, tool_list=%s", job.route, job.tool_list)
-            return job
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.warning("Failed to parse Job JSON: %s", e)
-            return None
-
-    @staticmethod
-    def _format_ask_user(job: Job) -> str:
-        """格式化向用户提问"""
-        parts = ["**需要你的输入**\n"]
-        if job.ask_user:
-            parts.append(job.ask_user.question)
-            if job.ask_user.options:
-                parts.append("\n选项：")
-                for i, opt in enumerate(job.ask_user.options, 1):
-                    parts.append(f"  {i}. {opt}")
-            if job.ask_user.reason:
-                parts.append(f"\n原因：{job.ask_user.reason}")
-        if job.reflection:
-            parts.append(f"\n\n*反思：{job.reflection}*")
-        return "\n".join(parts)
-
-    @staticmethod
-    def _format_delegate(job: Job) -> str:
-        """格式化委托用户执行"""
-        parts = ["**需要你来执行**\n"]
-        if job.delegate:
-            parts.append(f"任务：{job.delegate.task}")
-            parts.append(f"\n操作指南：\n{job.delegate.guide}")
-            parts.append(f"\n原因：{job.delegate.reason}")
-        if job.reflection:
-            parts.append(f"\n\n*反思：{job.reflection}*")
-        return "\n".join(parts)
-
-    def _emit_step(
+    async def _handle_delegate(
         self,
+        tool_call: Any,
+        tool_input: dict,
+        tool_map: dict[str, Tool],
         iteration: int,
-        event: str,
-        tool_name: str = "",
-        command: str = "",
-        result_summary: str = "",
-        detail: str = "",
-    ) -> None:
-        """触发步骤回调"""
-        if self._on_step:
-            self._on_step({
-                "iteration": iteration,
-                "max_iterations": self._max_iterations,
-                "event": event,
-                "tool_name": tool_name,
-                "command": command,
-                "result_summary": result_summary,
-                "detail": detail,
-                "loop": "chat",
+        messages: list[dict],
+    ) -> str:
+        """拦截 delegate 工具调用，路由到子 Agent
+
+        根据 agent 参数路由到 Use-Tool / Find-Tools / Coding。
+        """
+        agent_name = tool_input.get("agent", "Unknown")
+        task = tool_input.get("task", "")
+        task_background = tool_input.get("task_background", "")
+        tool_names = tool_input.get("tools", [])
+
+        self._emit_step(iteration, event="delegate_call", tool_name=agent_name, detail=task[:100])
+
+        try:
+            if agent_name == "Use-Tool":
+                result = await self._delegate_to_use_tool(
+                    task=task,
+                    task_background=task_background,
+                    tool_names=tool_names,
+                    messages=messages,
+                    iteration=iteration,
+                )
+            elif agent_name == "Find-Tools":
+                result = await self._delegate_to_find_tools(
+                    task=task,
+                    task_background=task_background,
+                    messages=messages,
+                    iteration=iteration,
+                )
+            elif agent_name == "Coding":
+                result = json.dumps({
+                    "success": False,
+                    "error": "Coding Agent 尚未实现",
+                    "message": "请通过 Use-Tool Agent 使用 execute_bash 执行代码，或通过 Find-Tools 搜索可用的代码生成工具。",
+                }, ensure_ascii=False)
+            else:
+                result = json.dumps({
+                    "success": False,
+                    "error": f"未知的子 Agent: {agent_name}",
+                }, ensure_ascii=False)
+        except Exception as e:
+            logger.exception("delegate to %s failed", agent_name)
+            result = json.dumps({
+                "success": False,
+                "error": f"委派到 {agent_name} 失败: {e}",
+            }, ensure_ascii=False)
+
+        result_summary = result[:200] if len(result) > 200 else result
+        self._emit_step(iteration, event="delegate_result", tool_name=agent_name, result_summary=result_summary)
+
+        return result
+
+    async def _delegate_to_use_tool(
+        self,
+        task: str,
+        task_background: str,
+        tool_names: list[str],
+        messages: list[dict],
+        iteration: int,
+    ) -> str:
+        """委派到 Use-Tool Agent"""
+        if not self._use_tool_agent:
+            return json.dumps({"success": False, "error": "Use-Tool Agent 未初始化"}, ensure_ascii=False)
+
+        # 构建临时 Job 对象供 UseToolAgent 使用
+        from ..models.job import Job
+        job = Job(
+            route="use-tool",
+            task_background=task_background,
+            task_description=task,
+            tool_list=tool_names,
+            orchestration_logic="",
+        )
+
+        # Use-Tool Agent 在 messages 副本上操作，完成后截断中间消息
+        # 我们传入 messages 的引用，Use-Tool 会注入 task message 并在完成后截断
+        result = await self._use_tool_agent.execute(
+            job=job,
+            messages=messages,
+            trace_id=str(uuid.uuid4()),
+            on_step=self._on_step,
+            cancel_event=self._cancel_event,
+        )
+
+        return json.dumps({
+            "success": result.success,
+            "final_answer": result.final_answer,
+            "tools_used": result.working_memory.get("tools_used", []) if result.working_memory else [],
+        }, ensure_ascii=False)
+
+    async def _delegate_to_find_tools(
+        self,
+        task: str,
+        task_background: str,
+        messages: list[dict],
+        iteration: int,
+    ) -> str:
+        """委派到 Find-Tools Agent"""
+        if not self._find_tools_agent:
+            return json.dumps({"success": False, "error": "Find-Tools Agent 未初始化"}, ensure_ascii=False)
+
+        # 构建临时 Job 对象供 FindToolsAgent 使用
+        from ..models.job import Job
+        job = Job(
+            route="find-tools",
+            task_background=task_background,
+            task_description=task,
+        )
+
+        result = await self._find_tools_agent.execute(
+            job=job,
+            messages=messages,
+            trace_id=str(uuid.uuid4()),
+            on_step=self._on_step,
+            cancel_event=self._cancel_event,
+        )
+
+        # 如果发现新工具，刷新工具缓存
+        found_tool_names = result.working_memory.get("found_tool_names", []) if result.working_memory else []
+        if found_tool_names and self._refresh_callback:
+            logger.info("Find-Tools discovered %d tools, refreshing caches: %s", len(found_tool_names), found_tool_names)
+            try:
+                await self._refresh_callback()
+                # 更新 EvolveAgent 的工具列表
+                self._expanded_tools = self._use_tool_agent._expanded_tool_map.values() if self._use_tool_agent else self._expanded_tools
+            except Exception as e:
+                logger.error("Refresh callback failed: %s", e)
+
+        return json.dumps({
+            "success": result.success,
+            "final_answer": result.final_answer,
+            "found_tool_names": found_tool_names,
+        }, ensure_ascii=False)
+
+    # --- 内置工具构建 ---
+
+    def _build_meta_tools(self) -> list[dict]:
+        """构建 Evolve Agent 的内置工具 schema 列表
+
+        包含：delegate、ask_user、context_summarizer
+        """
+        tools = []
+
+        # delegate 工具
+        delegate_tool = self.registry.get("delegate") or self.registry.get_by_name("delegate")
+        if delegate_tool:
+            tools.append(delegate_tool.to_openai_function())
+        else:
+            # fallback：手动构建 schema
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "delegate",
+                    "description": "调用子 Agent 执行任务。agent 为子 Agent 名称（Use-Tool/Find-Tools/Coding），task 为任务描述，task_background 为任务背景，tools 为需要使用的工具名列表（仅 Use-Tool 时使用）。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent": {
+                                "type": "string",
+                                "enum": ["Use-Tool", "Find-Tools", "Coding"],
+                                "description": "子 Agent 名称",
+                            },
+                            "task": {
+                                "type": "string",
+                                "description": "任务描述",
+                            },
+                            "task_background": {
+                                "type": "string",
+                                "description": "任务背景上下文",
+                            },
+                            "tools": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "需要使用的工具名列表（仅 Use-Tool 时使用）",
+                            },
+                        },
+                        "required": ["agent", "task"],
+                    },
+                },
             })
+
+        # ask_user 工具
+        ask_user_tool = self.registry.get("ask_user") or self.registry.get_by_name("ask_user")
+        if ask_user_tool:
+            tools.append(ask_user_tool.to_openai_function())
+        else:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "ask_user",
+                    "description": "向用户提问并等待回复。question 为问题内容，options 为可选的选项列表，reason 为提问原因。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {"type": "string", "description": "向用户提出的问题"},
+                            "options": {"type": "array", "items": {"type": "string"}, "description": "可选的选项列表"},
+                            "reason": {"type": "string", "description": "为什么需要用户输入"},
+                            "timeout_seconds": {"type": "integer", "description": "等待超时秒数"},
+                        },
+                        "required": ["question"],
+                    },
+                },
+            })
+
+        # context_summarizer 工具
+        ctx_tool = self.registry.get("context_summarizer") or self.registry.get_by_name("context_summarizer")
+        if ctx_tool:
+            tools.append(ctx_tool.to_openai_function())
+        else:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "context_summarizer",
+                    "description": "主动总结对话历史，压缩上下文。focus 为总结关注点，keep_recent 为保留最近的消息数。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "focus": {"type": "string", "description": "总结关注点"},
+                            "keep_recent": {"type": "integer", "description": "保留最近的消息数", "default": 20},
+                        },
+                        "required": [],
+                    },
+                },
+            })
+
+        return tools
+
+    def _build_meta_tool_map(self) -> dict[str, Tool]:
+        """构建内置工具的 tool_map
+
+        delegate/ask_user/context_summarizer 不需要真正的 Tool 对象来执行
+        （由 MetaAgent.run_loop() 拦截），但 tool_map 需要包含它们以避免
+        execute_tool() 报 "工具未找到" 错误。
+        """
+        tool_map = {}
+        for name in ("delegate", "ask_user", "context_summarizer"):
+            tool = self.registry.get(name) or self.registry.get_by_name(name)
+            if tool:
+                tool_map[name] = tool
+        return tool_map
+
+

@@ -12,9 +12,12 @@ from .retry import (
 )
 from .logging import (
     ImmediateFlushFileHandler,
+    ImmediateFlushRotatingFileHandler,
+    TraceIdFilter,
     generate_session_log_path,
     setup_logging,
     setup_session_logging,
+    setup_persistent_logging,
 )
 from .parsing import extract_json_from_llm_output, parse_json_from_llm_output
 
@@ -27,9 +30,12 @@ __all__ = [
     "BackoffStrategy",
     "with_retry",
     "ImmediateFlushFileHandler",
+    "ImmediateFlushRotatingFileHandler",
+    "TraceIdFilter",
     "generate_session_log_path",
     "setup_logging",
     "setup_session_logging",
+    "setup_persistent_logging",
     "extract_json_from_llm_output",
     "parse_json_from_llm_output",
 ]

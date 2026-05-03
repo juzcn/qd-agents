@@ -28,6 +28,7 @@ class ToolExecutionType(str, Enum):
     BASH = "bash"
     CLI = "cli"
     SKILL = "skill"
+    DELEGATE = "delegate"
 
 
 class ToolExecutionConfig(BaseModel):
