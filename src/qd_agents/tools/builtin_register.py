@@ -1,10 +1,11 @@
 """工具注册 builtin function — 供 LLM 直接调用管理工具箱
 
 注册为 function 类型工具，LLM 可通过调用这些函数来自主管理工具箱。
+包含：5 个工具注册函数 + fetch + delegate + ask_user + context_summarizer + tools_list
 """
-
 from __future__ import annotations
 
+import ast
 import inspect
 import logging
 import re
@@ -17,8 +18,12 @@ from .register import (
     register_mcp_tool,
     register_skill_tool,
 )
+from .search import fetch
 
 logger = logging.getLogger(__name__)
+
+
+# --- 工具注册函数 ---
 
 
 async def tool_register_cli(name: str, command: str, extra_env: list[str] | None = None, timeout: int = 300, default: bool = False) -> dict[str, Any]:
@@ -61,8 +66,118 @@ async def tool_register_http(name: str, openapi_url: str, filter_str: str | None
         return {"success": False, "error": str(e)}
 
 
-# 所有 builtin function 工具函数列表
-_BUILTIN_FUNCTIONS = [tool_register_cli, tool_register_mcp, tool_register_skill, tool_register_http]
+# --- 代码注册工具 ---
+
+
+_BLOCKED_NAMES = {"eval", "exec", "__import__", "open", "compile", "globals", "locals", "getattr", "setattr", "delattr", "os.system", "subprocess.call", "subprocess.run", "subprocess.Popen"}
+_BLOCKED_ATTRS = {"system", "popen", "spawn", "call", "run", "Popen"}
+
+
+def _validate_code_safety(code: str) -> list[str]:
+    """使用 ast 验证代码安全性，返回发现的违规列表"""
+    violations = []
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return [f"代码语法错误: {e}"]
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func_name = ""
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                func_name = node.func.attr
+            if func_name in _BLOCKED_NAMES or func_name in _BLOCKED_ATTRS:
+                violations.append(f"禁止的函数调用: {func_name}")
+
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in ("os", "subprocess", "sys"):
+                    violations.append(f"禁止的 import: {alias.name}")
+        if isinstance(node, ast.ImportFrom):
+            if node.module in ("os", "subprocess", "sys"):
+                violations.append(f"禁止的 from import: {node.module}")
+
+    return violations
+
+
+async def tool_register_code(name: str, description: str, code: str, parameters_schema: dict[str, Any] | None = None, default: bool = False) -> dict[str, Any]:
+    """通过上传 Python 代码动态注册一个新工具（需沙盒验证）。code 为完整的 Python 函数代码，parameters_schema 为参数 JSON schema，description 为工具描述。"""
+    # 安全验证
+    violations = _validate_code_safety(code)
+    if violations:
+        return {"success": False, "error": f"代码安全验证失败: {violations}"}
+
+    # 验证代码包含函数定义
+    try:
+        tree = ast.parse(code)
+        func_defs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) or isinstance(n, ast.AsyncFunctionDef)]
+        if not func_defs:
+            return {"success": False, "error": "代码必须包含至少一个函数定义"}
+    except SyntaxError as e:
+        return {"success": False, "error": f"代码语法错误: {e}"}
+
+    # 当前版本暂不实现运行时注册，留待未来版本
+    return {"success": False, "error": "tool_register_code 尚未完全实现，将在未来版本中支持动态代码注册", "name": name, "description": description}
+
+
+# --- delegate 工具 ---
+
+
+async def delegate(agent: str, task: str, task_background: str = "", tools: list[str] | None = None) -> dict[str, Any]:
+    """调用子 Agent 执行任务。agent 为子 Agent 名称（Use-Tool/Find-Tools/Coding），task 为任务描述，task_background 为任务背景，tools 为需要使用的工具名列表（仅 Use-Tool 时使用）。"""
+    # 实际路由由 MetaAgent.run_loop() 拦截处理
+    # 此函数体仅作为占位，不会被执行
+    return {"status": "routing", "agent": agent, "task": task}
+
+
+# --- ask_user 工具 ---
+
+
+async def ask_user(question: str, options: list[str] | None = None, reason: str = "", timeout_seconds: int | None = None) -> dict[str, Any]:
+    """向用户提问并等待回复。question 为问题内容，options 为可选的选项列表，reason 为提问原因，timeout_seconds 为等待超时秒数。"""
+    # 实际交互由 MetaAgent.run_loop() 拦截处理
+    return {"status": "waiting_for_user", "question": question}
+
+
+# --- context_summarizer 工具 ---
+
+
+async def context_summarizer(focus: str = "", keep_recent: int = 20) -> dict[str, Any]:
+    """主动总结对话历史，压缩上下文。focus 为总结关注点，keep_recent 为保留最近的消息数。"""
+    # 实际压缩由 MetaAgent.run_loop() 拦截处理
+    return {"status": "summarizing", "focus": focus}
+
+
+# --- tools_list 工具 ---
+
+
+async def tools_list(filter_scope: str | None = None) -> dict[str, Any]:
+    """列出当前所有可用工具，按 scope 分组显示。filter_scope 为按范围过滤（builtin/default/user）。"""
+    # 实际查询由 FunctionToolExecutor 执行，需要 registry 参数
+    # 此函数体仅作为占位，实际执行时通过 registry 查询
+    return {"status": "listing", "filter_scope": filter_scope}
+
+
+# --- 所有 builtin function 工具函数列表 ---
+
+
+_BUILTIN_FUNCTIONS = [
+    tool_register_cli,
+    tool_register_mcp,
+    tool_register_skill,
+    tool_register_http,
+    tool_register_code,
+    fetch,
+]
+
+_META_FUNCTIONS = [
+    delegate,
+    ask_user,
+    context_summarizer,
+    tools_list,
+]
 
 # Python 类型 → OpenAI schema 类型映射
 _TYPE_MAP: dict[type, str] = {
@@ -133,6 +248,10 @@ def _generate_openai_schema(func: Any) -> dict:
 
         properties[pname] = prop
 
+    # delegate 工具的 agent 参数添加 enum
+    if func.__name__ == "delegate" and "agent" in properties:
+        properties["agent"]["enum"] = ["Use-Tool", "Find-Tools", "Coding"]
+
     return {
         "type": "object",
         "properties": properties,
@@ -154,20 +273,26 @@ def _resolve_type(ann: Any) -> dict[str, Any]:
 
 
 def register_builtin_function_tools(registry: Any) -> None:
-    """将4个工具注册 function 注册到数据库（scope=builtin）。
+    """将工具注册 function 和内置搜索/fetch 工具注册到数据库（scope=builtin）。
 
     与 execute_bash 一致，作为核心 builtin 工具持久化到 ToolRegistry。
     从函数签名自动生成 schema，避免手写重复。
     """
     from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolExecutionType, ToolMetadata
 
-    MODULE = "qd_agents.tools.builtin_register"
+    DEFAULT_MODULE = "qd_agents.tools.builtin_register"
+    SEARCH_MODULE = "qd_agents.tools.search"
+
+    # 搜索/fetch 函数来自不同的模块
+    search_funcs = {fetch}
 
     for func in _BUILTIN_FUNCTIONS:
         name = func.__name__
         doc = inspect.getdoc(func) or ""
         description = doc.split("。")[0] if doc else name
         parameters = _generate_openai_schema(func)
+
+        module = SEARCH_MODULE if func in search_funcs else DEFAULT_MODULE
 
         tool = Tool(
             id=f"builtin.{name}",
@@ -176,12 +301,51 @@ def register_builtin_function_tools(registry: Any) -> None:
             parameters=parameters,
             execution=ToolExecutionConfig(
                 type=ToolExecutionType.FUNCTION,
+                module=module,
+                function=name,
+            ),
+            scope="builtin",
+            metadata=ToolMetadata(
+                tags=["builtin", name.split("_")[-1] if "_" in name else name],
+                version="0.1.0",
+            ),
+        )
+
+        registry.register(tool)
+        logger.info("Registered builtin function tool: %s (module: %s)", tool.id, module)
+
+
+def register_meta_function_tools(registry: Any) -> None:
+    """将 delegate/ask_user/context_summarizer/tools_list 注册到数据库（scope=builtin）。
+
+    这些是框架核心的元工具，由 MetaAgent 循环拦截处理。
+    """
+    from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolExecutionType, ToolMetadata
+
+    MODULE = "qd_agents.tools.builtin_register"
+
+    for func in _META_FUNCTIONS:
+        name = func.__name__
+        doc = inspect.getdoc(func) or ""
+        description = doc.split("。")[0] if doc else name
+        parameters = _generate_openai_schema(func)
+
+        # delegate 使用 DELEGATE 类型，其他使用 FUNCTION 类型
+        exec_type = ToolExecutionType.DELEGATE if name == "delegate" else ToolExecutionType.FUNCTION
+
+        tool = Tool(
+            id=f"builtin.{name}",
+            name=name,
+            description=description,
+            parameters=parameters,
+            execution=ToolExecutionConfig(
+                type=exec_type,
                 module=MODULE,
                 function=name,
             ),
             scope="builtin",
-            metadata=ToolMetadata(tags=["builtin", "register", name.split("_")[-1]], version="0.1.0"),
+            metadata=ToolMetadata(tags=["builtin", "meta", name], version="0.1.0"),
         )
 
         registry.register(tool)
-        logger.info("Registered builtin function tool: %s", tool.id)
+        logger.info("Registered meta function tool: %s (type=%s)", tool.id, exec_type.value)

@@ -79,6 +79,13 @@ def create_executor(tool: Tool) -> ToolExecutor:
             tool_name=exec_config.tool,
         )
 
+    elif exec_config.type == ToolExecutionType.DELEGATE:
+        # delegate 工具由 MetaAgent.run_loop() 拦截处理
+        # 如果到达此处，说明未被拦截，返回错误提示
+        raise NotImplementedError(
+            "delegate tools must be intercepted by MetaAgent.run_loop()"
+        )
+
     elif exec_config.type == ToolExecutionType.SKILL:
         if exec_config.command:
             return BashToolExecutor(

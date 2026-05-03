@@ -41,17 +41,6 @@ class ChatCommandHandler:
         current_config_file: Path,
         session: PromptSession,
     ):
-        """
-        初始化聊天命令处理器
-
-        Args:
-            console: Rich 控制台对象
-            config: 应用配置
-            llm_manager: LLM 客户端管理器
-            tool_registry: 工具注册表
-            current_config_file: 当前配置文件路径
-            session: Prompt 会话对象
-        """
         self.console = console
         self.config = config
         self.llm_manager = llm_manager
@@ -60,15 +49,7 @@ class ChatCommandHandler:
         self.session = session
 
     async def handle_command(self, user_input: str) -> bool:
-        """
-        处理用户输入的命令
-
-        Args:
-            user_input: 用户输入
-
-        Returns:
-            continue_chat: 是否继续聊天
-        """
+        """处理用户输入的命令"""
         if user_input.lower() == "/quit":
             return False
 
@@ -146,7 +127,6 @@ class ChatCommandHandler:
             if other_provider == self.llm_manager.provider_name:
                 continue
 
-            # 如果配置了模型列表，直接添加
             if other_config.models:
                 for model_name in other_config.get_model_names():
                     all_models.append({
@@ -155,15 +135,12 @@ class ChatCommandHandler:
                         "is_current": False,
                         "is_current_provider": False
                     })
-            # 如果启用了自动发现，需要从 API 获取模型列表
             elif other_config.auto_discover:
                 try:
-                    # 创建临时客户端来发现模型
                     async with LLMClient(
                         api_key=other_config.api_key,
                         base_url=other_config.base_url,
                     ) as temp_client:
-                        # 对于其他 auto_discover 提供商，也使用模型池逻辑（top_k=5）
                         await temp_client.discover_models(top_k=5)
                         for model_name in temp_client.available_models:
                             all_models.append({
@@ -179,7 +156,6 @@ class ChatCommandHandler:
             self.console.print("\n[yellow]没有可用模型[/]\n")
             return
 
-        # 构建选择项，格式为 provider/model
         choices = []
         for item in all_models:
             display_name = f"{item['provider']}/{item['model']}"
@@ -189,7 +165,6 @@ class ChatCommandHandler:
                 choices.append(questionary.Choice(display_name, value=item))
 
         try:
-            # 使用 questionary 默认样式，有明显的菜单框
             selected = await questionary.select(
                 "选择模型:",
                 choices=choices,
@@ -202,7 +177,6 @@ class ChatCommandHandler:
                 selected_provider = selected_item["provider"]
                 selected_model = selected_item["model"]
 
-                # 如果是当前提供商的模型，直接切换
                 if selected_item["is_current_provider"]:
                     if self.llm_manager.switch_model(selected_model):
                         self.console.print(f"\n[green]已切换到模型:[/] {selected_provider}/{selected_model}")
@@ -210,7 +184,6 @@ class ChatCommandHandler:
                     else:
                         self.console.print(f"\n[red]切换模型失败[/]\n")
                 else:
-                    # 动态切换提供商
                     self.console.print(f"[dim]切换到提供商 {selected_provider}...[/]")
                     if await self.llm_manager.initialize(selected_provider, selected_model):
                         self._update_config(selected_provider, selected_model)
@@ -240,6 +213,32 @@ class ChatCommandHandler:
 
         self.console.print("[dim]按 Esc 取消执行[/]")
 
+        # ask_user 回调：当 Agent 需要向用户提问时
+        async def ask_user_callback(question: str, options: list[str] | None = None) -> str:
+            """处理 ask_user 工具的交互"""
+            self.console.print(f"\n[bold cyan]Agent 提问[/]: {question}")
+            if options:
+                self.console.print("[dim]选项:[/]")
+                for i, opt in enumerate(options, 1):
+                    self.console.print(f"  {i}. {opt}")
+                try:
+                    selected = await questionary.select(
+                        "请选择:",
+                        choices=options,
+                        qmark=">",
+                    ).ask_async()
+                    return selected or ""
+                except (KeyboardInterrupt, EOFError):
+                    return ""
+            else:
+                try:
+                    answer = await self.session.prompt_async(
+                        [("class:prompt", "回答: ")],
+                    )
+                    return answer.strip()
+                except (KeyboardInterrupt, EOFError):
+                    return ""
+
         # 构造步骤回调，实时输出中间过程
         def on_step(step_info: dict) -> None:
             iteration = step_info.get("iteration", "?")
@@ -253,30 +252,35 @@ class ChatCommandHandler:
             loop_tag = f"[{loop_name}]" if loop_name else ""
             prefix = f"[dim][{iteration}/{max_iter}]{loop_tag}[/]"
 
-            if event == "route_decision":
-                self.console.print(f"{prefix} [blue]路由决策[/]")
-            elif event == "route_result":
-                self.console.print(f"{prefix} [blue]路由结果[/]: {detail}")
+            if event == "delegate_call":
+                self.console.print(f"{prefix} [blue]委派[/]: {tool_name} — {detail}")
+            elif event == "delegate_result":
+                summary = result_summary.replace("\n", " ").strip()
+                if len(summary) > 60:
+                    summary = summary[:57] + "..."
+                if summary:
+                    self.console.print(f"       [dim]→ {summary}[/]")
+            elif event == "ask_user":
+                # ask_user 的交互由 ask_user_callback 处理，这里只记录
+                pass
+            elif event == "ask_user_result":
+                pass
             elif event == "skill_load":
                 self.console.print(f"{prefix} [cyan]加载技能[/]: {tool_name}")
-            elif event == "schema_load":
-                self.console.print(f"{prefix} [cyan]加载参数[/]: {tool_name}")
             elif event == "tool_call":
                 if tool_name == "execute_bash" and command:
-                    # 截断长命令
                     cmd_display = command if len(command) <= 80 else command[:77] + "..."
                     self.console.print(f"{prefix} [yellow]执行[/]: {cmd_display}")
                 else:
                     self.console.print(f"{prefix} [yellow]调用工具[/]: {tool_name}")
             elif event == "tool_result":
-                # 截断结果摘要
                 summary = result_summary.replace("\n", " ").strip()
                 if len(summary) > 60:
                     summary = summary[:57] + "..."
                 if summary:
                     self.console.print(f"       [dim]→ {summary}[/]")
 
-        # Escape 键监听：后台线程检测按键，设置 cancel_event
+        # Escape 键监听
         agent = self.llm_manager.agent
 
         def _esc_listener():
@@ -304,12 +308,15 @@ class ChatCommandHandler:
 
         _esc_done = threading.Event()
 
-        # 启动 Escape 监听线程
         esc_thread = threading.Thread(target=_esc_listener, daemon=True)
         esc_thread.start()
 
         try:
-            result = await self.llm_manager.agent.process(user_input=user_input, on_step=on_step)
+            # 设置 ask_user_callback
+            if agent._evolve_agent:
+                agent._evolve_agent._ask_user_callback = ask_user_callback
+
+            result = await agent.process(user_input=user_input, on_step=on_step)
         finally:
             _esc_done.set()
             esc_thread.join(timeout=0.5)
@@ -329,26 +336,15 @@ async def chat_async(
     provider: Optional[str] = None,
     model: Optional[str] = None,
 ) -> None:
-    """
-    异步聊天实现
-
-    Args:
-        console: Rich 控制台对象
-        base_dir: 基础目录
-        config_file: 配置文件路径
-        provider: 提供商名称
-        model: 模型名称
-    """
-    console.print("[bold blue]qd-agents[/] - 智能体系统", style="bold")
+    """异步聊天实现"""
+    console.print("[bold blue]qd-agents[/] - 智能体系统（Evolve Agent 架构）", style="bold")
     console.print("输入 /quit 退出，输入 /help 查看帮助\n", style="dim")
 
     # 1. 配置初始化
     config = setup_configuration(console, base_dir, config_file)
 
-
     # 3. 初始化工具和上下文
     tool_registry = get_tool_registry(config)
-
 
     prompt_loader = (
         PromptLoader(template_dir=config.prompts.template_dir)
@@ -368,11 +364,11 @@ async def chat_async(
     current_base_dir = base_dir or Path.cwd()
     current_config_file = config_file or (current_base_dir / "config.json")
 
-    # 6. 创建聊天会话（使用 prompt_style）
-    from .. import prompt_style, ChatCommandCompleter  # 从 main.py 导入
+    # 6. 创建聊天会话
+    from .. import prompt_style, ChatCommandCompleter
     session: PromptSession[str] = PromptSession(
         completer=ChatCommandCompleter(),
-        history=InMemoryHistory(),  # 使用内存历史记录
+        history=InMemoryHistory(),
         style=prompt_style,
         complete_while_typing=True,
     )

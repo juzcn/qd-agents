@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -18,18 +17,13 @@ from ..models.job import Job
 from ..models.tool import Tool
 from ..registry import ToolRegistry
 from ..tools import ToolExecutorRegistry
-from .base import Agent, AgentResult, StepCallback
-from .tool_execution import (
-    execute_tool,
-    find_skill_tool,
-    ensure_bash_available,
-    format_tool_result,
-)
+from .base import MetaAgent, AgentResult, StepCallback
+from .tool_execution import ensure_bash_available
 
 logger = logging.getLogger(__name__)
 
 
-class UseToolAgent(Agent):
+class UseToolAgent(MetaAgent):
     """Use-Tool Agent — 工具执行子循环
 
     在主循环上下文中执行，共享系统提示词。
@@ -48,14 +42,23 @@ class UseToolAgent(Agent):
         max_iterations: int = 15,
         on_step: StepCallback | None = None,
         expanded_tool_map: dict[str, Tool] | None = None,
+        context_window_size: int = 0,
+        context_summarizer_threshold: float = 0.75,
+        task_background: str = "",
+        task_requirements: str = "",
     ):
-        self.llm = llm_client
-        self.registry = tool_registry
+        super().__init__(
+            llm_client=llm_client,
+            tool_registry=tool_registry,
+            executor_registry=executor_registry,
+            max_iterations=max_iterations,
+            on_step=on_step,
+            context_window_size=context_window_size,
+            context_summarizer_threshold=context_summarizer_threshold,
+            task_background=task_background,
+            task_requirements=task_requirements,
+        )
         self.context = context_manager
-        self.executor_registry = executor_registry
-        self._max_iterations = max_iterations
-        self._on_step = on_step
-        self._cancel_event: asyncio.Event | None = None
         self._expanded_tool_map = expanded_tool_map or {}
 
     async def execute(self, job: Job, messages: list[dict], **kwargs) -> AgentResult:
@@ -93,12 +96,20 @@ class UseToolAgent(Agent):
         openai_tools = [t.to_openai_function() for t in tools]
         tool_map = {t.name: t for t in tools}
 
-        # 3. 确保 execute_bash 可用（SKILL 工具需要）
-        openai_tools, tool_map = ensure_bash_available(
-            openai_tools, tool_map, self.registry
-        )
+        # 3. 添加 delegate 工具（Use-Tool 可委派到 Coding Agent 处理复杂编排）
+        delegate_tool = self.registry.get("delegate") or self.registry.get_by_name("delegate")
+        if delegate_tool and "delegate" not in tool_map:
+            openai_tools.append(delegate_tool.to_openai_function())
+            tool_map["delegate"] = delegate_tool
 
-        # 4. 记录当前 messages 长度，注入 task message
+        # 4. 确保 execute_bash 可用（SKILL 工具需要）
+        ensure_bash_available(self.registry, self.executor_registry)
+        bash_tool = self.registry.get("execute_bash")
+        if bash_tool and "execute_bash" not in tool_map:
+            openai_tools.append(bash_tool.to_openai_function())
+            tool_map["execute_bash"] = bash_tool
+
+        # 5. 注入 task message
         start_idx = len(messages)
         task_message = self.context.build_use_tool_task_message(job=job)
         messages.append({"role": "user", "content": task_message})
@@ -107,136 +118,26 @@ class UseToolAgent(Agent):
         self.llm.meta_agent_name = self.name
         self.llm.reset_log_count(messages)
 
-        # 6. 工具执行循环
-        iteration = 0
-        total_tokens = 0
-        last_prompt_tokens = 0
-        tools_used: list[str] = []
+        # 6. 运行 MetaAgent 标准工具调用循环
+        result = await self.run_loop(
+            messages=messages,
+            openai_tools=openai_tools,
+            tool_map=tool_map,
+            temperature=0.3,
+        )
 
-        while iteration < self._max_iterations:
-            if self._cancel_event and self._cancel_event.is_set():
-                logger.info("Use-tool loop cancelled by user")
-                # 截断中间消息
-                del messages[start_idx:]
-                latency_ms = int((time.perf_counter() - start_time) * 1000)
-                return AgentResult(
-                    final_answer="已取消",
-                    success=False,
-                    total_tokens=total_tokens,
-                    last_prompt_tokens=last_prompt_tokens,
-                    trace_id=trace_id,
-                    total_duration_ms=latency_ms,
-                )
-
-            iteration += 1
-
-            response = await self.llm.chat(
-                messages=messages,
-                tools=openai_tools,
-                tool_choice="auto",
-                temperature=0.3,
-            )
-
-            choice = response.choices[0]
-            assistant_message = choice.message
-
-            if hasattr(response, "usage") and response.usage:
-                total_tokens += response.usage.total_tokens
-                last_prompt_tokens = response.usage.prompt_tokens
-
-            # 追加 assistant 消息
-            assistant_dict: dict[str, Any] = {
-                "role": "assistant",
-                "content": assistant_message.content or "",
-            }
-            if hasattr(assistant_message, "tool_calls") and assistant_message.tool_calls:
-                assistant_dict["tool_calls"] = assistant_message.tool_calls
-            messages.append(assistant_dict)
-
-            # 终止条件：LLM 不返回 tool_calls
-            if not assistant_message.tool_calls:
-                content = assistant_message.content or ""
-                final_answer = content.strip() if content.strip() else "任务执行完成，但未生成明确答案。"
-                total_duration_ms = int((time.perf_counter() - start_time) * 1000)
-
-                # 截断中间消息，只保留 final answer
-                del messages[start_idx:]
-                messages.append({"role": "assistant", "content": final_answer})
-
-                return AgentResult(
-                    final_answer=final_answer,
-                    success=True,
-                    working_memory={"tools_used": tools_used},
-                    total_tokens=total_tokens,
-                    last_prompt_tokens=last_prompt_tokens,
-                    trace_id=trace_id,
-                    total_duration_ms=total_duration_ms,
-                )
-
-            # 执行工具调用
-            for tool_call in assistant_message.tool_calls:
-                tool_name = tool_call.function.name
-                try:
-                    tool_input = json.loads(tool_call.function.arguments)
-                except json.JSONDecodeError:
-                    tool_input = {"raw": tool_call.function.arguments}
-
-                # SKILL 工具：注入 SKILL.md
-                skill_msgs = self._handle_skill_disclosure(
-                    tool_call, tool_name, tool_map, iteration, messages,
-                )
-                if skill_msgs is not None:
-                    messages.extend(skill_msgs)
-                    continue
-
-                # 记录工具调用
-                if tool_name == "execute_bash":
-                    command = tool_input.get("command", tool_input.get("code", ""))
-                    logger.info("LLM generated command [%s]: %s", tool_name, command)
-                    self._emit_step(iteration, event="tool_call", tool_name=tool_name, command=command)
-                else:
-                    logger.info("LLM generated tool call [%s]: %s", tool_name, json.dumps(tool_input, ensure_ascii=False))
-                    self._emit_step(iteration, event="tool_call", tool_name=tool_name)
-
-                # 执行工具
-                tool_result = await execute_tool(
-                    tool_name=tool_name,
-                    tool_input=tool_input,
-                    tool_map=tool_map,
-                    registry=self.registry,
-                    executor_registry=self.executor_registry,
-                    expanded_tools=tools,
-                )
-
-                # 记录使用的工具
-                if tool_name not in tools_used:
-                    tools_used.append(tool_name)
-
-                # 回调：工具执行结果
-                result_summary = tool_result[:200] if len(tool_result) > 200 else tool_result
-                self._emit_step(iteration, event="tool_result", tool_name=tool_name, result_summary=result_summary)
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": tool_result,
-                })
-
-        # 达到最大迭代次数
-        total_duration_ms = int((time.perf_counter() - start_time) * 1000)
-        # 截断中间消息
+        # 7. 截断中间消息，只保留 final answer
         del messages[start_idx:]
-        final_answer = "达到最大工具调用迭代次数，任务可能未完成。"
-        messages.append({"role": "assistant", "content": final_answer})
+        messages.append({"role": "assistant", "content": result.final_answer})
 
         return AgentResult(
-            final_answer=final_answer,
-            success=False,
-            working_memory={"tools_used": tools_used},
-            total_tokens=total_tokens,
-            last_prompt_tokens=last_prompt_tokens,
+            final_answer=result.final_answer,
+            success=result.success,
+            working_memory=result.working_memory,
+            total_tokens=result.total_tokens,
+            last_prompt_tokens=result.last_prompt_tokens,
             trace_id=trace_id,
-            total_duration_ms=total_duration_ms,
+            total_duration_ms=int((time.perf_counter() - start_time) * 1000),
         )
 
     # --- 内部方法 ---
@@ -259,73 +160,31 @@ class UseToolAgent(Agent):
                 logger.warning("Tool not found: %s (checked expanded_tool_map and registry)", name)
         return tools
 
-    def _handle_skill_disclosure(
+    async def _handle_delegate(
         self,
         tool_call: Any,
-        tool_name: str,
-        tool_map: dict,
+        tool_input: dict,
+        tool_map: dict[str, Tool],
         iteration: int,
         messages: list[dict],
-    ) -> list[dict] | None:
-        """SKILL 工具：通过 tool result 注入 SKILL.md
+    ) -> str:
+        """Use-Tool Agent 的 delegate 处理：可委派到 Coding Agent"""
+        agent_name = tool_input.get("agent", "Unknown")
+        task = tool_input.get("task", "")
 
-        prompt 类型：注入到系统提示词（修改 messages[0]）
-        tool_manual 类型：注入到 tool result
-        """
-        skill_tool = find_skill_tool(tool_name, tool_map, self.registry)
-        if not skill_tool:
-            return None
+        self._emit_step(iteration, event="delegate_call", tool_name=agent_name, detail=task[:100])
 
-        skill_type = skill_tool.dependencies.get("skill_type", "tool_manual")
-        skill_md = self.context._load_skill_md(
-            skill_tool.local_path or skill_tool.name
-        ) or ""
-        self._emit_step(iteration, event="skill_load", tool_name=tool_name, detail=tool_name)
-
-        if skill_md:
-            if skill_type == "prompt":
-                # prompt 类型：注入到系统提示词
-                logger.info("Injecting SKILL.md into system prompt (prompt type): %s", tool_name)
-                if messages and messages[0].get("role") == "system":
-                    messages[0]["content"] += f"\n\n## 技能指南: {tool_name}\n\n{skill_md}"
-                return [{
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": f"已加载技能 {tool_name} 的行为指南到系统提示词。请在后续所有决策中遵循该指南。",
-                }]
-            else:
-                # tool_manual 类型：注入到 tool result
-                logger.info("Injecting SKILL.md into tool result (tool_manual type): %s", tool_name)
-                return [{
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": f"已加载技能指南，请按照以下说明使用 execute_bash 执行：\n\n{skill_md}",
-                }]
+        if agent_name == "Coding":
+            result = json.dumps({
+                "success": False,
+                "error": "Coding Agent 尚未实现",
+                "message": "请使用 execute_bash 执行 Python 脚本来完成复杂编排。",
+            }, ensure_ascii=False)
         else:
-            return [{
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": f"技能 {tool_name} 的 SKILL.md 未找到。",
-            }]
+            result = json.dumps({
+                "success": False,
+                "error": f"Use-Tool Agent 不支持委派到 {agent_name}",
+            }, ensure_ascii=False)
 
-    def _emit_step(
-        self,
-        iteration: int,
-        event: str,
-        tool_name: str = "",
-        command: str = "",
-        result_summary: str = "",
-        detail: str = "",
-    ) -> None:
-        """触发步骤回调"""
-        if self._on_step:
-            self._on_step({
-                "iteration": iteration,
-                "max_iterations": self._max_iterations,
-                "event": event,
-                "tool_name": tool_name,
-                "command": command,
-                "result_summary": result_summary,
-                "detail": detail,
-                "loop": "use-tool",
-            })
+        self._emit_step(iteration, event="delegate_result", tool_name=agent_name, result_summary=result[:100])
+        return result

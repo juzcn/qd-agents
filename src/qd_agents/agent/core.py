@@ -1,12 +1,13 @@
-"""
-QDAgent 核心容器
+"""QDAgent — 智能体核心编排器
 
-负责资源管理和三循环协调：
-- ChatAgent (Loop 1): 路由决策
-- UseToolAgent (Loop 2): 工具执行
-- FindToolsAgent (Loop 3): 工具发现
+QDAgent 是用户交互的入口，负责：
+1. 初始化所有组件（LLM、Registry、Memory、MCP、Context）
+2. 创建 EvolveAgent 和子 Agent
+3. 管理会话历史和工具缓存
+4. 将用户输入传递给 EvolveAgent 执行
 
-MCP 连接管理委托给 MCPService，工具注册/缓存委托给 ToolService。
+在新架构下，QDAgent 不再包含硬编码的路由逻辑。
+路由决策完全由 EvolveAgent 通过 delegate 工具自主完成。
 """
 from __future__ import annotations
 
@@ -19,32 +20,30 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import Config
 from ..llm import LLMClient
-from ..models.tool import Tool, ToolExecutionType, ToolMetadata
-from ..models.job import Job
+from ..context import ContextManager
+from ..models.tool import Tool, ToolExecutionType
 from ..registry import ToolRegistry
 from ..prompts import PromptLoader
 from ..tools import ToolExecutorRegistry
-from ..tools.executors.mcp import MCPToolExecutor
-from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig, BackoffStrategy
-from ..context import ContextManager
 from ..services import MCPService, ToolService
-from .base import Agent, AgentResult, StepCallback
-from .chat import ChatAgent
+from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig, BackoffStrategy
+from .base import AgentResult, StepCallback, AskUserCallback
+from .chat import EvolveAgent
 from .use_tool import UseToolAgent
 from .find_tools import FindToolsAgent
 
 if TYPE_CHECKING:
     from ..memory.service import MemoryService
 
+
 logger = logging.getLogger(__name__)
 
 
 class QDAgent:
-    """
-    主智能体类 — 资源管理器 + 三循环协调器
+    """智能体核心编排器
 
-    管理工具注册、MCP 连接、上下文压缩等资源，
-    协调 Chat → Use-Tool / Find-Tools 三循环。
+    管理组件生命周期，将用户输入传递给 EvolveAgent 执行。
+    路由决策由 EvolveAgent 通过 delegate 工具自主完成。
     """
 
     def __init__(
@@ -68,8 +67,8 @@ class QDAgent:
             base_dir=base_dir,
         )
 
-        # 三个 Agent
-        self._chat_agent: ChatAgent | None = None
+        # Agent 实例
+        self._evolve_agent: EvolveAgent | None = None
         self._use_tool_agent: UseToolAgent | None = None
         self._find_tools_agent: FindToolsAgent | None = None
 
@@ -134,17 +133,7 @@ class QDAgent:
         # 初始化长期记忆服务
         self._init_memory_service()
 
-        # 创建三个 Agent
-        self._chat_agent = ChatAgent(
-            llm_client=self.llm,
-            tool_registry=self.registry,
-            context_manager=self.context,
-            expanded_tools_cache=self._expanded_tools_cache,
-            max_iterations=self.config.execution.max_iterations,
-            memory_service=self._memory_service,
-            session_id=self._session_id,
-        )
-
+        # 创建 Agent 实例
         self._use_tool_agent = UseToolAgent(
             llm_client=self.llm,
             tool_registry=self.registry,
@@ -152,6 +141,8 @@ class QDAgent:
             executor_registry=self.executor_registry,
             max_iterations=self.config.execution.max_use_tool_iterations,
             expanded_tool_map=self._tool_map_cache,
+            context_window_size=self._get_context_window_size(),
+            context_summarizer_threshold=self.config.execution.context_summarizer_threshold,
         )
 
         self._find_tools_agent = FindToolsAgent(
@@ -160,14 +151,32 @@ class QDAgent:
             context_manager=self.context,
             executor_registry=self.executor_registry,
             max_iterations=self.config.execution.max_find_tools_iterations,
+            context_window_size=self._get_context_window_size(),
+            context_summarizer_threshold=self.config.execution.context_summarizer_threshold,
         )
 
-        logger.info("QDAgent initialized with 3 agents (chat, use-tool, find-tools). Models: %s", self.llm._model_names)
+        self._evolve_agent = EvolveAgent(
+            llm_client=self.llm,
+            tool_registry=self.registry,
+            context_manager=self.context,
+            executor_registry=self.executor_registry,
+            expanded_tools_cache=self._expanded_tools_cache,
+            max_iterations=self.config.execution.max_iterations,
+            memory_service=self._memory_service,
+            session_id=self._session_id,
+            use_tool_agent=self._use_tool_agent,
+            find_tools_agent=self._find_tools_agent,
+            refresh_callback=self._refresh_tool_caches,
+            context_window_size=self._get_context_window_size(),
+            context_summarizer_threshold=self.config.execution.context_summarizer_threshold,
+        )
+
+        logger.info("QDAgent initialized with EvolveAgent + Use-Tool + Find-Tools. Models: %s", self.llm._model_names)
 
     @property
-    def agent(self) -> ChatAgent | None:
-        """获取 ChatAgent（向后兼容）"""
-        return self._chat_agent
+    def agent(self) -> EvolveAgent | None:
+        """获取 EvolveAgent"""
+        return self._evolve_agent
 
     async def process(
         self,
@@ -175,7 +184,11 @@ class QDAgent:
         session_id: str | None = None,
         on_step: StepCallback | None = None,
     ) -> AgentResult:
-        """处理用户输入，协调三循环。"""
+        """处理用户输入
+
+        将用户输入传递给 EvolveAgent 执行。
+        EvolveAgent 通过 delegate 工具自主路由到子 Agent。
+        """
         trace_id = str(uuid.uuid4())
         start_time = time.perf_counter()
         logger.info("Processing user input (trace_id: %s): %s", trace_id, user_input[:100])
@@ -184,17 +197,14 @@ class QDAgent:
         self._cancel_event = asyncio.Event()
 
         try:
-            if self._chat_agent is None:
+            if self._evolve_agent is None:
                 raise ValueError("Agent not initialized")
 
-            # 获取当前历史（执行前的 Q&A 对）
+            # 获取当前历史
             conversation_history = self.context.get_history()
 
-            total_tokens = 0
-            last_prompt_tokens = 0
-
-            # ===== Loop 1: Chat 路由决策 =====
-            chat_result = await self._chat_agent.execute(
+            # 执行 EvolveAgent（路由决策由模型通过 delegate 工具自主完成）
+            result = await self._evolve_agent.execute(
                 user_input=user_input,
                 history=conversation_history,
                 trace_id=trace_id,
@@ -202,187 +212,14 @@ class QDAgent:
                 cancel_event=self._cancel_event,
             )
 
-            total_tokens += chat_result.total_tokens
-            last_prompt_tokens = chat_result.last_prompt_tokens
+            # 自动保存记忆
+            self._auto_save_memory(user_input, result.final_answer, result.total_tokens)
 
-            # 获取 Job 和 messages（如果 Chat 决定路由到子循环）
-            job: Job | None = chat_result.working_memory.get("job") if chat_result.working_memory else None
-            messages: list[dict] | None = chat_result.working_memory.get("messages") if chat_result.working_memory else None
-
-            if job is None:
-                # 直接回答 / ask_user / delegate — Chat 已产生最终答案
-                final_answer = chat_result.final_answer
-                total_duration_ms = int((time.perf_counter() - start_time) * 1000)
-
-                self._auto_save_memory(user_input, final_answer, total_tokens)
-                self.add_to_history("user", user_input)
-                self.add_to_history("assistant", final_answer)
-
-                return AgentResult(
-                    final_answer=final_answer,
-                    success=chat_result.success,
-                    total_tokens=total_tokens,
-                    last_prompt_tokens=last_prompt_tokens,
-                    trace_id=trace_id,
-                    total_duration_ms=total_duration_ms,
-                )
-
-            # ===== Loop 3: Find-Tools（如果需要） =====
-            if job.route == "find-tools":
-                logger.info("Routing to find-tools sub-loop (trace_id: %s)", trace_id)
-
-                find_result = await self._find_tools_agent.execute(
-                    job=job,
-                    messages=messages,
-                    trace_id=trace_id,
-                    on_step=on_step,
-                    cancel_event=self._cancel_event,
-                )
-
-                total_tokens += find_result.total_tokens
-                last_prompt_tokens = find_result.last_prompt_tokens
-
-                if not find_result.success:
-                    final_answer = f"工具发现失败：{find_result.final_answer}"
-                    total_duration_ms = int((time.perf_counter() - start_time) * 1000)
-
-                    self._auto_save_memory(user_input, final_answer, total_tokens)
-                    self.add_to_history("user", user_input)
-                    self.add_to_history("assistant", final_answer)
-
-                    return AgentResult(
-                        final_answer=final_answer,
-                        success=False,
-                        total_tokens=total_tokens,
-                        last_prompt_tokens=last_prompt_tokens,
-                        trace_id=trace_id,
-                        total_duration_ms=total_duration_ms,
-                    )
-
-                # 刷新工具缓存（新工具已注册）
-                await self._refresh_tool_caches()
-
-                # find-tools 完成后，回到主循环重新路由
-                # 将发现的工具信息注入到上下文，让 ChatAgent 重新决策
-                found_tool_names = find_result.working_memory.get("found_tool_names", []) if find_result.working_memory else []
-                logger.info("Find-tools discovered %d tools: %s", len(found_tool_names), found_tool_names)
-
-                if not found_tool_names:
-                    final_answer = find_result.final_answer
-                    total_duration_ms = int((time.perf_counter() - start_time) * 1000)
-
-                    self._auto_save_memory(user_input, final_answer, total_tokens)
-                    self.add_to_history("user", user_input)
-                    self.add_to_history("assistant", final_answer)
-
-                    return AgentResult(
-                        final_answer=final_answer,
-                        success=True,
-                        total_tokens=total_tokens,
-                        last_prompt_tokens=last_prompt_tokens,
-                        trace_id=trace_id,
-                        total_duration_ms=total_duration_ms,
-                    )
-
-                # 注入发现结果到上下文，重新路由
-                conversation_history = self.context.get_history()
-                chat_result = await self._chat_agent.execute(
-                    user_input=user_input,
-                    history=conversation_history,
-                    trace_id=trace_id,
-                    on_step=on_step,
-                    cancel_event=self._cancel_event,
-                )
-
-                total_tokens += chat_result.total_tokens
-                last_prompt_tokens += chat_result.last_prompt_tokens
-
-                job = chat_result.working_memory.get("job") if chat_result.working_memory else None
-                messages = chat_result.working_memory.get("messages") if chat_result.working_memory else None
-
-                if job is None:
-                    final_answer = chat_result.final_answer
-                    total_duration_ms = int((time.perf_counter() - start_time) * 1000)
-
-                    self._auto_save_memory(user_input, final_answer, total_tokens)
-                    self.add_to_history("user", user_input)
-                    self.add_to_history("assistant", final_answer)
-
-                    return AgentResult(
-                        final_answer=final_answer,
-                        success=chat_result.success,
-                        total_tokens=total_tokens,
-                        last_prompt_tokens=last_prompt_tokens,
-                        trace_id=trace_id,
-                        total_duration_ms=total_duration_ms,
-                    )
-
-                # 重新路由后只接受 use-tool（find-tools 已经执行过了）
-                if job.route != "use-tool":
-                    final_answer = chat_result.final_answer or "抱歉，无法处理您的请求。"
-                    total_duration_ms = int((time.perf_counter() - start_time) * 1000)
-
-                    self._auto_save_memory(user_input, final_answer, total_tokens)
-                    self.add_to_history("user", user_input)
-                    self.add_to_history("assistant", final_answer)
-
-                    return AgentResult(
-                        final_answer=final_answer,
-                        success=True,
-                        total_tokens=total_tokens,
-                        last_prompt_tokens=last_prompt_tokens,
-                        trace_id=trace_id,
-                        total_duration_ms=total_duration_ms,
-                    )
-
-            # ===== Loop 2: Use-Tool =====
-            if job.route in ("use-tool", "find-tools"):
-                logger.info("Routing to use-tool sub-loop (trace_id: %s, tools: %s)", trace_id, job.tool_list)
-
-                use_result = await self._use_tool_agent.execute(
-                    job=job,
-                    messages=messages,
-                    trace_id=trace_id,
-                    on_step=on_step,
-                    cancel_event=self._cancel_event,
-                )
-
-                total_tokens += use_result.total_tokens
-                last_prompt_tokens = use_result.last_prompt_tokens
-
-                final_answer = use_result.final_answer
-                total_duration_ms = int((time.perf_counter() - start_time) * 1000)
-
-                self._auto_save_memory(user_input, final_answer, total_tokens)
-
-                # 记录 QA 到历史（只有 final answer，中间过程不保留）
-                self.add_to_history("user", user_input)
-                self.add_to_history("assistant", final_answer)
-
-                return AgentResult(
-                    final_answer=final_answer,
-                    success=use_result.success,
-                    total_tokens=total_tokens,
-                    last_prompt_tokens=last_prompt_tokens,
-                    trace_id=trace_id,
-                    total_duration_ms=total_duration_ms,
-                )
-
-            # 未知路由（不应到达此处）
-            final_answer = chat_result.final_answer or "抱歉，无法处理您的请求。"
-            total_duration_ms = int((time.perf_counter() - start_time) * 1000)
-
+            # 记录 QA 到历史
             self.add_to_history("user", user_input)
-            self.add_to_history("assistant", final_answer)
+            self.add_to_history("assistant", result.final_answer)
 
-            return AgentResult(
-                final_answer=final_answer,
-                success=False,
-                total_tokens=total_tokens,
-                last_prompt_tokens=last_prompt_tokens,
-                trace_id=trace_id,
-                total_duration_ms=total_duration_ms,
-            )
+            return result
 
         except Exception as e:
             logger.exception("Processing failed")
@@ -401,7 +238,6 @@ class QDAgent:
 
     async def _load_and_cache_tools(self) -> None:
         """预加载 MCP 工具并缓存展开后的工具列表"""
-        # 预加载 MCP（连接服务器、获取 subtools、注册执行器）
         all_tools = self.registry.list_all()
         mcp_tools = [t for t in all_tools if t.execution.type == ToolExecutionType.MCP]
         await self._mcp_service.preload(
@@ -409,7 +245,6 @@ class QDAgent:
             executor_registry=self.executor_registry,
         )
 
-        # 缓存展开后的工具列表
         expanded, openai, tool_map = self._tool_service.build_expanded_tools(
             registry=self.registry,
             mcp_tools_cache=self._mcp_service.tools_cache,
@@ -419,13 +254,9 @@ class QDAgent:
         self._tool_map_cache = tool_map
 
     async def _refresh_tool_caches(self) -> None:
-        """刷新工具缓存（Find-Tools 注册新工具后调用）
-
-        重新加载 MCP 连接和工具列表，更新所有 Agent 的缓存。
-        """
+        """刷新工具缓存（Find-Tools 注册新工具后调用）"""
         logger.info("Refreshing tool caches after new tools registered...")
 
-        # 重新预加载 MCP（可能有新的 MCP 服务器）
         all_tools = self.registry.list_all()
         mcp_tools = [t for t in all_tools if t.execution.type == ToolExecutionType.MCP]
         await self._mcp_service.preload(
@@ -433,7 +264,6 @@ class QDAgent:
             executor_registry=self.executor_registry,
         )
 
-        # 重建缓存
         expanded, openai, tool_map = self._tool_service.build_expanded_tools(
             registry=self.registry,
             mcp_tools_cache=self._mcp_service.tools_cache,
@@ -442,11 +272,11 @@ class QDAgent:
         self._openai_tools_cache = openai
         self._tool_map_cache = tool_map
 
-        # 更新 ChatAgent 的工具缓存（下次路由决策时能看到新工具）
-        if self._chat_agent:
-            self._chat_agent._expanded_tools = expanded
+        # 更新 EvolveAgent 的工具缓存
+        if self._evolve_agent:
+            self._evolve_agent._expanded_tools = expanded
 
-        # 更新 UseToolAgent 的工具映射（下次执行时能解析 MCP subtools）
+        # 更新 UseToolAgent 的工具映射
         if self._use_tool_agent:
             self._use_tool_agent._expanded_tool_map = tool_map
 
@@ -455,7 +285,7 @@ class QDAgent:
     # --- 生命周期管理 ---
 
     async def close(self) -> None:
-        """关闭智能体（委托给 MCPService 关闭连接）"""
+        """关闭智能体"""
         logger.info("Closing QDAgent...")
         await self._mcp_service.close()
         if self._memory_service:
@@ -472,25 +302,39 @@ class QDAgent:
         from ..tools.search import (
             serper_search,
             tavily_search,
+            fetch,
         )
         self.executor_registry.register_function("serper_search", serper_search)
         self.executor_registry.register_function("tavily_search", tavily_search)
+        self.executor_registry.register_function("fetch", fetch)
 
-        # 工具注册 function — LLM 可直接调用管理工具箱
         from ..tools.builtin_register import (
             tool_register_cli,
             tool_register_mcp,
             tool_register_skill,
             tool_register_http,
+            tool_register_code,
             register_builtin_function_tools,
+            register_meta_function_tools,
+            delegate,
+            ask_user,
+            context_summarizer,
+            tools_list,
         )
         self.executor_registry.register_function("tool_register_cli", tool_register_cli)
         self.executor_registry.register_function("tool_register_mcp", tool_register_mcp)
         self.executor_registry.register_function("tool_register_skill", tool_register_skill)
         self.executor_registry.register_function("tool_register_http", tool_register_http)
+        self.executor_registry.register_function("tool_register_code", tool_register_code)
 
-        # 将4个工具注册 function 持久化到数据库（scope=builtin）
+        # 元工具
+        self.executor_registry.register_function("delegate", delegate)
+        self.executor_registry.register_function("ask_user", ask_user)
+        self.executor_registry.register_function("context_summarizer", context_summarizer)
+        self.executor_registry.register_function("tools_list", tools_list)
+
         register_builtin_function_tools(self.registry)
+        register_meta_function_tools(self.registry)
 
         logger.info("Registered builtin tool executors")
 
@@ -509,6 +353,16 @@ class QDAgent:
         return self.context.get_history()
 
     # --- 记忆管理 ---
+
+    def _get_context_window_size(self) -> int:
+        """从配置中获取当前模型的上下文窗口大小"""
+        provider_name = self.config.llm.default_provider
+        provider_config = self.config.llm.providers.get(provider_name)
+        if provider_config:
+            model_spec = provider_config.get_model_spec(self.llm.current_model)
+            if model_spec and model_spec.context_length:
+                return model_spec.context_length
+        return 0
 
     def _init_memory_service(self) -> None:
         """初始化长期记忆服务"""

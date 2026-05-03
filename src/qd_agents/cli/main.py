@@ -13,7 +13,7 @@ from prompt_toolkit.styles import Style
 from .app import app, main, console
 
 
-logger = logging.getLogger("qd-agents")
+logger = logging.getLogger(__name__)
 
 
 class ChatCommandCompleter(Completer):
