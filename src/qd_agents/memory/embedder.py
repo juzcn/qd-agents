@@ -10,6 +10,7 @@ import logging
 import struct
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,10 @@ class BaseEmbedder(ABC):
     @abstractmethod
     def close(self) -> None:
         """释放模型资源"""
+
+    @abstractmethod
+    def preload(self) -> None:
+        """预加载模型（不计算 embedding）"""
 
 
 class LlamaCppEmbedder(BaseEmbedder):
@@ -74,6 +79,9 @@ class LlamaCppEmbedder(BaseEmbedder):
                 pass
             self._model = None
 
+    def preload(self) -> None:
+        self._ensure_model()
+
     def embed(self, text: str) -> bytes:
         self._ensure_model()
         result = self._model.create_embedding([text])  # type: ignore[union-attr]
@@ -111,7 +119,7 @@ class SentenceTransformersEmbedder(BaseEmbedder):
         from sentence_transformers import SentenceTransformer
 
         logger.info("Loading embedding model (sentence_transformers): %s", self._model_name)
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
         if self._hf_token:
             kwargs["token"] = self._hf_token
 

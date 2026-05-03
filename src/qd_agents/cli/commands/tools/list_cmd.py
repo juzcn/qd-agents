@@ -201,7 +201,7 @@ async def _list_mcp_detail(console: Console, tools: list) -> None:
             if isinstance(result, Exception):
                 subtools_map[server_key] = []
             else:
-                subtools_map[server_key] = result
+                subtools_map[server_key] = result  # type: ignore[assignment]
 
     await mcp_service.close()
 

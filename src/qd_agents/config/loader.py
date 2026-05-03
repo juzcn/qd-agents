@@ -115,8 +115,6 @@ def load_config(
     config_file: Path | None = None,
 ) -> Config:
     """加载配置"""
-    from . import set_config
-
     if base_dir is None:
         base_dir = Path.cwd()
 
@@ -132,9 +130,6 @@ def load_config(
         # 如果没有 config.json，使用默认配置
         config = Config.with_defaults(base_dir=base_dir)
 
-    # 设置全局配置
-    set_config(config)
-
     # 尽早设置 HuggingFace 环境变量，确保后续任何 import 都不会触发联网
     _apply_hf_env(config)
 
@@ -144,7 +139,7 @@ def load_config(
 def _apply_hf_env(config: Config) -> None:
     """根据配置设置 HuggingFace 环境变量，必须在所有 HF 相关 import 之前调用。"""
     # 合并 memory 和 tool_registry 的离线设置：任一要求离线则全局离线
-    sources = []
+    sources: list[Any] = []
     if config.memory:
         sources.append(config.memory)
     if config.tool_registry:

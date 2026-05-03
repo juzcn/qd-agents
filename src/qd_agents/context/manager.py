@@ -318,14 +318,17 @@ class ContextManager:
 
     def build_use_tool_task_message(
         self,
-        job: Any,
+        *,
+        task_background: str = "",
+        task_description: str = "",
+        orchestration_logic: str = "",
     ) -> str:
         """构建 Use-Tool 子循环的 task message 内容
 
-        子循环共享主循环上下文，任务信息通过 tool message 注入。
-
         Args:
-            job: Job 对象（含 task_background, task_description, orchestration_logic）
+            task_background: 任务背景上下文
+            task_description: 任务具体描述
+            orchestration_logic: 工具编排逻辑描述
 
         Returns:
             task message 内容字符串
@@ -334,20 +337,23 @@ class ContextManager:
             raise RuntimeError("PromptLoader 未初始化，无法渲染 use_tool 模板")
         return self.prompts.render(
             "use_tool",
-            task_background=job.task_background,
-            task_description=job.task_description,
-            orchestration_logic=job.orchestration_logic,
+            task_background=task_background,
+            task_description=task_description,
+            orchestration_logic=orchestration_logic,
         )
 
     def build_find_tools_task_message(
         self,
-        job: Any,
+        *,
+        task_background: str = "",
+        task_description: str = "",
         builtin_tools: list[Tool],
     ) -> str:
         """构建 Find-Tools 子循环的 task message 内容
 
         Args:
-            job: Job 对象（含 task_background, task_description）
+            task_background: 任务背景上下文
+            task_description: 任务具体描述
             builtin_tools: 当前工具箱中所有工具
 
         Returns:
@@ -361,8 +367,8 @@ class ContextManager:
 
         return self.prompts.render(
             "find_tools",
-            task_background=job.task_background,
-            task_description=job.task_description,
+            task_background=task_background,
+            task_description=task_description,
             builtin_tool_groups=builtin_tool_groups,
             env_info=env_info,
         )

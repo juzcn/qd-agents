@@ -53,6 +53,8 @@ class ToolExecutionConfig(BaseModel):
     shell: str = "bash"  # 使用的shell，默认为bash
     openapi_url: str | None = None  # HTTP壳工具：OpenAPI 文档 URL
     openapi_filter: str | None = None  # HTTP壳工具：endpoint 过滤器
+    path: str | None = None  # HTTP壳工具：API 路径（配合 base_url 使用）
+    url: str | None = None  # MCP工具：SSE/HTTP 服务器 URL
 
 
 class ToolMetadata(BaseModel):

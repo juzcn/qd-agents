@@ -66,7 +66,7 @@ class Agent(ABC):
     description: str
 
     @abstractmethod
-    async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult: ...
+    async def execute(self, **kwargs) -> AgentResult: ...
 
 
 # --- MetaAgent 基类 ---
@@ -198,6 +198,7 @@ class MetaAgent(Agent):
                                    llm_attempt + 1, max_llm_retries, delay, e)
                     await asyncio.sleep(delay)
 
+            assert response is not None  # 成功重试后一定有响应
             choice = response.choices[0]
             assistant_message = choice.message
 

@@ -219,8 +219,12 @@ class MCPToolExecutor(ToolExecutor):
         """
         return self._tools_cache.copy()
 
-    async def execute(self, **kwargs: Any) -> Any:
+    async def execute(self, tool_input: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         """执行 MCP 工具"""
+        # 合并 tool_input 到 kwargs
+        if tool_input:
+            kwargs = {**tool_input, **kwargs}
+
         await self._ensure_connected()
 
         if not self._session:

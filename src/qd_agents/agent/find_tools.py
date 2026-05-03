@@ -1,20 +1,18 @@
 """Find-Tools Agent — 工具发现子循环
 
-根据任务需求，搜索、评估、安装并注册合适的工具。
-在主循环上下文中执行，完成后截断中间消息。
+接收 EvolveAgent 的委派，在主循环上下文中搜索和发现工具。
+完成后截断中间消息，只保留 final answer。
 """
 from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 import uuid
 from typing import Any
 
 from ..llm import LLMClient
 from ..context import ContextManager
-from ..models.job import Job
 from ..models.tool import Tool
 from ..registry import ToolRegistry
 from ..tools import ToolExecutorRegistry
@@ -32,7 +30,7 @@ class FindToolsAgent(MetaAgent):
     """
 
     name = "find-tools"
-    description = "工具发现子循环，搜索、安装并注册缺失的工具"
+    description = "工具发现子循环，搜索和发现可用工具"
 
     def __init__(
         self,
@@ -42,6 +40,7 @@ class FindToolsAgent(MetaAgent):
         executor_registry: ToolExecutorRegistry | None = None,
         max_iterations: int = 10,
         on_step: StepCallback | None = None,
+        expanded_tool_map: dict[str, Tool] | None = None,
         context_window_size: int = 0,
         context_summarizer_threshold: float = 0.75,
         task_background: str = "",
@@ -59,19 +58,24 @@ class FindToolsAgent(MetaAgent):
             task_requirements=task_requirements,
         )
         self.context = context_manager
+        self._expanded_tool_map = expanded_tool_map or {}
 
-    async def execute(self, job: Job, messages: list[dict], **kwargs) -> AgentResult:
+    async def execute(self, **kwargs) -> AgentResult:
         """执行工具发现子循环
 
         在主循环 messages 上操作：注入 task message，执行工具循环，完成后截断。
 
         Args:
-            job: Chat 输出的 Job 对象
+            task_background: 任务背景上下文
+            task_description: 任务具体描述
             messages: 主循环的消息列表（就地修改）
             **kwargs: on_step, cancel_event, memory_context 等
         """
         on_step = kwargs.get("on_step")
         cancel_event = kwargs.get("cancel_event")
+        task_background: str = kwargs.get("task_background", "")
+        task_description: str = kwargs.get("task_description", "")
+        messages: list[dict] = kwargs.get("messages", [])
         if on_step:
             self._on_step = on_step
         if cancel_event:
@@ -80,31 +84,41 @@ class FindToolsAgent(MetaAgent):
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
 
-        # 1. 构建固定工具集（搜索 + 注册 + bash）
-        fixed_tools = self._build_fixed_tools()
-        openai_tools = [t.to_openai_function() for t in fixed_tools]
-        tool_map = {t.name: t for t in fixed_tools}
+        # 1. 获取所有 builtin 工具
+        all_tools = self.registry.list_all()
+        builtin_tools = [t for t in all_tools if t.name not in ("delegate", "ask_user", "context_summarizer")]
 
-        # 确保 execute_bash 可用
-        openai_tools, tool_map = ensure_bash_available(
-            openai_tools, tool_map, self.registry
-        )
+        # 2. 构建 openai_tools 和 tool_map
+        openai_tools = [t.to_openai_function() for t in builtin_tools]
+        tool_map = {t.name: t for t in builtin_tools}
 
-        # 2. 获取所有 builtin 工具（展示给 LLM，避免重复注册）
-        builtin_tools = self.registry.list_all()
+        # 3. 添加 delegate 工具
+        delegate_tool = self.registry.get("delegate") or self.registry.get_by_name("delegate")
+        if delegate_tool and "delegate" not in tool_map:
+            openai_tools.append(delegate_tool.to_openai_function())
+            tool_map["delegate"] = delegate_tool
 
-        # 3. 记录当前 messages 长度，注入 task message
+        # 4. 确保 execute_bash 可用
+        ensure_bash_available(self.registry, self.executor_registry)
+        bash_tool = self.registry.get("execute_bash")
+        if bash_tool and "execute_bash" not in tool_map:
+            openai_tools.append(bash_tool.to_openai_function())
+            tool_map["execute_bash"] = bash_tool
+
+        # 5. 注入 task message
         start_idx = len(messages)
         task_message = self.context.build_find_tools_task_message(
-            job=job, builtin_tools=builtin_tools,
+            task_background=task_background,
+            task_description=task_description,
+            builtin_tools=builtin_tools,
         )
         messages.append({"role": "user", "content": task_message})
 
-        # 4. 设置 LLM 日志标识
+        # 6. 设置 LLM 日志标识
         self.llm.meta_agent_name = self.name
         self.llm.reset_log_count(messages)
 
-        # 5. 运行 MetaAgent 标准工具调用循环
+        # 7. 运行 MetaAgent 标准工具调用循环
         result = await self.run_loop(
             messages=messages,
             openai_tools=openai_tools,
@@ -112,54 +126,16 @@ class FindToolsAgent(MetaAgent):
             temperature=0.3,
         )
 
-        # 6. 提取注册的工具名
-        found_tool_names = self._extract_registered_tools(result.final_answer)
-
-        # 7. 截断中间消息（find-tools 是中间步骤，不保留到历史）
+        # 8. 截断中间消息，只保留 final answer
         del messages[start_idx:]
+        messages.append({"role": "assistant", "content": result.final_answer})
 
         return AgentResult(
             final_answer=result.final_answer,
             success=result.success,
-            working_memory={"found_tool_names": found_tool_names},
+            working_memory=result.working_memory,
             total_tokens=result.total_tokens,
             last_prompt_tokens=result.last_prompt_tokens,
             trace_id=trace_id,
             total_duration_ms=int((time.perf_counter() - start_time) * 1000),
         )
-
-    # --- 内部方法 ---
-
-    def _build_fixed_tools(self) -> list[Tool]:
-        """构建 Find-Tools 循环的工具集
-
-        从注册表中动态获取所有 builtin 工具（搜索、注册、fetch 等），
-        不硬编码工具名称列表，确保随工具箱进化自动更新。
-        """
-        all_tools = self.registry.list_all()
-        # 取所有 builtin scope 的工具 + execute_bash
-        tools = [t for t in all_tools if t.scope == "builtin"]
-        # 确保 execute_bash 在列表中
-        bash_tool = self.registry.get("execute_bash")
-        if bash_tool and bash_tool not in tools:
-            tools.append(bash_tool)
-        return tools
-
-    @staticmethod
-    def _extract_registered_tools(content: str) -> list[str]:
-        """从 LLM 最终消息中提取注册的工具名列表"""
-        match = re.search(r"已注册工具[：:]\s*(.+)", content)
-        if match:
-            names = [n.strip() for n in match.group(1).split(",") if n.strip()]
-            return names
-
-        json_match = re.search(r"\[([^\]]+)\]", content)
-        if json_match:
-            try:
-                parsed = json.loads(f"[{json_match.group(1)}]")
-                if isinstance(parsed, list):
-                    return [str(item) for item in parsed if isinstance(item, str)]
-            except json.JSONDecodeError:
-                pass
-
-        return []

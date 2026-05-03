@@ -12,7 +12,7 @@ import re
 import types
 from typing import Any, get_args, get_origin
 
-from .register import (
+from .registrars import (
     register_cli_tool,
     register_http_tool,
     register_mcp_tool,
