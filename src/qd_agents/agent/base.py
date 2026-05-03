@@ -66,7 +66,7 @@ class Agent(ABC):
     description: str
 
     @abstractmethod
-    async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult: ...
+    async def execute(self, **kwargs) -> AgentResult: ...
 
 
 # --- MetaAgent 基类 ---
@@ -198,6 +198,7 @@ class MetaAgent(Agent):
                                    llm_attempt + 1, max_llm_retries, delay, e)
                     await asyncio.sleep(delay)
 
+            assert response is not None  # 成功重试后一定有响应
             choice = response.choices[0]
             assistant_message = choice.message
 
@@ -242,11 +243,7 @@ class MetaAgent(Agent):
                     result_content = await self._handle_ask_user(
                         tool_call, tool_input, iteration,
                     )
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result_content,
-                    })
+                    messages.append(self.llm.format_tool_result(tool_call.id, result_content))
                     continue
 
                 # delegate：由子类拦截处理
@@ -254,11 +251,7 @@ class MetaAgent(Agent):
                     result_content = await self._handle_delegate(
                         tool_call, tool_input, tool_map, iteration, messages,
                     )
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result_content,
-                    })
+                    messages.append(self.llm.format_tool_result(tool_call.id, result_content))
                     continue
 
                 # context_summarizer：由子类或自身处理
@@ -266,11 +259,7 @@ class MetaAgent(Agent):
                     result_content = await self._handle_context_summarizer(
                         tool_call, tool_input, messages,
                     )
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result_content,
-                    })
+                    messages.append(self.llm.format_tool_result(tool_call.id, result_content))
                     continue
 
                 # --- SKILL 渐进式披露 ---
@@ -305,11 +294,7 @@ class MetaAgent(Agent):
                 result_summary = tool_result[:200] if len(tool_result) > 200 else tool_result
                 self._emit_step(iteration, event="tool_result", tool_name=tool_name, result_summary=result_summary)
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": tool_result,
-                })
+                messages.append(self.llm.format_tool_result(tool_call.id, tool_result))
 
         # 达到最大迭代次数
         return AgentResult(
@@ -480,25 +465,13 @@ class MetaAgent(Agent):
                 logger.info("Injecting SKILL.md into system prompt (prompt type): %s", tool_name)
                 if messages and messages[0].get("role") == "system":
                     messages[0]["content"] += f"\n\n## 技能指南: {tool_name}\n\n{skill_md}"
-                return [{
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": f"已加载技能 {tool_name} 的行为指南到系统提示词。请在后续所有决策中遵循该指南。",
-                }]
+                return [self.llm.format_tool_result(tool_call.id, f"已加载技能 {tool_name} 的行为指南到系统提示词。请在后续所有决策中遵循该指南。")]
             else:
                 # tool_manual 类型：注入到 tool result
                 logger.info("Injecting SKILL.md into tool result (tool_manual type): %s", tool_name)
-                return [{
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": f"已加载技能指南，请按照以下说明使用 execute_bash 执行：\n\n{skill_md}",
-                }]
+                return [self.llm.format_tool_result(tool_call.id, f"已加载技能指南，请按照以下说明使用 execute_bash 执行：\n\n{skill_md}")]
         else:
-            return [{
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": f"技能 {tool_name} 的 SKILL.md 未找到。",
-            }]
+            return [self.llm.format_tool_result(tool_call.id, f"技能 {tool_name} 的 SKILL.md 未找到。")]
 
     def _emit_step(
         self,

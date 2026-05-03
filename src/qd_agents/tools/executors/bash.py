@@ -87,8 +87,12 @@ class BashToolExecutor(ToolExecutor):
         self.use_exec = use_exec
         self.command = command
 
-    async def execute(self, **kwargs: Any) -> Any:
+    async def execute(self, tool_input: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         import shlex
+
+        # 合并 tool_input 到 kwargs（兼容旧调用方式）
+        if tool_input:
+            kwargs = {**tool_input, **kwargs}
 
         # 合并环境变量：当前进程环境 + 工具指定的额外环境变量
         process_env = None

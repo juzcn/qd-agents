@@ -98,6 +98,7 @@ def register_cli_tool(
         ),
         scope="default" if default else "user",
         metadata=ToolMetadata(tags=["cli", name]),
+        source_path=name,
     )
 
     return save_tool(tool, base_dir, config_file)

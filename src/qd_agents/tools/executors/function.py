@@ -22,13 +22,16 @@ class FunctionToolExecutor(ToolExecutor):
     def __init__(self, func: Callable):
         self.func = func
 
-    async def execute(self, **kwargs: Any) -> Any:
+    async def execute(self, tool_input: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         logger.info("Executing function tool: %s", self.func.__name__)
 
+        # 合并 tool_input 到 kwargs
+        merged = {**(tool_input or {}), **kwargs}
+
         if asyncio.iscoroutinefunction(self.func):
-            return await self.func(**kwargs)
+            return await self.func(**merged)
         else:
-            return self.func(**kwargs)
+            return self.func(**merged)
 
 
 def create_function_tool(

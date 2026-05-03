@@ -41,7 +41,7 @@ def ensure_logging(base_dir: Optional[Path] = None, config_file: Optional[Path] 
 
 def parse_help_with_llm(
     help_text: str, name: str, base_dir: Optional[Path], config_file: Optional[Path]
-) -> dict:
+) -> dict | None:
     """用 LLM 解析 --help 输出
 
     Returns:
@@ -69,6 +69,7 @@ def parse_help_with_llm(
             api_key=provider_config.api_key,
             base_url=provider_config.base_url,
             model_names=provider_config.get_model_names() or None,
+            api_mode=provider_config.api_mode,
         )
         try:
             logger.info("LLM 解析 --help: name=%s, provider=%s", name, provider_name)
@@ -99,17 +100,17 @@ def parse_help_with_llm(
 def run_add_skill_analyzer(
     skill_dir: Path, config: Any, base_dir: Optional[Path] = None
 ) -> Any:
-    """运行 AddSkillAnalyzer — 使用 LLMClient 直接调用，不依赖 LLMClientManager"""
+    """运行 analyze_skill — 使用 LLMClient 直接调用"""
     from qd_agents.config.paths import resolve_template_dir
     from qd_agents.prompts import PromptLoader
 
     ensure_logging(base_dir, None)
 
     try:
-        from qd_agents.agent.add_skill import AddSkillAnalyzer
+        from qd_agents.agent.add_skill import analyze_skill
         from qd_agents.context import ContextManager
     except ImportError as e:
-        logger.warning("AddSkillAnalyzer 依赖不可用: %s", e)
+        logger.warning("analyze_skill 依赖不可用: %s", e)
         return None
 
     async def _run():
@@ -118,11 +119,24 @@ def run_add_skill_analyzer(
 
         from qd_agents.cli.utils.registry import get_tool_registry
         from qd_agents.services.tool_service import ToolService
+        from qd_agents.services.mcp_service import MCPService
+        from qd_agents.models.tool import ToolExecutionType
         tool_registry = get_tool_registry(config)
 
         # 使用与 chat 相同的工具加载方式（含 MCP subtools）
         tool_service = ToolService()
-        expanded_tools = await tool_service.load_expanded_tools(tool_registry)
+        mcp_service = MCPService()
+        try:
+            await mcp_service.preload(
+                mcp_tools=[t for t in tool_registry.list_all() if t.execution.type == ToolExecutionType.MCP],
+                executor_registry=None,
+            )
+            expanded_tools, _, _ = tool_service.build_expanded_tools(
+                registry=tool_registry,
+                mcp_tools_cache=mcp_service.tools_cache,
+            )
+        finally:
+            await mcp_service.close()
 
         template_dir = resolve_template_dir(config)
         prompt_loader = PromptLoader(template_dir=template_dir)
@@ -141,13 +155,17 @@ def run_add_skill_analyzer(
         )
 
         try:
-            analyzer = AddSkillAnalyzer(llm_client=llm_client, context_manager=context_manager)
-            return await analyzer.analyze(skill_md=skill_md_content, tools=expanded_tools)
+            return await analyze_skill(
+                skill_md=skill_md_content,
+                tools=expanded_tools,
+                llm_client=llm_client,
+                context_manager=context_manager,
+            )
         finally:
             await llm_client.close()
 
     try:
         return asyncio.run(_run())
     except Exception as e:
-        logger.warning("AddSkillAnalyzer 执行失败: %s", e)
+        logger.warning("analyze_skill 执行失败: %s", e)
         return None

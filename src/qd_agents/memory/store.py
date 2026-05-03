@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import sqlite_vec
+import sqlite_vec  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 

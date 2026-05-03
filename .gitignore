@@ -49,6 +49,6 @@ test_*.py
 # Context compression temp files
 data/tmp/
 
-# Data directory (runtime generated) - now tracked by git
-# data/
+# Data directory (runtime generated, may contain secrets)
+data/
 

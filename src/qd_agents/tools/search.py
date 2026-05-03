@@ -11,26 +11,23 @@ from typing import Any
 
 import httpx
 
-from ..config import get_config
+from ..config import Config
 
 logger = logging.getLogger(__name__)
 
 
 # ==================== 搜索工具实现 ====================
 
-async def serper_search(query: str, num: int = 10) -> dict[str, Any]:
+async def serper_search(query: str, num: int = 10, *, config: Config) -> dict[str, Any]:
     """使用 Serper API 进行网络搜索"""
-    config = get_config()
-    if not config or not config.search.serper.api_key:
+    if not config.search.serper.api_key:
         raise ValueError("SERPER_API_KEY not found in config")
-
-    api_key = config.search.serper.api_key
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
             "https://google.serper.dev/search",
             headers={
-                "X-API-KEY": api_key,
+                "X-API-KEY": config.search.serper.api_key,
                 "Content-Type": "application/json",
             },
             json={"q": query, "num": num},
@@ -44,19 +41,18 @@ async def tavily_search(
     search_depth: str = "basic",
     include_answer: bool = True,
     max_results: int = 5,
+    *,
+    config: Config,
 ) -> dict[str, Any]:
     """使用 Tavily API 进行 AI 增强的网络搜索"""
-    config = get_config()
-    if not config or not config.search.tavily.api_key:
+    if not config.search.tavily.api_key:
         raise ValueError("TAVILY_API_KEY not found in config")
-
-    api_key = config.search.tavily.api_key
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
             "https://api.tavily.com/search",
             headers={
-                "Authorization": f"Bearer {api_key}",
+                "Authorization": f"Bearer {config.search.tavily.api_key}",
                 "Content-Type": "application/json",
             },
             json={

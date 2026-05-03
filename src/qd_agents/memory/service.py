@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..config.models import MemoryConfig
+from ..config.models import MemoryConfig, EmbeddingConfig
 from .embedder import BaseEmbedder, create_embedder
 from .recall import RecallService
 from .store import MemoryRecord, MemoryStore
@@ -24,25 +24,15 @@ logger = logging.getLogger(__name__)
 class MemoryService:
     """长期记忆服务 — 统一入口"""
 
-    def __init__(self, config: MemoryConfig) -> None:
+    def __init__(self, config: MemoryConfig, embedding_config: EmbeddingConfig | None = None) -> None:
         self._config = config
+        self._embedding_config = embedding_config or config.embedding
 
         # 嵌入引擎
-        model_path = config.model_path
-        if model_path is None or model_path.is_dir():
-            model_path = (model_path or Path(".")) / config.embedding_model
-        self._embedder: BaseEmbedder = create_embedder(
-            backend=config.embedding_backend,
-            model_path=model_path,
-            model_name=config.embedding_model,
-            vec_dim=config.vec_dim,
-            hf_token=config.hf_token,
-            hf_cache_dir=config.hf_cache_dir,
-            hf_hub_offline=config.hf_hub_offline,
-        )
+        self._embedder: BaseEmbedder = create_embedder(self._embedding_config)
 
         # 存储层
-        self._store = MemoryStore(config.db_path, vec_dim=config.vec_dim)
+        self._store = MemoryStore(config.db_path, vec_dim=self._embedding_config.vec_dim)
 
         # 召回服务
         self._recall = RecallService(

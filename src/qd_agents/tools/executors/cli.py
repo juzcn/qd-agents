@@ -22,9 +22,9 @@ class CliToolExecutor(BashToolExecutor):
     def __init__(self, shell_command: str = "", shell: str = "bash", timeout: int = 300, env: dict | None = None):
         super().__init__(shell_command=shell_command, shell=shell, timeout=timeout, env=env or {})
 
-    async def execute(self, tool_input: dict, **kwargs) -> str:
+    async def execute(self, tool_input: dict[str, Any] | None = None, **kwargs) -> str:
         tool: Any = kwargs.get("tool")
-        full_command = self._build_command(tool, tool_input)
+        full_command = self._build_command(tool, tool_input or {})
         logger.info("CLI tool [%s] assembled command: %s", tool.name, full_command)
         return await super().execute({"command": full_command}, **kwargs)
 

@@ -75,7 +75,7 @@ def main(
 
     if not options_executed:
         # 无子命令且无选项时，启动聊天会话
-        asyncio.run(chat_async(console, provider, model, None))
+        asyncio.run(chat_async(console, None, None, provider, model))
 
 
 
@@ -122,7 +122,7 @@ def tools_remove_command(
     keep_credentials: bool = typer.Option(False, "--keep-credentials", help="保留工具凭证配置"),
 ):
     """移除已注册的工具（支持所有类型）"""
-    remove_tools(console, tool_identifier, keep_credentials)
+    remove_tools(console, tool_identifier, keep_credentials=keep_credentials)
 
 
 # tools update-check 命令

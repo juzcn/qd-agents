@@ -26,7 +26,6 @@ from ..registry import ToolRegistry
 from ..prompts import PromptLoader
 from ..tools import ToolExecutorRegistry
 from ..services import MCPService, ToolService
-from ..utils import RetryConfig, RetryExecutor, CircuitBreaker, CircuitBreakerConfig, BackoffStrategy
 from .base import AgentResult, StepCallback, AskUserCallback
 from .chat import EvolveAgent
 from .use_tool import UseToolAgent
@@ -72,9 +71,6 @@ class QDAgent:
         self._use_tool_agent: UseToolAgent | None = None
         self._find_tools_agent: FindToolsAgent | None = None
 
-        # 初始化重试和熔断
-        self._setup_retry_and_circuit_breaker()
-
         # MCP 服务（委托 MCP 连接管理）
         self._mcp_service = MCPService()
 
@@ -92,29 +88,6 @@ class QDAgent:
         # 长期记忆服务
         self._memory_service: MemoryService | None = None
         self._session_id: str = str(uuid.uuid4())
-
-    def _setup_retry_and_circuit_breaker(self) -> None:
-        """配置重试和熔断器"""
-        self.retry_config = RetryConfig(
-            max_attempts=self.config.execution.max_attempts,
-            backoff_strategy=BackoffStrategy(self.config.execution.backoff_strategy),
-            initial_delay_ms=self.config.execution.initial_delay_ms,
-            max_delay_ms=self.config.execution.max_delay_ms,
-        )
-
-        self.circuit_breaker = CircuitBreaker(
-            CircuitBreakerConfig(
-                enabled=self.config.execution.circuit_breaker_enabled,
-                error_rate_threshold=self.config.execution.circuit_breaker_error_rate,
-                minimum_requests=self.config.execution.circuit_breaker_min_requests,
-                half_open_timeout_ms=self.config.execution.circuit_breaker_half_open_timeout,
-            )
-        )
-
-        self.retry_executor: RetryExecutor = RetryExecutor(
-            config=self.retry_config,
-            circuit_breaker=self.circuit_breaker,
-        )
 
     async def initialize(self) -> None:
         """初始化智能体"""
@@ -304,8 +277,13 @@ class QDAgent:
             tavily_search,
             fetch,
         )
-        self.executor_registry.register_function("serper_search", serper_search)
-        self.executor_registry.register_function("tavily_search", tavily_search)
+        # 搜索工具需要 config 参数，通过闭包注入
+        async def _serper_search(**kwargs):
+            return await serper_search(**kwargs, config=self.config)
+        async def _tavily_search(**kwargs):
+            return await tavily_search(**kwargs, config=self.config)
+        self.executor_registry.register_function("serper_search", _serper_search)
+        self.executor_registry.register_function("tavily_search", _tavily_search)
         self.executor_registry.register_function("fetch", fetch)
 
         from ..tools.builtin_register import (
@@ -315,7 +293,6 @@ class QDAgent:
             tool_register_http,
             tool_register_code,
             register_builtin_function_tools,
-            register_meta_function_tools,
             delegate,
             ask_user,
             context_summarizer,
@@ -334,7 +311,6 @@ class QDAgent:
         self.executor_registry.register_function("tools_list", tools_list)
 
         register_builtin_function_tools(self.registry)
-        register_meta_function_tools(self.registry)
 
         logger.info("Registered builtin tool executors")
 
@@ -372,7 +348,7 @@ class QDAgent:
 
         try:
             from ..memory.service import MemoryService
-            self._memory_service = MemoryService(self.config.memory)
+            self._memory_service = MemoryService(self.config.memory, self.config.embedding)
             logger.info("Memory service initialized (db: %s)", self.config.memory.db_path)
         except Exception as e:
             logger.warning("Failed to initialize memory service: %s", e)

@@ -33,12 +33,13 @@ class HTTPToolExecutor(ToolExecutor):
         self.headers = headers or {}
         self.timeout = timeout
 
-    async def execute(self, tool_input: dict, **kwargs: Any) -> str:
+    async def execute(self, tool_input: dict[str, Any] | None = None, **kwargs: Any) -> str:
         tool: Any = kwargs.get("tool")
-        exec_config: ToolExecutionConfig = tool.execution if tool else None
+        exec_config: ToolExecutionConfig | None = tool.execution if tool else None
+        inp = tool_input or {}
 
         # 解析 URL
-        url = self._resolve_url(exec_config, tool_input)
+        url = self._resolve_url(exec_config, inp)
 
         # 构建请求头：静态 headers + 认证头
         headers = dict(exec_config.headers) if exec_config else dict(self.headers)
@@ -46,19 +47,19 @@ class HTTPToolExecutor(ToolExecutor):
             self._inject_auth(headers, exec_config)
 
         # 解析方法
-        method = (tool_input.get("method") or (exec_config.method if exec_config else None) or self.method).upper()
+        method = (inp.get("method") or (exec_config.method if exec_config else None) or self.method).upper()
 
         # 构建请求参数
         request_kwargs: dict[str, Any] = {"headers": headers}
         if method in ("POST", "PUT", "PATCH"):
-            body = tool_input.get("body")
+            body = inp.get("body")
             if body is None:
                 # 兼容：如果没有 body 字段，把除保留字段外的参数作为 body
                 reserved = {"endpoint", "method", "params", "body"}
-                body = {k: v for k, v in tool_input.items() if k not in reserved}
+                body = {k: v for k, v in inp.items() if k not in reserved}
             request_kwargs["json"] = body if body else {}
         else:
-            params = tool_input.get("params")
+            params = inp.get("params")
             if params:
                 request_kwargs["params"] = params
 

@@ -29,7 +29,7 @@ class ImmediateFlushFileHandler(logging.FileHandler):
                 if self.immediate_flush and hasattr(stream, 'fileno'):
                     import os
                     try:
-                        os.fsync(stream.fileno())
+                        os.fsync(self.stream.fileno())
                     except (OSError, AttributeError):
                         pass
         except Exception:
@@ -41,7 +41,7 @@ class ImmediateFlushFileHandler(logging.FileHandler):
             if self.immediate_flush and hasattr(self.stream, 'fileno'):
                 import os
                 try:
-                    os.fsync(stream.fileno())
+                    os.fsync(self.stream.fileno())
                 except (OSError, AttributeError):
                     pass
 
@@ -65,7 +65,7 @@ class ImmediateFlushRotatingFileHandler(logging.handlers.RotatingFileHandler):
                 if self.immediate_flush and hasattr(stream, 'fileno'):
                     import os
                     try:
-                        os.fsync(stream.fileno())
+                        os.fsync(self.stream.fileno())
                     except (OSError, AttributeError):
                         pass
         except Exception:

@@ -12,7 +12,7 @@ import re
 import types
 from typing import Any, get_args, get_origin
 
-from .register import (
+from .registrars import (
     register_cli_tool,
     register_http_tool,
     register_mcp_tool,
@@ -169,10 +169,6 @@ _BUILTIN_FUNCTIONS = [
     tool_register_skill,
     tool_register_http,
     tool_register_code,
-    fetch,
-]
-
-_META_FUNCTIONS = [
     delegate,
     ask_user,
     context_summarizer,
@@ -315,37 +311,3 @@ def register_builtin_function_tools(registry: Any) -> None:
         logger.info("Registered builtin function tool: %s (module: %s)", tool.id, module)
 
 
-def register_meta_function_tools(registry: Any) -> None:
-    """将 delegate/ask_user/context_summarizer/tools_list 注册到数据库（scope=builtin）。
-
-    这些是框架核心的元工具，由 MetaAgent 循环拦截处理。
-    """
-    from qd_agents.models.tool import Tool, ToolExecutionConfig, ToolExecutionType, ToolMetadata
-
-    MODULE = "qd_agents.tools.builtin_register"
-
-    for func in _META_FUNCTIONS:
-        name = func.__name__
-        doc = inspect.getdoc(func) or ""
-        description = doc.split("。")[0] if doc else name
-        parameters = _generate_openai_schema(func)
-
-        # delegate 使用 DELEGATE 类型，其他使用 FUNCTION 类型
-        exec_type = ToolExecutionType.DELEGATE if name == "delegate" else ToolExecutionType.FUNCTION
-
-        tool = Tool(
-            id=f"builtin.{name}",
-            name=name,
-            description=description,
-            parameters=parameters,
-            execution=ToolExecutionConfig(
-                type=exec_type,
-                module=MODULE,
-                function=name,
-            ),
-            scope="builtin",
-            metadata=ToolMetadata(tags=["builtin", "meta", name], version="0.1.0"),
-        )
-
-        registry.register(tool)
-        logger.info("Registered meta function tool: %s (type=%s)", tool.id, exec_type.value)

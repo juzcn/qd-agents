@@ -33,9 +33,9 @@ def fetch_openapi_spec_safe(url: str, timeout: int = 15) -> dict | None:
         return None
 
 
-def parse_filter(filter_str: str) -> list[tuple[Optional[str], str]]:
+def parse_filter(filter_str: str) -> list[tuple[str | None, str]]:
     """解析 endpoint 过滤字符串，格式: METHOD:KEYWORD,KEYWORD"""
-    filters = []
+    filters: list[tuple[str | None, str]] = []
     for part in filter_str.split(","):
         part = part.strip()
         if ":" in part:

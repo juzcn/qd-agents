@@ -80,12 +80,14 @@ class EvolveAgent(MetaAgent):
         self._find_tools_agent = find_tools_agent
         self._refresh_callback = refresh_callback
 
-    async def execute(self, user_input: str, history: list[dict], **kwargs) -> AgentResult:
+    async def execute(self, **kwargs) -> AgentResult:
         """执行主循环
 
         构建 Evolve Agent 的 messages 和工具，运行 MetaAgent 标准循环。
         模型通过 delegate/ask_user 工具与子 Agent 和用户交互。
         """
+        user_input: str = kwargs.get("user_input", "")
+        history: list[dict] = kwargs.get("history", [])
         on_step = kwargs.get("on_step")
         cancel_event = kwargs.get("cancel_event")
         if on_step:
@@ -212,20 +214,10 @@ class EvolveAgent(MetaAgent):
         if not self._use_tool_agent:
             return json.dumps({"success": False, "error": "Use-Tool Agent 未初始化"}, ensure_ascii=False)
 
-        # 构建临时 Job 对象供 UseToolAgent 使用
-        from ..models.job import Job
-        job = Job(
-            route="use-tool",
+        result = await self._use_tool_agent.execute(
             task_background=task_background,
             task_description=task,
             tool_list=tool_names,
-            orchestration_logic="",
-        )
-
-        # Use-Tool Agent 在 messages 副本上操作，完成后截断中间消息
-        # 我们传入 messages 的引用，Use-Tool 会注入 task message 并在完成后截断
-        result = await self._use_tool_agent.execute(
-            job=job,
             messages=messages,
             trace_id=str(uuid.uuid4()),
             on_step=self._on_step,
@@ -249,16 +241,9 @@ class EvolveAgent(MetaAgent):
         if not self._find_tools_agent:
             return json.dumps({"success": False, "error": "Find-Tools Agent 未初始化"}, ensure_ascii=False)
 
-        # 构建临时 Job 对象供 FindToolsAgent 使用
-        from ..models.job import Job
-        job = Job(
-            route="find-tools",
+        result = await self._find_tools_agent.execute(
             task_background=task_background,
             task_description=task,
-        )
-
-        result = await self._find_tools_agent.execute(
-            job=job,
             messages=messages,
             trace_id=str(uuid.uuid4()),
             on_step=self._on_step,
@@ -272,7 +257,7 @@ class EvolveAgent(MetaAgent):
             try:
                 await self._refresh_callback()
                 # 更新 EvolveAgent 的工具列表
-                self._expanded_tools = self._use_tool_agent._expanded_tool_map.values() if self._use_tool_agent else self._expanded_tools
+                self._expanded_tools = list(self._use_tool_agent._expanded_tool_map.values()) if self._use_tool_agent else self._expanded_tools
             except Exception as e:
                 logger.error("Refresh callback failed: %s", e)
 
@@ -291,87 +276,11 @@ class EvolveAgent(MetaAgent):
         """
         tools = []
 
-        # delegate 工具
-        delegate_tool = self.registry.get("delegate") or self.registry.get_by_name("delegate")
-        if delegate_tool:
-            tools.append(delegate_tool.to_openai_function())
-        else:
-            # fallback：手动构建 schema
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": "delegate",
-                    "description": "调用子 Agent 执行任务。agent 为子 Agent 名称（Use-Tool/Find-Tools/Coding），task 为任务描述，task_background 为任务背景，tools 为需要使用的工具名列表（仅 Use-Tool 时使用）。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "agent": {
-                                "type": "string",
-                                "enum": ["Use-Tool", "Find-Tools", "Coding"],
-                                "description": "子 Agent 名称",
-                            },
-                            "task": {
-                                "type": "string",
-                                "description": "任务描述",
-                            },
-                            "task_background": {
-                                "type": "string",
-                                "description": "任务背景上下文",
-                            },
-                            "tools": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "需要使用的工具名列表（仅 Use-Tool 时使用）",
-                            },
-                        },
-                        "required": ["agent", "task"],
-                    },
-                },
-            })
-
-        # ask_user 工具
-        ask_user_tool = self.registry.get("ask_user") or self.registry.get_by_name("ask_user")
-        if ask_user_tool:
-            tools.append(ask_user_tool.to_openai_function())
-        else:
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": "ask_user",
-                    "description": "向用户提问并等待回复。question 为问题内容，options 为可选的选项列表，reason 为提问原因。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "question": {"type": "string", "description": "向用户提出的问题"},
-                            "options": {"type": "array", "items": {"type": "string"}, "description": "可选的选项列表"},
-                            "reason": {"type": "string", "description": "为什么需要用户输入"},
-                            "timeout_seconds": {"type": "integer", "description": "等待超时秒数"},
-                        },
-                        "required": ["question"],
-                    },
-                },
-            })
-
-        # context_summarizer 工具
-        ctx_tool = self.registry.get("context_summarizer") or self.registry.get_by_name("context_summarizer")
-        if ctx_tool:
-            tools.append(ctx_tool.to_openai_function())
-        else:
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": "context_summarizer",
-                    "description": "主动总结对话历史，压缩上下文。focus 为总结关注点，keep_recent 为保留最近的消息数。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "focus": {"type": "string", "description": "总结关注点"},
-                            "keep_recent": {"type": "integer", "description": "保留最近的消息数", "default": 20},
-                        },
-                        "required": [],
-                    },
-                },
-            })
+        for name in ("delegate", "ask_user", "context_summarizer"):
+            tool = self.registry.get(name) or self.registry.get_by_name(name)
+            if not tool:
+                raise RuntimeError(f"Builtin meta tool '{name}' not found in registry — agent not initialized properly")
+            tools.append(tool.to_openai_function())
 
         return tools
 

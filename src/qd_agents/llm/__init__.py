@@ -2,6 +2,7 @@
 LLM 模块
 """
 from .client import LLMClient, LLMError, AllModelsFailedError, create_client
+from .logging import LLMLogger
 from .formatters import (
     clean_escape_sequences,
     format_content,
@@ -15,6 +16,7 @@ __all__ = [
     "LLMError",
     "AllModelsFailedError",
     "create_client",
+    "LLMLogger",
     "formatters",
     "clean_escape_sequences",
     "format_content",
