@@ -32,7 +32,6 @@ from .builtin_register import (
     context_summarizer,
     tools_list,
     register_builtin_function_tools,
-    register_meta_function_tools,
 )
 
 from .builtins import echo
@@ -73,7 +72,6 @@ __all__ = [
     "tools_list",
     # 注册辅助
     "register_builtin_function_tools",
-    "register_meta_function_tools",
     # 错误类型
     "ToolRegistrationError",
     "ToolNotFoundError",

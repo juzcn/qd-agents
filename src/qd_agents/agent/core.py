@@ -293,7 +293,6 @@ class QDAgent:
             tool_register_http,
             tool_register_code,
             register_builtin_function_tools,
-            register_meta_function_tools,
             delegate,
             ask_user,
             context_summarizer,
@@ -312,7 +311,6 @@ class QDAgent:
         self.executor_registry.register_function("tools_list", tools_list)
 
         register_builtin_function_tools(self.registry)
-        register_meta_function_tools(self.registry)
 
         logger.info("Registered builtin tool executors")
 

@@ -105,6 +105,22 @@ class ToolRegistryConfig(BaseModel):
     sqlite_vec_enabled: bool = True
 
 
+class PresetToolConfig(BaseModel):
+    """预装工具配置 — 每项指定类型和注册参数"""
+    name: str
+    type: str  # "cli" | "mcp" | "skill" | "http" | "bash"
+    # cli: command, timeout
+    command: str | None = None
+    timeout: int = 60
+    # mcp: server 名，对应 tools/mcp/<server>.json
+    server: str | None = None
+    # skill: skill_name，对应 tools/skills/<skill_name>/SKILL.md
+    skill_name: str | None = None
+    # http: spec_url 或 spec_path
+    spec_url: str | None = None
+    spec_path: str | None = None
+
+
 class ExecutionConfig(BaseModel):
     """执行引擎配置"""
     default_timeout: int = 30000
@@ -217,6 +233,7 @@ class Config(BaseSettings):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     tool_registry: ToolRegistryConfig | None = None
+    preset_tools: list[PresetToolConfig] = Field(default_factory=list)
     memory: MemoryConfig | None = None
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     prompts: PromptsConfig | None = None
