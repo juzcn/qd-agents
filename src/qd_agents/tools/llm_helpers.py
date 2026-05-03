@@ -69,6 +69,7 @@ def parse_help_with_llm(
             api_key=provider_config.api_key,
             base_url=provider_config.base_url,
             model_names=provider_config.get_model_names() or None,
+            api_mode=provider_config.api_mode,
         )
         try:
             logger.info("LLM 解析 --help: name=%s, provider=%s", name, provider_name)

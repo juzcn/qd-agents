@@ -163,7 +163,8 @@ def recall_memories(
     config = load_config(base_dir=base_dir, config_file=config_file)
 
     db_path = config.memory.db_path if config.memory else Path("data/memory.db")
-    store = MemoryStore(db_path=db_path, vec_dim=config.memory.vec_dim if config.memory else 1024)
+    vec_dim = config.embedding.vec_dim if config.embedding else 1024
+    store = MemoryStore(db_path=db_path, vec_dim=vec_dim)
 
     try:
         count = store.count()

@@ -24,7 +24,7 @@ class AllModelsFailedError(LLMError):
 
 
 class LLMClient:
-    """LLM 客户端 - 支持多模型 Fallback"""
+    """LLM 客户端 - 支持多模型 Fallback，支持 Chat Completions 和 Responses 两种 API 模式"""
 
     def __init__(
         self,
@@ -33,6 +33,7 @@ class LLMClient:
         model_names: list[str] | None = None,
         timeout: float = 120.0,
         max_retries: int = 3,
+        api_mode: str = "completion",
     ):
         self._client = AsyncOpenAI(
             api_key=api_key,
@@ -44,8 +45,13 @@ class LLMClient:
         self._current_model_index = 0
         self._api_key = api_key
         self._base_url = base_url
+        self._api_mode = api_mode
         self._meta_agent_name: str = ""
         self._logger = LLMLogger()
+
+    @property
+    def api_mode(self) -> str:
+        return self._api_mode
 
     @property
     def meta_agent_name(self) -> str:
@@ -138,7 +144,30 @@ class LLMClient:
         tool_choice: str | dict[str, Any] | None = None,
         stream: bool = False,
     ) -> Any:
-        """聊天补全（带自动 Fallback）"""
+        """聊天补全（带自动 Fallback）— 根据 api_mode 分派"""
+        if self._api_mode == "response":
+            return await self._call_responses(
+                messages=messages, model=model, temperature=temperature,
+                max_tokens=max_tokens, tools=tools, tool_choice=tool_choice,
+                stream=stream,
+            )
+        return await self._call_completions(
+            messages=messages, model=model, temperature=temperature,
+            max_tokens=max_tokens, tools=tools, tool_choice=tool_choice,
+            stream=stream,
+        )
+
+    async def _call_completions(
+        self,
+        messages: list[dict[str, str]],
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        stream: bool = False,
+    ) -> Any:
+        """Chat Completions API 调用（带自动 Fallback）"""
         last_exception: Exception | None = None
         start_index = self._current_model_index
 
@@ -191,6 +220,127 @@ class LLMClient:
         raise AllModelsFailedError(
             f"All models failed. Last error: {last_exception}"
         ) from last_exception
+
+    async def _call_responses(
+        self,
+        messages: list[dict[str, str]],
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        stream: bool = False,
+    ) -> Any:
+        """Responses API 调用（带自动 Fallback），返回 Chat Completions 兼容格式"""
+        last_exception: Exception | None = None
+        start_index = self._current_model_index
+
+        while True:
+            use_model = model or self.current_model
+
+            try:
+                logger.info("Calling model (responses): %s (MetaAgent: %s)", use_model, self._meta_agent_name or "unknown")
+                self._logger.log_prompt(messages, self._meta_agent_name or "unknown")
+
+                kwargs: dict[str, Any] = {
+                    "model": use_model,
+                    "input": messages,
+                }
+                if temperature != 0.7:
+                    kwargs["temperature"] = temperature
+                if max_tokens is not None:
+                    kwargs["max_output_tokens"] = max_tokens
+                if tools is not None:
+                    kwargs["tools"] = tools
+                if tool_choice is not None:
+                    kwargs["tool_choice"] = tool_choice
+
+                response = await self._client.responses.create(**kwargs)
+                self._logger.log_token_usage(getattr(response, 'usage', None), use_model)
+
+                return self._convert_response(response)
+
+            except (APIError, APIStatusError, APITimeoutError) as e:
+                last_exception = e
+                logger.warning("Model %s failed: %s", use_model, e)
+
+                if not self._failover_to_next_model():
+                    break
+                if self._current_model_index == start_index:
+                    break
+
+            except Exception as e:
+                last_exception = e
+                logger.error("Unexpected error with model %s: %s", use_model, e)
+                break
+
+        raise AllModelsFailedError(
+            f"All models failed. Last error: {last_exception}"
+        ) from last_exception
+
+    @staticmethod
+    def _convert_response(response: Any) -> Any:
+        """将 Responses API 响应转换为 Chat Completions 兼容格式
+
+        MetaAgent.run_loop() 期望 response.choices[0].message.content 和 .tool_calls。
+        此方法从 Responses API 的 response.output 中提取相同结构。
+        """
+        from openai.types.chat import ChatCompletion, ChatCompletionMessage
+        from openai.types.chat.chat_completion_message_tool_call import Function, ChatCompletionMessageFunctionToolCall
+
+        content = ""
+        tool_calls: list[ChatCompletionMessageFunctionToolCall] = []
+
+        for item in (response.output or []):
+            if getattr(item, 'type', None) == "message":
+                for content_item in (item.content or []):
+                    if getattr(content_item, 'type', None) == "output_text":
+                        content += content_item.text or ""
+            elif getattr(item, 'type', None) == "function_call":
+                tool_calls.append(ChatCompletionMessageFunctionToolCall(
+                    id=str(getattr(item, 'call_id', None) or getattr(item, 'id', '')),
+                    function=Function(
+                        name=item.name,
+                        arguments=item.arguments,
+                    ),
+                    type="function",
+                ))
+
+        from typing import cast
+        message = ChatCompletionMessage(
+            role="assistant",
+            content=content or None,
+            tool_calls=cast(Any, tool_calls if tool_calls else None),
+        )
+
+        choices = [type('Choice', (), {
+            'index': 0,
+            'message': message,
+            'finish_reason': 'tool_calls' if tool_calls else 'stop',
+        })()]
+
+        return ChatCompletion(
+            id=response.id,
+            choices=choices,
+            created=response.created_at if hasattr(response, 'created_at') else 0,
+            model=response.model,
+            object="chat.completion",
+            usage=response.usage,
+        )
+
+    def format_tool_result(self, tool_call_id: str, result: str) -> dict[str, Any]:
+        """格式化工具执行结果，根据 api_mode 返回对应格式的消息 dict"""
+        if self._api_mode == "response":
+            return {
+                "type": "function_call_output",
+                "call_id": tool_call_id,
+                "output": result,
+            }
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": result,
+        }
 
     async def chat_stream(
         self,

@@ -350,7 +350,7 @@ class QDAgent:
 
         try:
             from ..memory.service import MemoryService
-            self._memory_service = MemoryService(self.config.memory)
+            self._memory_service = MemoryService(self.config.memory, self.config.embedding)
             logger.info("Memory service initialized (db: %s)", self.config.memory.db_path)
         except Exception as e:
             logger.warning("Failed to initialize memory service: %s", e)

@@ -12,6 +12,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from ..config.models import EmbeddingConfig
+
 logger = logging.getLogger(__name__)
 
 # 空日志回调 — 替代 llama.cpp 默认的 C→Python 日志回调，从根源避免 ctypes callback 异常。
@@ -158,25 +160,19 @@ class SentenceTransformersEmbedder(BaseEmbedder):
         return self._model.encode(text, show_progress_bar=False).tolist()  # type: ignore[union-attr]
 
 
-def create_embedder(
-    backend: str = "llama_cpp",
-    model_path: Path | None = None,
-    model_name: str = "BAAI/bge-m3",
-    vec_dim: int = 1024,
-    n_ctx: int = 8192,
-    hf_token: str = "",
-    hf_cache_dir: str = "",
-    hf_hub_offline: bool = False,
-) -> BaseEmbedder:
-    """工厂函数 — 根据后端配置创建嵌入引擎"""
-    if backend == "sentence_transformers":
-        return SentenceTransformersEmbedder(model_name=model_name, vec_dim=vec_dim, hf_token=hf_token, hf_cache_dir=hf_cache_dir, hf_hub_offline=hf_hub_offline)
-    if backend == "llama_cpp":
-        if model_path is None:
-            raise ValueError("llama_cpp backend requires model_path")
-        return LlamaCppEmbedder(model_path=model_path, vec_dim=vec_dim, n_ctx=n_ctx)
-    raise ValueError(f"Unknown embedding backend: {backend!r}")
-
-
-# 向后兼容别名
-Embedder = LlamaCppEmbedder
+def create_embedder(config: EmbeddingConfig) -> BaseEmbedder:
+    """工厂函数 — 根据嵌入配置创建嵌入引擎"""
+    if config.backend == "sentence_transformers":
+        return SentenceTransformersEmbedder(
+            model_name=config.model,
+            vec_dim=config.vec_dim,
+            hf_token=config.hf_token,
+            hf_cache_dir=config.hf_cache_dir,
+            hf_hub_offline=config.hf_hub_offline,
+        )
+    if config.backend == "llama_cpp":
+        model_path = config.model_path
+        if model_path is None or model_path.is_dir():
+            model_path = (model_path or Path(".")) / config.model
+        return LlamaCppEmbedder(model_path=model_path, vec_dim=config.vec_dim)
+    raise ValueError(f"Unknown embedding backend: {config.backend!r}")

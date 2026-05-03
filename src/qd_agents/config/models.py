@@ -33,6 +33,7 @@ class LLMProviderConfig(BaseModel):
     api_key: str
     base_url: str = "https://integrate.api.nvidia.com/v1"
     models: list[str | ModelSpecConfig] = Field(default_factory=list)
+    api_mode: str = "completion"  # "completion" | "response"
     timeout: int = 120000
     max_retries: int = 3
     auto_discover: bool = True
@@ -75,16 +76,21 @@ class LLMConfig(BaseModel):
     tool_threshold: int = 50
 
 
-class MemoryConfig(BaseModel):
-    """长期记忆配置"""
-    db_path: Path = Path("data/memory.db")
-    embedding_backend: str = "llama_cpp"
-    embedding_model: str = "hf_KimChen_bge-m3-q4_k_m.gguf"
+class EmbeddingConfig(BaseModel):
+    """嵌入引擎配置 — 全局共享，memory 和 tool_registry 共用"""
+    backend: str = "llama_cpp"
+    model: str = "hf_KimChen_bge-m3-q4_k_m.gguf"
+    model_path: Path | None = None
+    vec_dim: int = 1024
     hf_token: str = ""
     hf_cache_dir: str = ""
     hf_hub_offline: bool = False
-    model_path: Path | None = None
-    vec_dim: int = 1024
+
+
+class MemoryConfig(BaseModel):
+    """长期记忆配置"""
+    db_path: Path = Path("data/memory.db")
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     top_k: int = 5
     similarity_threshold: float = 0.7
     hybrid_search: bool = True
@@ -94,18 +100,9 @@ class MemoryConfig(BaseModel):
 
 
 class ToolRegistryConfig(BaseModel):
-    """Tool Registry 配置"""
+    """工具注册表配置"""
     db_path: Path
     sqlite_vec_enabled: bool = True
-    embedding_backend: str = "llama_cpp"
-    embedding_model: str = "hf_KimChen_bge-m3-q4_k_m.gguf"
-    hf_token: str = ""
-    hf_cache_dir: str = ""
-    hf_hub_offline: bool = False
-    model_path: Path | None = None
-    top_k: int = 10
-    similarity_threshold: float = 0.7
-    hybrid_search: bool = True
 
 
 class ExecutionConfig(BaseModel):
@@ -217,6 +214,7 @@ class Config(BaseSettings):
 
     system: SystemConfig = Field(default_factory=SystemConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     tool_registry: ToolRegistryConfig | None = None
     memory: MemoryConfig | None = None
@@ -235,13 +233,14 @@ class Config(BaseSettings):
         model_path = base_dir / "hf_KimChen_bge-m3-q4_k_m.gguf"
 
         return cls(
+            embedding=EmbeddingConfig(
+                model_path=model_path if model_path.exists() else None,
+            ),
             tool_registry=ToolRegistryConfig(
                 db_path=data_dir / "tools.db",
-                model_path=model_path if model_path.exists() else None,
             ),
             memory=MemoryConfig(
                 db_path=data_dir / "memory.db",
-                model_path=model_path if model_path.exists() else None,
             ),
             prompts=PromptsConfig(
                 template_dir=base_dir / "src" / "qd_agents" / "prompts" / "templates",

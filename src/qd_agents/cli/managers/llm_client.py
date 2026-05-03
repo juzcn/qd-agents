@@ -78,6 +78,7 @@ class LLMClientManager:
             api_key=self.provider_config.api_key,
             base_url=self.provider_config.base_url,
             model_names=model_names if model_names else None,
+            api_mode=self.provider_config.api_mode,
         )
 
         # 如果启用了自动发现且没有预定义模型，则发现模型

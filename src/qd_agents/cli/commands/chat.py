@@ -140,6 +140,7 @@ class ChatCommandHandler:
                     async with LLMClient(
                         api_key=other_config.api_key,
                         base_url=other_config.base_url,
+                        api_mode=other_config.api_mode,
                     ) as temp_client:
                         await temp_client.discover_models(top_k=5)
                         for model_name in temp_client.available_models:
