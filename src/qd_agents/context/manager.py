@@ -391,7 +391,6 @@ class ContextManager:
         task_background: str = "",
         task_description: str = "",
         detail_tools: list[Tool],
-        all_tools: list[Tool],
         tools_detail_section: str = "",
     ) -> str:
         """构建 Find-Tools 子循环的 task message 内容
@@ -400,7 +399,6 @@ class ContextManager:
             task_background: 任务背景上下文
             task_description: 任务具体描述
             detail_tools: Find-Tools Agent 可调用的工具列表（含 detail schema）
-            all_tools: 工具箱中所有工具（用于概览，避免重复注册）
             tools_detail_section: 预渲染的工具详情（含 SKILL.md），为空时自动生成
 
         Returns:
@@ -419,7 +417,6 @@ class ContextManager:
             task_background=task_background,
             task_description=task_description,
             tools_detail_section=tools_detail_section,
-            tools_section=format_tools_markdown(all_tools),
             env_info=env_info,
         )
 

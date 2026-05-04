@@ -86,13 +86,7 @@ class FindToolsAgent(MetaAgent):
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
 
-        # 1. 获取所有已注册工具（用于工具箱概览）
-        if self._expanded_tool_map:
-            all_tools = list(self._expanded_tool_map.values())
-        else:
-            all_tools = list(self.registry.list_all())
-
-        # 2. 从 tool_list 解析出 tool_map（含壳工具→subtool 展开）
+        # 1. 从 tool_list 解析出 tool_map（含壳工具→subtool 展开）
         tool_map = resolve_tool_map(tool_list or [], self._expanded_tool_map, self.registry)
         if not tool_map:
             logger.warning("No tools resolved from tool_list: %s", tool_list)
@@ -121,7 +115,6 @@ class FindToolsAgent(MetaAgent):
             task_background=task_background,
             task_description=task_description,
             detail_tools=detail_tools,
-            all_tools=all_tools,
             tools_detail_section=tools_detail_section,
         )
         messages: list[dict] = [
