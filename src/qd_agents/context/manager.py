@@ -278,9 +278,9 @@ class ContextManager:
             logger.debug("Using cached system prompt for chat")
         else:
             if not self.prompts:
-                raise RuntimeError("PromptLoader 未初始化，无法渲染 chat 模板")
+                raise RuntimeError("PromptLoader 未初始化，无法渲染 evolve 模板")
             system_prompt = self.prompts.render(
-                "chat",
+                "evolve",
                 tools=tools,
                 tools_section=format_tools_markdown(tools),
                 observations=[],
