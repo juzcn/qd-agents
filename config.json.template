@@ -90,6 +90,8 @@
     "per_tool_timeout": {},
     "max_attempts": 3,
     "max_iterations": 100,
+    "max_use_tool_iterations": 30,
+    "max_find_tools_iterations": 20,
     "backoff_strategy": "exponential_with_jitter",
     "initial_delay_ms": 1000,
     "max_delay_ms": 30000,
