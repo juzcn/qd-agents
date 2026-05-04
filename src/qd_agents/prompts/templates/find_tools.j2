@@ -19,21 +19,7 @@
 
 ## 当前工具箱
 
-{% for type_label, type_tools in builtin_tool_groups.non_mcp_types %}
-### {{ type_label }}
-{% for tool in type_tools %}
-- [{{ type_label }}] **{{ tool.name }}**: {{ tool.description }}
-{% endfor %}
-{% endfor %}
-{% if builtin_tool_groups.mcp_servers %}
-### mcp
-{% for server in builtin_tool_groups.mcp_servers %}
-#### {{ server.server_name }} ({{ server.server_desc }})
-{% for tool in server.subtools %}
-- [mcp] **{{ tool.name }}**: {{ tool.description }}
-{% endfor %}
-{% endfor %}
-{% endif %}
+{{ builtin_tools_section }}
 
 ## 要求
 

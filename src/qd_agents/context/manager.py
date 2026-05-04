@@ -109,12 +109,13 @@ def _group_tools_by_type(tools: list[Tool]) -> dict[str, Any]:
 _SCOPE_LABELS = {"builtin": "内置", "default": "默认", "user": "用户安装"}
 
 
-def format_tools_markdown(tools: list[Tool], *, show_type_tag: bool = True) -> str:
+def format_tools_markdown(tools: list[Tool], *, show_type_tag: bool = True, detail: bool = False) -> str:
     """将工具列表渲染为 markdown，按 scope→type 排序。
 
     Args:
         tools: 工具列表
         show_type_tag: 是否在每行前显示 [type] 标签（chat 需要，add_skill 不需要）
+        detail: 是否显示工具参数详情（子 Agent 需要，Evolve Agent 不需要）
 
     Returns:
         渲染后的 markdown 字符串
@@ -131,6 +132,8 @@ def format_tools_markdown(tools: list[Tool], *, show_type_tag: bool = True) -> s
                     lines.append(f"- [{type_label}] **{t.name}**: {t.description}")
                 else:
                     lines.append(f"- **{t.name}**: {t.description}")
+                if detail:
+                    lines.append(_format_tool_params(t))
         for server_info in sg["mcp_servers"]:
             lines.append(f"#### {server_info['server_name']} ({server_info['server_desc']})")
             for t in server_info["subtools"]:
@@ -138,8 +141,26 @@ def format_tools_markdown(tools: list[Tool], *, show_type_tag: bool = True) -> s
                     lines.append(f"- [mcp] **{t.name}**: {t.description}")
                 else:
                     lines.append(f"- **{t.name}**: {t.description}")
+                if detail:
+                    lines.append(_format_tool_params(t))
 
     return "\n".join(lines)
+
+
+def _format_tool_params(tool: Tool) -> str:
+    """格式化单个工具的参数详情"""
+    params = tool.parameters or {}
+    props = params.get("properties", {})
+    required = params.get("required", [])
+    if not props:
+        return "  - 参数: 无"
+    parts = []
+    for pname, pdef in props.items():
+        ptype = pdef.get("type", "any")
+        pdesc = pdef.get("description", "")
+        req = ", 必填" if pname in required else ""
+        parts.append(f"  - `{pname}` ({ptype}{req}): {pdesc}")
+    return "\n".join(parts)
 
 
 class ContextManager:
@@ -322,6 +343,7 @@ class ContextManager:
         task_background: str = "",
         task_description: str = "",
         orchestration_logic: str = "",
+        tools: list[Tool] | None = None,
     ) -> str:
         """构建 Use-Tool 子循环的 task message 内容
 
@@ -329,6 +351,7 @@ class ContextManager:
             task_background: 任务背景上下文
             task_description: 任务具体描述
             orchestration_logic: 工具编排逻辑描述
+            tools: 任务可用的工具列表
 
         Returns:
             task message 内容字符串
@@ -340,6 +363,8 @@ class ContextManager:
             task_background=task_background,
             task_description=task_description,
             orchestration_logic=orchestration_logic,
+            tools=tools or [],
+            tools_section=format_tools_markdown(tools or [], detail=True),
         )
 
     def build_find_tools_task_message(
@@ -370,6 +395,7 @@ class ContextManager:
             task_background=task_background,
             task_description=task_description,
             builtin_tool_groups=builtin_tool_groups,
+            builtin_tools_section=format_tools_markdown(builtin_tools, detail=True),
             env_info=env_info,
         )
 
