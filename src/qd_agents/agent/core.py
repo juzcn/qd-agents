@@ -254,6 +254,10 @@ class QDAgent:
         if self._use_tool_agent:
             self._use_tool_agent._expanded_tool_map = tool_map
 
+        # 更新 FindToolsAgent 的工具映射
+        if self._find_tools_agent:
+            self._find_tools_agent._expanded_tool_map = tool_map
+
         logger.info("Tool caches refreshed: %d expanded tools", len(expanded))
 
     # --- 生命周期管理 ---

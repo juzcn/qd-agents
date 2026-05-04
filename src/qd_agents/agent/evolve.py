@@ -204,6 +204,7 @@ class EvolveAgent(MetaAgent):
                     task_background=task_background,
                     tool_names=tool_names,
                     iteration=iteration,
+                    messages=messages,
                 )
             elif agent_name == "Coding":
                 result = json.dumps({
@@ -262,6 +263,7 @@ class EvolveAgent(MetaAgent):
         task_background: str,
         tool_names: list[str],
         iteration: int,
+        messages: list[dict] | None = None,
     ) -> str:
         """委派到 Find-Tools Agent（独立上下文）"""
         if not self._find_tools_agent:
@@ -278,7 +280,7 @@ class EvolveAgent(MetaAgent):
             cancel_event=self._cancel_event,
         )
 
-        # 如果发现新工具，刷新工具缓存
+        # 如果发现新工具，刷新工具缓存并更新系统提示词
         found_tool_names = result.working_memory.get("found_tool_names", []) if result.working_memory else []
         if found_tool_names and self._refresh_callback:
             logger.info("Find-Tools discovered %d tools, refreshing caches: %s", len(found_tool_names), found_tool_names)
@@ -286,6 +288,20 @@ class EvolveAgent(MetaAgent):
                 await self._refresh_callback()
                 # 更新 EvolveAgent 的工具列表
                 self._expanded_tools = list(self._use_tool_agent._expanded_tool_map.values()) if self._use_tool_agent else self._expanded_tools
+                # 清除系统提示词缓存，下次渲染用新工具列表
+                self.context._chat_cache.clear()
+                # 重新渲染系统提示词并更新 messages[0]
+                if messages and len(messages) > 0 and messages[0].get("role") == "system":
+                    new_system = self.context.build_evolve_messages(
+                        user_input="",
+                        tools=self._expanded_tools,
+                        task_background=self._task_background,
+                        task_requirements=self._task_requirements,
+                        tool_list=self.DEFAULT_TOOL_LIST,
+                    )
+                    new_content = new_system[0].get("content", messages[0]["content"])
+                    messages[0]["content"] = new_content
+                    logger.info("Updated system prompt with %d new tools: %s", len(found_tool_names), found_tool_names)
             except Exception as e:
                 logger.error("Refresh callback failed: %s", e)
 
