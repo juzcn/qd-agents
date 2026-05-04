@@ -40,6 +40,10 @@ class EvolveAgent(MetaAgent):
     name = "evolve"
     description = "智能体主循环，通过 delegate 路由到子 Agent"
 
+    DEFAULT_TASK_BACKGROUND = "你是一个主会话Agent，协调管理子Agent的工作"
+    DEFAULT_TASK_REQUIREMENTS = "你的主要任务如下：你能依靠知识回答的时候，直接回答；需要使用和编排工具回答的，delegate to Use-Tool Agent；你发现没有合适的工具回答时，你delegate to Find-Tools Agent，按delegate的参数要求输出"
+    DEFAULT_TOOL_LIST = ["delegate"]
+
     def __init__(
         self,
         llm_client: LLMClient,
@@ -57,9 +61,11 @@ class EvolveAgent(MetaAgent):
         refresh_callback: Any | None = None,
         context_window_size: int = 0,
         context_summarizer_threshold: float = 0.75,
-        task_background: str = "你是一个主会话Agent，协调管理子Agent的工作",
-        task_requirements: str = "你的主要任务如下：你能依靠知识回答的时候，直接回答；需要使用和编排工具回答的，delegate to Use-Tool Agent；你发现没有合适的工具回答时，你delegate to Find-Tools Agent，按delegate的参数要求输出",
+        task_background: str = "",
+        task_requirements: str = "",
     ):
+        task_background = task_background or self.DEFAULT_TASK_BACKGROUND
+        task_requirements = task_requirements or self.DEFAULT_TASK_REQUIREMENTS
         super().__init__(
             llm_client=llm_client,
             tool_registry=tool_registry,
@@ -108,12 +114,13 @@ class EvolveAgent(MetaAgent):
             )
 
         # 1. 构建 messages（含系统提示词 + 历史 + 用户输入）
-        messages = self.context.build_chat_messages(
+        messages = self.context.build_evolve_messages(
             user_input=user_input,
             tools=self._expanded_tools,
             history=history,
-            task_background=self.task_background,
-            task_requirements=self.task_requirements,
+            task_background=self._task_background,
+            task_requirements=self._task_requirements,
+            tool_list=self.DEFAULT_TOOL_LIST,
         )
 
         # 2. 构建内置工具 schema（delegate + ask_user + context_summarizer）

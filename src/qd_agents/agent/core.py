@@ -27,7 +27,7 @@ from ..prompts import PromptLoader
 from ..tools import ToolExecutorRegistry
 from ..services import MCPService, ToolService
 from .base import AgentResult, StepCallback, AskUserCallback
-from .chat import EvolveAgent
+from .evolve import EvolveAgent
 from .use_tool import UseToolAgent
 from .find_tools import FindToolsAgent
 

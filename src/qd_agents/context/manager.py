@@ -246,12 +246,15 @@ class ContextManager:
         logger.debug("Loaded SKILL.md for %s (%d chars)", skill_dir_name, len(body))
         return body
 
-    def build_chat_messages(
+    def build_evolve_messages(
         self,
         user_input: str,
         tools: list[Tool],
         history: list[dict[str, str]] | None = None,
         observations: list[str] | None = None,
+        task_background: str = "",
+        task_requirements: str = "",
+        tool_list: list[str] | None = None,
     ) -> list[dict[str, str]]:
         """
         构建自主进化决策消息
@@ -279,12 +282,18 @@ class ContextManager:
         else:
             if not self.prompts:
                 raise RuntimeError("PromptLoader 未初始化，无法渲染 evolve 模板")
+            # tool_list 指定需要渲染 detail schema 的工具名，默认只渲染 delegate
+            detail_names = set(tool_list) if tool_list else {"delegate"}
+            detail_tools = [t for t in tools if t.name in detail_names]
             system_prompt = self.prompts.render(
                 "evolve",
                 tools=tools,
                 tools_section=format_tools_markdown(tools),
+                tools_detail_section=format_tools_markdown(detail_tools, detail=True),
                 observations=[],
                 env_info=self._get_env_info(),
+                task_background=task_background,
+                task_requirements=task_requirements,
             )
 
             self._chat_cache[cache_key] = system_prompt
