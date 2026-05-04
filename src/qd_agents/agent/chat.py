@@ -112,6 +112,8 @@ class EvolveAgent(MetaAgent):
             user_input=user_input,
             tools=self._expanded_tools,
             history=history,
+            task_background=self.task_background,
+            task_requirements=self.task_requirements,
         )
 
         # 2. 构建内置工具 schema（delegate + ask_user + context_summarizer）
