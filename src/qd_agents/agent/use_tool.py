@@ -13,7 +13,8 @@ from typing import Any
 
 from ..llm import LLMClient
 from ..context import ContextManager
-from ..models.tool import Tool
+from ..context.manager import format_tools_markdown
+from ..models.tool import Tool, ToolExecutionType
 from ..registry import ToolRegistry
 from ..tools import ToolExecutorRegistry
 from .base import MetaAgent, AgentResult, StepCallback
@@ -108,10 +109,28 @@ class UseToolAgent(MetaAgent):
             tool_map["execute_bash"] = bash_tool
 
         # 4. 构建独立上下文：system_prompt + task_message
+        # 为 skill 工具加载 SKILL.md 作为工具详情
+        tools_detail_parts: list[str] = []
+        for t in tools:
+            tools_detail_parts.append(format_tools_markdown([t], detail=True))
+            # skill 工具追加 SKILL.md 内容
+            if t.execution and t.execution.type == ToolExecutionType.SKILL:
+                skill_md = ""
+                if hasattr(self, "context") and self.context:
+                    skill_md = self.context._load_skill_md(t.local_path or t.name) or ""
+                if skill_md:
+                    tools_detail_parts.append(f"\n### {t.name} SKILL.md\n\n{skill_md}")
+
+        # 同时包含 execute_bash 的详情（如果已添加）
+        if bash_tool and "execute_bash" not in {t.name for t in tools}:
+            tools_detail_parts.append(format_tools_markdown([bash_tool], detail=True))
+
+        tools_detail_section = "\n".join(tools_detail_parts)
         task_message = self.context.build_use_tool_task_message(
             task_background=task_background,
             task_description=task_description,
             tools=tools,
+            tools_detail_section=tools_detail_section,
         )
         messages: list[dict] = [
             {"role": "system", "content": task_message},

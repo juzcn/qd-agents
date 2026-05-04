@@ -41,10 +41,10 @@ def create_executor(tool: Tool) -> ToolExecutor:
         )
 
     elif exec_config.type == ToolExecutionType.BASH:
-        if not exec_config.shell_command:
+        if not exec_config.shell_command and tool.name != "execute_bash":
             raise ValueError("BASH tool requires shell_command")
         return BashToolExecutor(
-            shell_command=exec_config.shell_command,
+            shell_command=exec_config.shell_command or "",
             shell=exec_config.shell or "bash",
             timeout=exec_config.timeout,
             env=exec_config.env,
