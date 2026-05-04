@@ -56,7 +56,7 @@ class EvolveAgent(MetaAgent):
         "delegate 调用时必须提供完整信息：\n"
         "- task_background：用户原始需求、对话关键信息、环境约束、前序步骤结果\n"
         "- task：清晰描述子 Agent 需完成的工作\n"
-        "- tools：从工具箱概览中选择功能匹配的工具，优先专用工具，不确定时多列几个，**必须包含 execute_bash 和 ask_user**\n"
+        "- tools：从工具箱概览中选择功能匹配的工具，优先专用工具，不确定时多列几个，**必须包含 execute_bash 和 ask_user**。Find-Tools 还需包含搜索工具（google_search、fetch）和注册工具（tool_register_cli、tool_register_mcp 等）\n"
         "输出格式：直接回答时输出纯文本；需要调用工具时通过 tool_calls 输出，不要同时输出文本和工具调用。"
     )
     DEFAULT_TOOL_LIST = ["delegate", "ask_user", "context_summarizer"]
@@ -201,6 +201,7 @@ class EvolveAgent(MetaAgent):
                 result = await self._delegate_to_find_tools(
                     task=task,
                     task_background=task_background,
+                    tool_names=tool_names,
                     iteration=iteration,
                 )
             elif agent_name == "Coding":
@@ -258,6 +259,7 @@ class EvolveAgent(MetaAgent):
         self,
         task: str,
         task_background: str,
+        tool_names: list[str],
         iteration: int,
     ) -> str:
         """委派到 Find-Tools Agent（独立上下文）"""
@@ -269,6 +271,7 @@ class EvolveAgent(MetaAgent):
         result = await self._find_tools_agent.execute(
             task_background=task_background,
             task_description=task,
+            tool_list=tool_names,
             trace_id=str(uuid.uuid4()),
             on_step=self._on_step,
             cancel_event=self._cancel_event,
