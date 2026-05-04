@@ -353,6 +353,7 @@ class ContextManager:
         task_description: str = "",
         orchestration_logic: str = "",
         tools: list[Tool] | None = None,
+        tools_detail_section: str = "",
     ) -> str:
         """构建 Use-Tool 子循环的 task message 内容
 
@@ -361,6 +362,7 @@ class ContextManager:
             task_description: 任务具体描述
             orchestration_logic: 工具编排逻辑描述
             tools: 任务可用的工具列表
+            tools_detail_section: 工具详情（含 SKILL.md），由调用方构建
 
         Returns:
             task message 内容字符串
@@ -373,7 +375,8 @@ class ContextManager:
             task_description=task_description,
             orchestration_logic=orchestration_logic,
             tools=tools or [],
-            tools_section=format_tools_markdown(tools or [], detail=True),
+            tools_detail_section=tools_detail_section,
+            env_info=self._get_env_info(),
         )
 
     def build_find_tools_task_message(
@@ -404,7 +407,7 @@ class ContextManager:
             task_background=task_background,
             task_description=task_description,
             builtin_tool_groups=builtin_tool_groups,
-            builtin_tools_section=format_tools_markdown(builtin_tools, detail=True),
+            tools_detail_section=format_tools_markdown(builtin_tools, detail=True),
             env_info=env_info,
         )
 

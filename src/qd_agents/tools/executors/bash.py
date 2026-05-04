@@ -121,10 +121,18 @@ class BashToolExecutor(ToolExecutor):
         else:
             # 替换命令中的占位符
             formatted_command = self.shell_command
-            for key, value in kwargs.items():
-                placeholder = f"{{{key}}}"
-                if placeholder in formatted_command:
-                    formatted_command = formatted_command.replace(placeholder, str(value))
+
+            # execute_bash 模式：shell_command 为空，command 来自 tool_input
+            if not formatted_command:
+                command = kwargs.get("command", "")
+                if not command:
+                    raise ValueError("execute_bash requires 'command' parameter")
+                formatted_command = command
+            else:
+                for key, value in kwargs.items():
+                    placeholder = f"{{{key}}}"
+                    if placeholder in formatted_command:
+                        formatted_command = formatted_command.replace(placeholder, str(value))
 
             executed_command = formatted_command
 
