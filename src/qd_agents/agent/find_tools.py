@@ -83,8 +83,11 @@ class FindToolsAgent(MetaAgent):
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
 
-        # 1. 获取所有已注册工具
-        builtin_tools = list(self.registry.all())
+        # 1. 获取所有已注册工具（优先使用 expanded tools，包含 MCP subtools）
+        if self._expanded_tool_map:
+            builtin_tools = list(self._expanded_tool_map.values())
+        else:
+            builtin_tools = list(self.registry.list_all())
 
         # 2. 构建 openai_tools 和 tool_map
         openai_tools = [t.to_openai_function() for t in builtin_tools]

@@ -50,11 +50,13 @@ class EvolveAgent(MetaAgent):
     )
     DEFAULT_TASK_REQUIREMENTS = (
         "能靠知识直接回答的直接回答；需要使用工具的 delegate to Use-Tool；缺少合适工具的 delegate to Find-Tools。"
+        "路由判断：审视工具箱概览，有功能直接匹配的专用工具 → Use-Tool；无专用工具或不确定 → Find-Tools（从网络搜索、下载并注册新工具，不在本地查找）。"
+        "注意：execute_bash 是通用执行工具，不算功能直接匹配。例如用户要转 PDF，工具箱没有 PDF 转换专用工具，应路由到 Find-Tools 搜索并注册 PDF 转换工具，而非让 Use-Tool 用 bash 安装。"
         "禁止直接调用工具箱概览中的工具，必须通过 delegate 路由到子 Agent 执行。"
         "delegate 调用时必须提供完整信息：\n"
         "- task_background：用户原始需求、对话关键信息、环境约束、前序步骤结果\n"
         "- task：清晰描述子 Agent 需完成的工作\n"
-        "- tools：从工具箱概览中选择功能匹配的工具，优先专用工具，不确定时多列几个，**必须包含 execute_bash**\n"
+        "- tools：从工具箱概览中选择功能匹配的工具，优先专用工具，不确定时多列几个，**必须包含 execute_bash 和 ask_user**\n"
         "输出格式：直接回答时输出纯文本；需要调用工具时通过 tool_calls 输出，不要同时输出文本和工具调用。"
     )
     DEFAULT_TOOL_LIST = ["delegate", "ask_user", "context_summarizer"]

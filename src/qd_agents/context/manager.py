@@ -148,18 +148,24 @@ def format_tools_markdown(tools: list[Tool], *, show_type_tag: bool = True, deta
 
 
 def _format_tool_params(tool: Tool) -> str:
-    """格式化单个工具的参数详情"""
+    """格式化单个工具的参数详情，直接输出 JSON schema"""
+    import json
+
     params = tool.parameters or {}
     props = params.get("properties", {})
     required = params.get("required", [])
     if not props:
         return "  - 参数: 无"
+
+    # MCP 壳工具只有 tool_name + arguments 路由参数，不展示
+    if tool.execution.type == ToolExecutionType.MCP and set(props.keys()) == {"tool_name", "arguments"}:
+        return "  - 参数: 无（MCP 壳工具，通过 subtool 调用）"
+
+    # 直接输出每个参数的 JSON schema 片段
     parts = []
     for pname, pdef in props.items():
-        ptype = pdef.get("type", "any")
-        pdesc = pdef.get("description", "")
-        req = ", 必填" if pname in required else ""
-        parts.append(f"  - `{pname}` ({ptype}{req}): {pdesc}")
+        req_flag = "必填" if pname in required else "可选"
+        parts.append(f"  - `{pname}` ({req_flag}): {json.dumps(pdef, ensure_ascii=False)}")
     return "\n".join(parts)
 
 
