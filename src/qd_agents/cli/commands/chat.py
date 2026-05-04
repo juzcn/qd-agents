@@ -219,9 +219,6 @@ class ChatCommandHandler:
             """处理 ask_user 工具的交互"""
             self.console.print(f"\n[bold cyan]Agent 提问[/]: {question}")
             if options:
-                self.console.print("[dim]选项:[/]")
-                for i, opt in enumerate(options, 1):
-                    self.console.print(f"  {i}. {opt}")
                 try:
                     selected = await questionary.select(
                         "请选择:",
