@@ -1,7 +1,7 @@
 """Use-Tool Agent — 工具执行子循环
 
-接收 EvolveAgent 的委派，在主循环上下文中迭代调用工具完成任务。
-完成后截断中间消息，只保留 final answer。
+接收 EvolveAgent 的委派，在独立上下文中迭代调用工具完成任务。
+完成后返回 final answer，不污染主循环上下文。
 """
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 class UseToolAgent(MetaAgent):
     """Use-Tool Agent — 工具执行子循环
 
-    在主循环上下文中执行，共享系统提示词。
-    任务信息通过 tool message 注入，完成后截断中间消息。
+    在独立上下文中执行，不共享主循环的 messages。
+    任务信息通过 task_background/task_description 传入，完成后返回 final answer。
     """
 
     name = "use-tool"
@@ -61,23 +61,22 @@ class UseToolAgent(MetaAgent):
         self._expanded_tool_map = expanded_tool_map or {}
 
     async def execute(self, **kwargs) -> AgentResult:
-        """执行工具调用子循环
+        """执行工具调用子循环（独立上下文）
 
-        在主循环 messages 上操作：注入 task message，执行工具循环，完成后截断。
+        构建独立的 messages，不共享主循环上下文。
+        只依赖传入的 task_background、task_description 和 tool_list。
 
         Args:
             task_background: 任务背景上下文
             task_description: 任务具体描述
             tool_list: 需要使用的工具名列表
-            messages: 主循环的消息列表（就地修改）
-            **kwargs: on_step, cancel_event, memory_context 等
+            **kwargs: on_step, cancel_event 等
         """
         on_step = kwargs.get("on_step")
         cancel_event = kwargs.get("cancel_event")
         task_background: str = kwargs.get("task_background", "")
         task_description: str = kwargs.get("task_description", "")
         tool_list: list[str] | None = kwargs.get("tool_list")
-        messages: list[dict] = kwargs.get("messages", [])
         if on_step:
             self._on_step = on_step
         if cancel_event:
@@ -101,42 +100,34 @@ class UseToolAgent(MetaAgent):
         openai_tools = [t.to_openai_function() for t in tools]
         tool_map = {t.name: t for t in tools}
 
-        # 3. 添加 delegate 工具（Use-Tool 可委派到 Coding Agent 处理复杂编排）
-        delegate_tool = self.registry.get("delegate") or self.registry.get_by_name("delegate")
-        if delegate_tool and "delegate" not in tool_map:
-            openai_tools.append(delegate_tool.to_openai_function())
-            tool_map["delegate"] = delegate_tool
-
-        # 4. 确保 execute_bash 可用（SKILL 工具需要）
+        # 3. 确保 execute_bash 可用（SKILL 工具需要）
         ensure_bash_available(self.registry, self.executor_registry)
         bash_tool = self.registry.get("execute_bash")
         if bash_tool and "execute_bash" not in tool_map:
             openai_tools.append(bash_tool.to_openai_function())
             tool_map["execute_bash"] = bash_tool
 
-        # 5. 注入 task message
-        start_idx = len(messages)
+        # 4. 构建独立上下文：system_prompt + task_message
         task_message = self.context.build_use_tool_task_message(
             task_background=task_background,
             task_description=task_description,
+            tools=tools,
         )
-        messages.append({"role": "user", "content": task_message})
+        messages: list[dict] = [
+            {"role": "system", "content": task_message},
+        ]
 
-        # 6. 设置 LLM 日志标识
+        # 5. 设置 LLM 日志标识
         self.llm.meta_agent_name = self.name
         self.llm.reset_log_count(messages)
 
-        # 7. 运行 MetaAgent 标准工具调用循环
+        # 6. 运行 MetaAgent 标准工具调用循环
         result = await self.run_loop(
             messages=messages,
             openai_tools=openai_tools,
             tool_map=tool_map,
             temperature=0.3,
         )
-
-        # 8. 截断中间消息，只保留 final answer
-        del messages[start_idx:]
-        messages.append({"role": "assistant", "content": result.final_answer})
 
         return AgentResult(
             final_answer=result.final_answer,

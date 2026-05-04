@@ -50,6 +50,7 @@ class EvolveAgent(MetaAgent):
     )
     DEFAULT_TASK_REQUIREMENTS = (
         "能靠知识直接回答的直接回答；需要使用工具的 delegate to Use-Tool；缺少合适工具的 delegate to Find-Tools。"
+        "禁止直接调用工具箱概览中的工具，必须通过 delegate 路由到子 Agent 执行。"
         "delegate 调用时必须提供完整信息：task_background 提供用户原始需求、对话关键信息、环境约束、前序步骤结果；"
         "task 清晰描述子 Agent 需完成的工作；"
         "tools 从工具箱概览中选择功能匹配的工具，优先专用工具，不确定时多列几个，始终包含 execute_bash 兜底。"
@@ -191,14 +192,12 @@ class EvolveAgent(MetaAgent):
                     task=task,
                     task_background=task_background,
                     tool_names=tool_names,
-                    messages=messages,
                     iteration=iteration,
                 )
             elif agent_name == "Find-Tools":
                 result = await self._delegate_to_find_tools(
                     task=task,
                     task_background=task_background,
-                    messages=messages,
                     iteration=iteration,
                 )
             elif agent_name == "Coding":
@@ -229,10 +228,9 @@ class EvolveAgent(MetaAgent):
         task: str,
         task_background: str,
         tool_names: list[str],
-        messages: list[dict],
         iteration: int,
     ) -> str:
-        """委派到 Use-Tool Agent"""
+        """委派到 Use-Tool Agent（独立上下文）"""
         if not self._use_tool_agent:
             return json.dumps({"success": False, "error": "Use-Tool Agent 未初始化"}, ensure_ascii=False)
 
@@ -240,7 +238,6 @@ class EvolveAgent(MetaAgent):
             task_background=task_background,
             task_description=task,
             tool_list=tool_names,
-            messages=messages,
             trace_id=str(uuid.uuid4()),
             on_step=self._on_step,
             cancel_event=self._cancel_event,
@@ -256,17 +253,15 @@ class EvolveAgent(MetaAgent):
         self,
         task: str,
         task_background: str,
-        messages: list[dict],
         iteration: int,
     ) -> str:
-        """委派到 Find-Tools Agent"""
+        """委派到 Find-Tools Agent（独立上下文）"""
         if not self._find_tools_agent:
             return json.dumps({"success": False, "error": "Find-Tools Agent 未初始化"}, ensure_ascii=False)
 
         result = await self._find_tools_agent.execute(
             task_background=task_background,
             task_description=task,
-            messages=messages,
             trace_id=str(uuid.uuid4()),
             on_step=self._on_step,
             cancel_event=self._cancel_event,
