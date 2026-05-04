@@ -57,8 +57,8 @@ class EvolveAgent(MetaAgent):
         refresh_callback: Any | None = None,
         context_window_size: int = 0,
         context_summarizer_threshold: float = 0.75,
-        task_background: str = "",
-        task_requirements: str = "",
+        task_background: str = "你是一个主会话Agent，协调管理子Agent的工作",
+        task_requirements: str = "你的主要任务如下：你能依靠知识回答的时候，直接回答；需要使用和编排工具回答的，delegate to Use-Tool Agent；你发现没有合适的工具回答时，你delegate to Find-Tools Agent，按delegate的参数要求输出",
     ):
         super().__init__(
             llm_client=llm_client,
