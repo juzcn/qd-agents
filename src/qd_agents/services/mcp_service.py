@@ -77,6 +77,7 @@ class MCPService:
                 'env': exec_config.env or {},
                 'timeout': exec_config.timeout,
                 'tool': None,
+                'parent_scope': tool.scope,
             }
         return server_configs
 
@@ -145,7 +146,8 @@ class MCPService:
                 return [], None
 
             # 构建子工具列表
-            subtools = self._build_subtools(server_key, server_config, mcp_tools)
+            parent_scope = server_config.get('parent_scope', 'default')
+            subtools = self._build_subtools(server_key, server_config, mcp_tools, parent_scope=parent_scope)
 
             self._tools_cache[server_key] = subtools
             self._executors_cache[server_key] = executor
@@ -162,6 +164,7 @@ class MCPService:
         server_key: str,
         server_config: dict,
         mcp_tools: dict,
+        parent_scope: str = "default",
     ) -> list[Tool]:
         """从 MCP 服务器工具构建子工具列表"""
         subtools = []
@@ -188,7 +191,7 @@ class MCPService:
                 description=mcp_tool.description if hasattr(mcp_tool, 'description') else f"MCP tool: {mcp_tool_name}",
                 parameters=parameters,
                 execution=exec_config,
-                scope="user",
+                scope=parent_scope,
                 metadata=ToolMetadata(
                     tags=[mcp_tool_name, 'mcp-subtool', server_key],
                 ),
