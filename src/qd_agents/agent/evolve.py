@@ -237,6 +237,8 @@ class EvolveAgent(MetaAgent):
         if not self._use_tool_agent:
             return json.dumps({"success": False, "error": "Use-Tool Agent 未初始化"}, ensure_ascii=False)
 
+        # 将 ask_user_callback 传递给子 Agent
+        self._use_tool_agent._ask_user_callback = self._ask_user_callback
         result = await self._use_tool_agent.execute(
             task_background=task_background,
             task_description=task,
@@ -262,6 +264,8 @@ class EvolveAgent(MetaAgent):
         if not self._find_tools_agent:
             return json.dumps({"success": False, "error": "Find-Tools Agent 未初始化"}, ensure_ascii=False)
 
+        # 将 ask_user_callback 传递给子 Agent
+        self._find_tools_agent._ask_user_callback = self._ask_user_callback
         result = await self._find_tools_agent.execute(
             task_background=task_background,
             task_description=task,
