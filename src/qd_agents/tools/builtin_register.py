@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 async def tool_register_cli(name: str, command: str, extra_env: list[str] | None = None, timeout: int = 300, default: bool = False) -> dict[str, Any]:
-    """注册 CLI 工具。command 为完整命令行（如 "qd-agents memory list"）。"""
+    """注册 CLI 工具。name 为工具名称。command 为完整命令行（如 "qd-agents memory list"）。extra_env 为额外环境变量列表。timeout 为执行超时秒数。default 为是否设为默认工具。"""
     try:
         tool = register_cli_tool(name=name, command=command, extra_env=extra_env, timeout=timeout, default=default)
         return {"success": True, "tool_id": tool.id, "name": tool.name, "description": tool.description}
@@ -37,7 +37,7 @@ async def tool_register_cli(name: str, command: str, extra_env: list[str] | None
 
 
 async def tool_register_mcp(server: str, default: bool = False) -> dict[str, Any]:
-    """注册 MCP 服务器工具。server 为服务器名（从 tools/mcp/<server>.json 读取配置）。"""
+    """注册 MCP 服务器工具。server 为服务器名（从 tools/mcp/<server>.json 读取配置）。default 为是否设为默认工具。"""
     try:
         tool = register_mcp_tool(server=server, default=default)
         return {"success": True, "tool_id": tool.id, "name": tool.name, "description": tool.description}
@@ -47,7 +47,7 @@ async def tool_register_mcp(server: str, default: bool = False) -> dict[str, Any
 
 
 async def tool_register_skill(skill_name: str, extra_env: list[str] | None = None, default: bool = False) -> dict[str, Any]:
-    """注册 Skill 工具。skill_name 为 skill 目录名（在 tools/skills/ 下）。"""
+    """注册 Skill 工具。skill_name 为 skill 目录名（在 tools/skills/ 下）。extra_env 为额外环境变量列表。default 为是否设为默认工具。"""
     try:
         tool = register_skill_tool(skill_name=skill_name, extra_env=extra_env, default=default)
         return {"success": True, "tool_id": tool.id, "name": tool.name, "description": tool.description}
@@ -57,7 +57,7 @@ async def tool_register_skill(skill_name: str, extra_env: list[str] | None = Non
 
 
 async def tool_register_http(name: str, openapi_url: str, filter_str: str | None = None, extra_env: list[str] | None = None, timeout: int = 30, default: bool = False) -> dict[str, Any]:
-    """注册 HTTP/OpenAPI 工具。openapi_url 为 OpenAPI spec URL。"""
+    """注册 HTTP/OpenAPI 工具。name 为工具名称。openapi_url 为 OpenAPI spec URL。filter_str 为 API 路径过滤字符串。extra_env 为额外环境变量列表。timeout 为请求超时秒数。default 为是否设为默认工具。"""
     try:
         tool = register_http_tool(name=name, openapi_url=openapi_url, filter_str=filter_str, extra_env=extra_env, timeout=timeout, default=default)
         return {"success": True, "tool_id": tool.id, "name": tool.name, "description": tool.description}
@@ -103,7 +103,7 @@ def _validate_code_safety(code: str) -> list[str]:
 
 
 async def tool_register_code(name: str, description: str, code: str, parameters_schema: dict[str, Any] | None = None, default: bool = False) -> dict[str, Any]:
-    """通过上传 Python 代码动态注册一个新工具（需沙盒验证）。code 为完整的 Python 函数代码，parameters_schema 为参数 JSON schema，description 为工具描述。"""
+    """通过上传 Python 代码动态注册一个新工具（需沙盒验证）。name 为工具名称。description 为工具描述。code 为完整的 Python 函数代码。parameters_schema 为参数 JSON schema。default 为是否设为默认工具。"""
     # 安全验证
     violations = _validate_code_safety(code)
     if violations:
@@ -126,7 +126,7 @@ async def tool_register_code(name: str, description: str, code: str, parameters_
 
 
 async def delegate(agent: str, task: str, task_background: str = "", tools: list[str] | None = None) -> dict[str, Any]:
-    """调用子 Agent 执行任务。agent 为子 Agent 名称（Use-Tool/Find-Tools/Coding），task 为任务描述，task_background 为任务背景，tools 为需要使用的工具名列表（仅 Use-Tool 时使用）。"""
+    """调用子 Agent 执行任务。agent 为子 Agent 名称（Use-Tool/Find-Tools/Coding）。task 为任务描述。task_background 为任务背景上下文。tools 为需要使用的工具名列表（仅 Use-Tool 时使用）。"""
     # 实际路由由 MetaAgent.run_loop() 拦截处理
     # 此函数体仅作为占位，不会被执行
     return {"status": "routing", "agent": agent, "task": task}
@@ -136,7 +136,7 @@ async def delegate(agent: str, task: str, task_background: str = "", tools: list
 
 
 async def ask_user(question: str, options: list[str] | None = None, reason: str = "", timeout_seconds: int | None = None) -> dict[str, Any]:
-    """向用户提问并等待回复。question 为问题内容，options 为可选的选项列表，reason 为提问原因，timeout_seconds 为等待超时秒数。"""
+    """向用户提问并等待回复。question 为问题内容。options 为可选的选项列表。reason 为提问原因。timeout_seconds 为等待超时秒数。"""
     # 实际交互由 MetaAgent.run_loop() 拦截处理
     return {"status": "waiting_for_user", "question": question}
 
@@ -145,7 +145,7 @@ async def ask_user(question: str, options: list[str] | None = None, reason: str 
 
 
 async def context_summarizer(focus: str = "", keep_recent: int = 20) -> dict[str, Any]:
-    """主动总结对话历史，压缩上下文。focus 为总结关注点，keep_recent 为保留最近的消息数。"""
+    """主动总结对话历史，压缩上下文。focus 为总结关注点。keep_recent 为保留最近的消息数。"""
     # 实际压缩由 MetaAgent.run_loop() 拦截处理
     return {"status": "summarizing", "focus": focus}
 

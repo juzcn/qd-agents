@@ -86,9 +86,9 @@ MetaAgent 是大模型调用工具的基础循环模式。它遵循 **OpenAI 标
 #### 2.1.2 Evolve Agent（主循环）
 
 **输入参数**：
-- `Task-background`：字符串，可为空
-- `Task-requirements`：字符串，可为空
-- `tools_list`：**只提供一个工具：`delegate`**
+- `Task-background`：字符串，默认值为主会话Agent角色定义及通用行为规范
+- `Task-requirements`：字符串，默认值为路由决策规则、delegate 调用规范和输出格式要求
+- `tools_list`：默认为 `["delegate", "ask_user", "context_summarizer"]`
 
 **系统提示词**：加载工具箱中所有工具的名称和描述（包括通过 `delegate` 可调用的子 Agent），并注入原则性指令，例如：
 - 优先使用现有工具解决问题。

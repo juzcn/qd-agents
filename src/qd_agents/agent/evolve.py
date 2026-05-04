@@ -40,9 +40,22 @@ class EvolveAgent(MetaAgent):
     name = "evolve"
     description = "智能体主循环，通过 delegate 路由到子 Agent"
 
-    DEFAULT_TASK_BACKGROUND = "你是一个主会话Agent，协调管理子Agent的工作"
-    DEFAULT_TASK_REQUIREMENTS = "你的主要任务如下：你能依靠知识回答的时候，直接回答；需要使用和编排工具回答的，delegate to Use-Tool Agent；你发现没有合适的工具回答时，你delegate to Find-Tools Agent，按delegate的参数要求输出"
-    DEFAULT_TOOL_LIST = ["delegate"]
+    DEFAULT_TASK_BACKGROUND = (
+        "你是一个主会话Agent，协调管理子Agent的工作。"
+        "信息不足时调用 ask_user 向用户提问，不要猜测；"
+        "上下文过长时调用 context_summarizer 压缩历史消息。"
+        "成功使用新工具后，通过 tool_register_* 系列函数注册到工具箱以便复用。"
+        "需要回忆历史对话、用户偏好、过去任务结果时，在 delegate 的 tools 参数中加入 memory-recall，"
+        "但不要对简单问题、实时查询等不需要历史上下文的请求使用记忆。"
+    )
+    DEFAULT_TASK_REQUIREMENTS = (
+        "能靠知识直接回答的直接回答；需要使用工具的 delegate to Use-Tool；缺少合适工具的 delegate to Find-Tools。"
+        "delegate 调用时必须提供完整信息：task_background 提供用户原始需求、对话关键信息、环境约束、前序步骤结果；"
+        "task 清晰描述子 Agent 需完成的工作；"
+        "tools 从工具箱概览中选择功能匹配的工具，优先专用工具，不确定时多列几个，始终包含 execute_bash 兜底。"
+        "输出格式：直接回答时输出纯文本；需要调用工具时通过 tool_calls 输出，不要同时输出文本和工具调用。"
+    )
+    DEFAULT_TOOL_LIST = ["delegate", "ask_user", "context_summarizer"]
 
     def __init__(
         self,
