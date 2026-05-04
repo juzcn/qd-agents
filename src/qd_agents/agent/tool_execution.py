@@ -124,6 +124,53 @@ def format_tool_result(tool_result: Any) -> str:
         return str(tool_result)
 
 
+def resolve_tool_map(
+    tool_names: list[str],
+    expanded_tool_map: dict[str, Tool],
+    registry: ToolRegistry,
+) -> dict[str, Tool]:
+    """从工具名列表解析出 tool_map，自动展开 MCP 壳工具为 subtool
+
+    查找顺序：
+    1. expanded_tool_map 直接匹配（subtool 名）
+    2. expanded_tool_map 中 MCP 工具的 server 字段匹配（壳工具名 → 展开所有 subtool）
+    3. registry 查找（DB 存储）
+
+    Args:
+        tool_names: 工具名列表
+        expanded_tool_map: 展开后的工具映射（含 MCP subtools）
+        registry: 工具注册表
+
+    Returns:
+        工具名 → Tool 对象映射
+    """
+    tool_map: dict[str, Tool] = {}
+    for name in tool_names:
+        # 1. 直接匹配 subtool 名
+        if name in expanded_tool_map:
+            tool_map[name] = expanded_tool_map[name]
+            continue
+
+        # 2. 壳工具名匹配：展开该 server 下所有 subtool
+        found = False
+        for tname, tool in expanded_tool_map.items():
+            if (tool.execution.type == ToolExecutionType.MCP
+                    and tool.execution.server == name):
+                tool_map[tname] = tool
+                found = True
+        if found:
+            continue
+
+        # 3. 从 registry 查找
+        tool = registry.get(name) or registry.get_by_name(name)
+        if tool:
+            tool_map[name] = tool
+        else:
+            logger.warning("Tool not found: %s (checked expanded_tool_map and registry)", name)
+
+    return tool_map
+
+
 def build_tools_detail_section(
     tools: list[Tool],
     context: Any = None,
