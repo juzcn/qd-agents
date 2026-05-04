@@ -15,6 +15,7 @@
 2. **命令适配操作系统**：Windows 下用 `python`（非 `python3`）、`cd`（非 `pwd`）、`dir`（非 `ls`）
 3. **SKILL.md 路径修正**：SKILL.md 中的脚本路径 `skills/<name>/...` → `tools/skills/<name>/...`（注意 `tools/` 前缀），完整路径为 `{{ env_info.project_dir }}/tools/skills/<name>/scripts/xxx.py`
 4. **Windows JSON 传参**：Windows cmd 不支持单引号包裹参数，JSON 参数必须用双引号包裹并转义内部双引号：`python script.py "{\"key\":\"value\"}"`
+5. **主动与用户交互**：如果你有任何需要澄清、报告或需要用户批准的事项，请用 ask_user 工具与用户交互
 
 ## 任务背景
 

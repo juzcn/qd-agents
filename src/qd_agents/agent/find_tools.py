@@ -13,11 +13,12 @@ from typing import Any
 
 from ..llm import LLMClient
 from ..context import ContextManager
-from ..models.tool import Tool
+from ..context.manager import format_tools_markdown
+from ..models.tool import Tool, ToolExecutionType
 from ..registry import ToolRegistry
 from ..tools import ToolExecutorRegistry
 from .base import MetaAgent, AgentResult, StepCallback
-from .tool_execution import ensure_bash_available
+from .tool_execution import ensure_bash_available, resolve_tool_map, build_tools_detail_section
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,13 @@ class FindToolsAgent(MetaAgent):
         self.context = context_manager
         self._expanded_tool_map = expanded_tool_map or {}
 
+    DEFAULT_TOOL_LIST = [
+        "tool_register_cli", "tool_register_mcp", "tool_register_skill", "tool_register_http",
+        "fetch", "ask_user", "execute_bash",
+    ]
+    # 搜索相关工具（从 expanded_tool_map 中查找 subtool）
+    SEARCH_TOOL_NAMES = ["google_search", "baidu_search", "serper_search", "web_search"]
+
     async def execute(self, **kwargs) -> AgentResult:
         """执行工具发现子循环（独立上下文）
 
@@ -83,21 +91,37 @@ class FindToolsAgent(MetaAgent):
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
 
-        # 1. 获取所有已注册工具（优先使用 expanded tools，包含 MCP subtools）
+        # 1. 获取所有已注册工具（用于工具箱概览）
         if self._expanded_tool_map:
-            builtin_tools = list(self._expanded_tool_map.values())
+            all_tools = list(self._expanded_tool_map.values())
         else:
-            builtin_tools = list(self.registry.list_all())
+            all_tools = list(self.registry.list_all())
 
         # 2. 构建 openai_tools 和 tool_map
-        openai_tools = [t.to_openai_function() for t in builtin_tools]
-        tool_map = {t.name: t for t in builtin_tools}
+        #    - 从 DEFAULT_TOOL_LIST + SEARCH_TOOL_NAMES 解析工具
+        #    - 壳工具名自动展开为 subtool
+        all_tool_names = list(self.DEFAULT_TOOL_LIST) + [
+            n for n in self.SEARCH_TOOL_NAMES if n in self._expanded_tool_map
+        ]
+        tool_map = resolve_tool_map(all_tool_names, self._expanded_tool_map, self.registry)
 
-        # 3. 构建独立上下文：system_prompt + task_message
+        # 确保 execute_bash 可用
+        ensure_bash_available(self.registry, self.executor_registry)
+        bash_tool = self.registry.get("execute_bash")
+        if bash_tool and "execute_bash" not in tool_map:
+            tool_map["execute_bash"] = bash_tool
+
+        openai_tools = [t.to_openai_function() for t in tool_map.values()]
+        detail_tools = list(tool_map.values())
+
+        # 3. 构建独立上下文：system_prompt + task_message（含 SKILL.md）
+        tools_detail_section = build_tools_detail_section(detail_tools, self.context)
         task_message = self.context.build_find_tools_task_message(
             task_background=task_background,
             task_description=task_description,
-            builtin_tools=builtin_tools,
+            detail_tools=detail_tools,
+            all_tools=all_tools,
+            tools_detail_section=tools_detail_section,
         )
         messages: list[dict] = [
             {"role": "system", "content": task_message},

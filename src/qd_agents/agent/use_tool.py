@@ -18,7 +18,7 @@ from ..models.tool import Tool, ToolExecutionType
 from ..registry import ToolRegistry
 from ..tools import ToolExecutorRegistry
 from .base import MetaAgent, AgentResult, StepCallback
-from .tool_execution import ensure_bash_available
+from .tool_execution import ensure_bash_available, resolve_tool_map, build_tools_detail_section
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +86,9 @@ class UseToolAgent(MetaAgent):
         trace_id = kwargs.get("trace_id", str(uuid.uuid4()))
         start_time = time.perf_counter()
 
-        # 1. 从 tool_list 解析出 Tool 对象
-        tools = self._resolve_tools(tool_list or [])
-        if not tools:
+        # 1. 从 tool_list 解析出 tool_map（含壳工具→subtool 展开）
+        tool_map = resolve_tool_map(tool_list or [], self._expanded_tool_map, self.registry)
+        if not tool_map:
             logger.warning("No tools resolved from tool_list: %s", tool_list)
             return AgentResult(
                 final_answer="无法解析任务所需的工具，请检查工具列表。",
@@ -97,16 +97,17 @@ class UseToolAgent(MetaAgent):
                 total_duration_ms=int((time.perf_counter() - start_time) * 1000),
             )
 
-        # 2. 构建 openai_tools（完整 schema）和 tool_map
-        openai_tools = [t.to_openai_function() for t in tools]
-        tool_map = {t.name: t for t in tools}
-
-        # 3. 确保 execute_bash 可用（SKILL 工具需要）
+        # 2. 确保 execute_bash 和 ask_user 可用
         ensure_bash_available(self.registry, self.executor_registry)
         bash_tool = self.registry.get("execute_bash")
         if bash_tool and "execute_bash" not in tool_map:
-            openai_tools.append(bash_tool.to_openai_function())
             tool_map["execute_bash"] = bash_tool
+        ask_user_tool = self.registry.get("ask_user")
+        if ask_user_tool and "ask_user" not in tool_map:
+            tool_map["ask_user"] = ask_user_tool
+
+        tools = list(tool_map.values())
+        openai_tools = [t.to_openai_function() for t in tools]
 
         # 4. 构建独立上下文：system_prompt + task_message
         # 为 skill 工具加载 SKILL.md 作为工具详情
@@ -159,24 +160,6 @@ class UseToolAgent(MetaAgent):
         )
 
     # --- 内部方法 ---
-
-    def _resolve_tools(self, tool_names: list[str]) -> list[Tool]:
-        """从工具名列表解析出 Tool 对象
-
-        查找顺序：expanded_tool_map（含 MCP subtools）→ registry（DB 存储）
-        """
-        tools = []
-        for name in tool_names:
-            tool = (
-                self._expanded_tool_map.get(name)
-                or self.registry.get(name)
-                or self.registry.get_by_name(name)
-            )
-            if tool:
-                tools.append(tool)
-            else:
-                logger.warning("Tool not found: %s (checked expanded_tool_map and registry)", name)
-        return tools
 
     async def _handle_delegate(
         self,

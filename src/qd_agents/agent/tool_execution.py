@@ -122,3 +122,32 @@ def format_tool_result(tool_result: Any) -> str:
         return json.dumps(tool_result, ensure_ascii=False)
     except (TypeError, ValueError):
         return str(tool_result)
+
+
+def build_tools_detail_section(
+    tools: list[Tool],
+    context: Any = None,
+) -> str:
+    """构建 tools_detail_section，包含参数 schema 和 SKILL.md
+
+    Args:
+        tools: 工具列表
+        context: ContextManager 实例（用于加载 SKILL.md）
+
+    Returns:
+        渲染后的工具详情字符串
+    """
+    from ..context.manager import format_tools_markdown
+    from ..models.tool import ToolExecutionType
+
+    parts: list[str] = []
+    for t in tools:
+        parts.append(format_tools_markdown([t], detail=True))
+        # skill 工具追加 SKILL.md 内容
+        if t.execution and t.execution.type == ToolExecutionType.SKILL:
+            skill_md = ""
+            if context and hasattr(context, "_load_skill_md"):
+                skill_md = context._load_skill_md(t.local_path or t.name) or ""
+            if skill_md:
+                parts.append(f"\n### {t.name} SKILL.md\n\n{skill_md}")
+    return "\n".join(parts)

@@ -124,6 +124,7 @@ class QDAgent:
             context_manager=self.context,
             executor_registry=self.executor_registry,
             max_iterations=self.config.execution.max_find_tools_iterations,
+            expanded_tool_map=self._tool_map_cache,
             context_window_size=self._get_context_window_size(),
             context_summarizer_threshold=self.config.execution.context_summarizer_threshold,
         )

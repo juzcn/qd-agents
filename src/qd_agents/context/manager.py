@@ -390,20 +390,26 @@ class ContextManager:
         *,
         task_background: str = "",
         task_description: str = "",
-        builtin_tools: list[Tool],
+        detail_tools: list[Tool],
+        all_tools: list[Tool],
+        tools_detail_section: str = "",
     ) -> str:
         """构建 Find-Tools 子循环的 task message 内容
 
         Args:
             task_background: 任务背景上下文
             task_description: 任务具体描述
-            builtin_tools: 当前工具箱中所有工具
+            detail_tools: Find-Tools Agent 可调用的工具列表（含 detail schema）
+            all_tools: 工具箱中所有工具（用于概览，避免重复注册）
+            tools_detail_section: 预渲染的工具详情（含 SKILL.md），为空时自动生成
 
         Returns:
             task message 内容字符串
         """
         env_info = self._get_env_info()
-        builtin_tool_groups = _group_tools_by_type(builtin_tools)
+
+        if not tools_detail_section:
+            tools_detail_section = format_tools_markdown(detail_tools, detail=True)
 
         if not self.prompts:
             raise RuntimeError("PromptLoader 未初始化，无法渲染 find_tools 模板")
@@ -412,8 +418,8 @@ class ContextManager:
             "find_tools",
             task_background=task_background,
             task_description=task_description,
-            builtin_tool_groups=builtin_tool_groups,
-            tools_detail_section=format_tools_markdown(builtin_tools, detail=True),
+            tools_detail_section=tools_detail_section,
+            tools_section=format_tools_markdown(all_tools),
             env_info=env_info,
         )
 
