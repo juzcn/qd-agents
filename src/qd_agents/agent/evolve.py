@@ -271,6 +271,10 @@ class EvolveAgent(MetaAgent):
 
         # 将 ask_user_callback 传递给子 Agent
         self._find_tools_agent._ask_user_callback = self._ask_user_callback
+
+        # 记录执行前的工具名集合，用于检测新注册的工具
+        tool_names_before = set(t.name for t in self.registry.list_all())
+
         result = await self._find_tools_agent.execute(
             task_background=task_background,
             task_description=task,
@@ -280,8 +284,11 @@ class EvolveAgent(MetaAgent):
             cancel_event=self._cancel_event,
         )
 
+        # 检测新注册的工具
+        tool_names_after = set(t.name for t in self.registry.list_all())
+        found_tool_names = list(tool_names_after - tool_names_before)
+
         # 如果发现新工具，刷新工具缓存并更新系统提示词
-        found_tool_names = result.working_memory.get("found_tool_names", []) if result.working_memory else []
         if found_tool_names and self._refresh_callback:
             logger.info("Find-Tools discovered %d tools, refreshing caches: %s", len(found_tool_names), found_tool_names)
             try:
