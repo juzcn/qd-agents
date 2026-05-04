@@ -127,8 +127,8 @@ class ExecutionConfig(BaseModel):
     per_tool_timeout: dict[str, int] = Field(default_factory=dict)
     max_attempts: int = 3
     max_iterations: int = 20
-    max_use_tool_iterations: int = 15
-    max_find_tools_iterations: int = 10
+    max_use_tool_iterations: int = 30
+    max_find_tools_iterations: int = 20
     evolve_temperature: float = 0.1
     context_summarizer_threshold: float = 0.8
     context_summarizer_keep_recent: int = 20
