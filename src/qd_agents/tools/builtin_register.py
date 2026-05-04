@@ -126,7 +126,7 @@ async def tool_register_code(name: str, description: str, code: str, parameters_
 
 
 async def delegate(agent: str, task: str, task_background: str, tools: list[str]) -> dict[str, Any]:
-    """调用子 Agent 执行任务。agent 为子 Agent 名称，必须根据工具箱概览判断：有功能直接匹配的专用工具填 Use-Tool，无专用工具填 Find-Tools。execute_bash 是通用执行工具不算功能匹配。Find-Tools 从网络搜索下载注册新工具，不在本地查找。task 为任务描述。task_background 为任务背景上下文，包含用户原始需求、对话关键信息、环境约束、前序步骤结果。tools 为需要使用的工具名列表，必须包含 execute_bash 和 ask_user。Find-Tools 还需包含搜索工具（如 google_search、fetch）和工具注册工具（如 tool_register_cli、tool_register_mcp）。"""
+    """调用子 Agent 执行任务。agent 为子 Agent 名称，必须根据工具箱概览判断：有功能直接匹配的专用工具填 Use-Tool，无专用工具填 Find-Tools。execute_bash 是通用执行工具不算功能匹配。Find-Tools 从网络搜索下载注册新工具，不在本地查找。task 为任务描述，delegate to Find-Tools 时应描述所需工具的能力而非只指定一个工具，例如"搜索并注册一个或多个 Markdown 转 PDF 的工具"而非"注册 pandoc"。task_background 为任务背景上下文，包含用户原始需求、对话关键信息、环境约束、前序步骤结果。tools 为需要使用的工具名列表，必须包含 execute_bash 和 ask_user。Find-Tools 还需包含搜索工具（如 google_search、fetch）和工具注册工具（如 tool_register_cli、tool_register_mcp）。"""
     # 实际路由由 MetaAgent.run_loop() 拦截处理
     # 此函数体仅作为占位，不会被执行
     return {"status": "routing", "agent": agent, "task": task}
