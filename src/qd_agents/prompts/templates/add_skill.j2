@@ -14,10 +14,14 @@
    - 如果两者兼具（既有行为准则又有具体命令），判断为 **prompt**
 2. **识别工具依赖**：分析 SKILL.md 的完整内容，判断**要执行这个技能，需要依赖哪些已注册工具才能完成**
    - 仔细阅读 SKILL.md 中的 Usage、Examples、Basic Usage 等章节
-   - 如果执行该技能需要运行 shell 命令（如 `uvx`、`python`、`curl`、`cat` 等），则依赖 `execute_bash`
+   - **关键规则**：SKILL.md 中出现任何 shell 命令执行（如 `python3`、`python`、`uvx`、`curl`、`cat`、`bash`、`sh` 等），**必须**将 `execute_bash` 列入 `tool_deps`
    - 如果 SKILL.md 中提到需要调用其他已注册工具的功能，则依赖对应工具
    - 不要根据是否有 Python 脚本来推断依赖，仅根据 SKILL.md 的内容判断
-3. **验证依赖**：检查识别出的工具依赖是否都在已注册工具列表中，如果不在则标记失败
+   - **tool_manual 类型的技能几乎总是依赖 `execute_bash`**，因为它需要通过 shell 执行命令
+3. **验证依赖**：检查识别出的工具依赖是否都在已注册工具列表中
+   - **注意**：`execute_bash` 是系统内置工具，始终可用，不需要验证是否在已注册列表中
+   - 只有非内置工具才需要验证是否在已注册列表中
+   - 如果非内置工具不在已注册列表中，则标记失败
 
 ## 输出格式
 
@@ -33,17 +37,19 @@
 }
 ```
 
-如果依赖的工具不在已注册列表中：
+如果非内置工具依赖不在已注册列表中：
 ```json
 {
     "name": "技能名称",
     "description": "技能描述",
     "skill_type": "tool_manual 或 prompt",
-    "tool_deps": ["不存在的工具名"],
+    "tool_deps": ["execute_bash", "不存在的工具名"],
     "success": false,
     "failure_reason": "依赖工具 xxx 不在已注册工具列表中"
 }
 ```
+
+注意：即使 success 为 false，tool_deps 仍应包含所有识别出的依赖（包括 execute_bash）。
 
 ## SKILL.md 内容
 

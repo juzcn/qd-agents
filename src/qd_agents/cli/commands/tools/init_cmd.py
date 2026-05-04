@@ -82,6 +82,33 @@ def _register_preset_tools(
     if not new:
         console.print("  [dim]builtin 工具已注册[/]")
 
+    # execute_bash (builtin/bash)
+    if not registry.get("builtin.execute_bash"):
+        execute_bash_tool = Tool(
+            id="builtin.execute_bash",
+            name="execute_bash",
+            description="执行 shell 命令。参数: command (要执行的命令字符串)。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "要执行的 shell 命令"},
+                },
+                "required": ["command"],
+            },
+            execution=ToolExecutionConfig(
+                type=ToolExecutionType.BASH,
+                shell_command="",
+                shell="bash",
+                timeout=300,
+            ),
+            scope="builtin",
+            metadata=ToolMetadata(tags=["builtin", "bash", "shell"], version="0.1.0"),
+        )
+        registry.register(execute_bash_tool)
+        console.print(f"  [green]OK[/] execute_bash [dim](builtin/bash)[/]")
+    else:
+        console.print("  [dim]execute_bash 已注册[/]")
+
     # local-search (bash)
     search_cmd = None
     for cmd in ("rg", "grep"):
@@ -178,6 +205,31 @@ def _reregister_tools(
         for t in builtin_tools:
             console.print(f"  [green]OK[/] {t.name} [dim]({t.scope}/function)[/]")
 
+    # 确保 execute_bash 已注册（builtin/bash）
+    if not registry.get("builtin.execute_bash"):
+        execute_bash_tool = Tool(
+            id="builtin.execute_bash",
+            name="execute_bash",
+            description="执行 shell 命令。参数: command (要执行的命令字符串)。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "要执行的 shell 命令"},
+                },
+                "required": ["command"],
+            },
+            execution=ToolExecutionConfig(
+                type=ToolExecutionType.BASH,
+                shell_command="",
+                shell="bash",
+                timeout=300,
+            ),
+            scope="builtin",
+            metadata=ToolMetadata(tags=["builtin", "bash", "shell"], version="0.1.0"),
+        )
+        registry.register(execute_bash_tool)
+        console.print(f"  [green]OK[/] execute_bash [dim](builtin/bash)[/]")
+
     # 按 execution type 分组重注册非 builtin 工具
     groups: dict[str, list] = defaultdict(list)
     for t in tools:
@@ -200,8 +252,8 @@ def _reregister_tools(
             scope = t.scope
             try:
                 kwargs = extract_fn(t)
-                # 保持原有 scope：default=True 注册为 default，否则 user
-                register_fn(**kwargs, default=(scope == "default"), base_dir=base_dir, config_file=config_file)
+                # extract_fn 已包含 default 键，无需再传
+                register_fn(**kwargs, base_dir=base_dir, config_file=config_file)
                 console.print(f"  [green]OK[/] {name} [dim]({scope}/{tool_type})[/]")
             except Exception as e:
                 logger.warning("重注册 %s 失败: %s", name, e)
