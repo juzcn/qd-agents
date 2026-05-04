@@ -26,7 +26,6 @@ from .builtin_register import (
     tool_register_mcp,
     tool_register_skill,
     tool_register_http,
-    tool_register_code,
     delegate,
     ask_user,
     context_summarizer,
@@ -64,7 +63,6 @@ __all__ = [
     "tool_register_mcp",
     "tool_register_skill",
     "tool_register_http",
-    "tool_register_code",
     # 元工具函数
     "delegate",
     "ask_user",

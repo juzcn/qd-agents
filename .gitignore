@@ -26,7 +26,7 @@ config.*.json
 runtime.json
 
 # Project docs (from parent directory)
-# CLAUDE.md
+CLAUDE.md
 # REQUIREMENTS.md
 
 # Test files

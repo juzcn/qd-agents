@@ -296,7 +296,6 @@ class QDAgent:
             tool_register_mcp,
             tool_register_skill,
             tool_register_http,
-            tool_register_code,
             register_builtin_function_tools,
             delegate,
             ask_user,
@@ -307,7 +306,6 @@ class QDAgent:
         self.executor_registry.register_function("tool_register_mcp", tool_register_mcp)
         self.executor_registry.register_function("tool_register_skill", tool_register_skill)
         self.executor_registry.register_function("tool_register_http", tool_register_http)
-        self.executor_registry.register_function("tool_register_code", tool_register_code)
 
         # 元工具
         self.executor_registry.register_function("delegate", delegate)

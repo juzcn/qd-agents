@@ -88,7 +88,19 @@ def parse_help_with_llm(
             await llm.close()
 
     try:
-        result = asyncio.run(_run())
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    try:
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, _run())
+                result = future.result(timeout=60)
+        else:
+            result = asyncio.run(_run())
+
         if result and isinstance(result, dict) and "parameters" in result:
             return result
     except Exception as e:

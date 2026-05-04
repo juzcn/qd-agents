@@ -52,11 +52,12 @@ class EvolveAgent(MetaAgent):
         "能靠知识直接回答的直接回答；需要使用工具的 delegate to Use-Tool；缺少合适工具的 delegate to Find-Tools。"
         "路由判断：审视工具箱概览，有功能直接匹配的专用工具 → Use-Tool；无专用工具或不确定 → Find-Tools（从网络搜索、下载并注册新工具，不在本地查找）。"
         "禁止直接调用工具箱概览中的工具，必须通过 delegate 路由到子 Agent 执行。"
+        "**禁止凭自身知识推荐或选择工具**：不要基于训练数据推荐 pandoc、weasyprint 等工具，必须通过 Find-Tools 从网络搜索最新可用的工具，由 Find-Tools 决定安装哪个。"
         "delegate 调用时必须提供完整信息：\n"
         "- task_background：用户原始需求、对话关键信息、环境约束、前序步骤结果\n"
-        "- task：清晰描述子 Agent 需完成的工作\n"
-        "- tools：从工具箱概览中选择功能匹配的工具，优先专用工具，不确定时多列几个，**必须包含 execute_bash 和 ask_user**。Find-Tools 还需包含网络搜索工具（google_search、fetch）和注册工具（tool_register_cli、tool_register_mcp 等）\n"
-        "工作流：Find-Tools 只负责发现和注册工具，不执行业务任务。Find-Tools 返回后，结合新注册的工具再次 delegate to Use-Tool 执行完整工具链。"
+        "- task：清晰描述子 Agent 需完成的工作。delegate to Find-Tools 时，task 必须包含所需工具的能力描述和工具类型约束（注册的工具类型必须是 cli、mcp、skill、http 其中一种，不支持 function/code 类型）。例如：搜索并注册一个或多个 Markdown 转 PDF 的工具，注册工具类型必须是 cli、mcp、skill 或 http，要求支持 Windows 环境\n"
+        "- tools：从工具箱概览中选择功能匹配的工具，优先专用工具，不确定时多列几个，**必须包含 execute_bash 和 ask_user**。Find-Tools 还需包含网络搜索工具（google_search、fetch）和全部4个注册工具（tool_register_cli、tool_register_mcp、tool_register_skill、tool_register_http），缺一不可\n"
+        "工作流：Find-Tools 只负责发现和注册工具，不执行业务任务。Find-Tools 返回后：若成功（found_tool_names 非空），结合新注册的工具再次 delegate to Use-Tool 执行完整工具链；若失败（success=false 或 found_tool_names 为空），直接向用户报告无法找到合适工具，**禁止自行继续尝试安装或搜索工具**。"
         "输出格式：直接回答时输出纯文本；需要调用工具时通过 tool_calls 输出，不要同时输出文本和工具调用。"
     )
     DEFAULT_TOOL_LIST = ["delegate", "ask_user", "context_summarizer"]

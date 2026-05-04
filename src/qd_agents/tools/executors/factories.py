@@ -134,7 +134,6 @@ class ToolExecutorRegistry:
             if func_name and func_name in self._functions:
                 return FunctionToolExecutor(
                     self._functions[func_name],
-                    registry=self._registry,
                 )
 
         return create_executor(tool)

@@ -45,6 +45,14 @@ def register_cli_tool(
     executable = parts[0]
     args = parts[1:]
 
+    # 如果 executable 不是绝对路径，尝试用 shutil.which 解析完整路径
+    import shutil
+    resolved = shutil.which(executable)
+    if resolved:
+        executable = resolved
+    elif not Path(executable).is_file():
+        raise ToolValidationError(f"可执行文件不存在: {executable}")
+
     # 执行 --help 获取帮助文本（必须成功）
     try:
         result = subprocess.run(
