@@ -136,7 +136,7 @@ async def delegate(agent: str, task: str, task_background: str, tools: list[str]
 
 
 async def ask_user(question: str, options: list[str] | None = None, reason: str = "", timeout_seconds: int | None = None) -> dict[str, Any]:
-    """向用户提问并等待回复。question 为问题内容。options 为可选的选项列表。reason 为提问原因。timeout_seconds 为等待超时秒数。"""
+    """向用户提问并等待回复。question 为问题内容，不要在 question 中列出选项。options 为选项列表，提供时用户通过选择器选取，不要在 question 中重复列出选项。reason 为提问原因。timeout_seconds 为等待超时秒数。"""
     # 实际交互由 MetaAgent.run_loop() 拦截处理
     return {"status": "waiting_for_user", "question": question}
 
